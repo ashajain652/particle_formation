@@ -15,7 +15,7 @@ from reentry_model.levelset.division import DIVISION_LEVELS, DIVISION_TOL, divid
 from reentry_model.levelset.levelset import pieces
 from reentry_model.levelset.markers import OPPOSED_NORMALS, OWN_SHARE, ownership
 
-from cases import DESIGN_SPACING, seeded
+from cases import DESIGN_SPACING, box_sdf, polygon_sdf, seeded
 
 H = 1.2e-3                 # m: the skin depth (design section 21.3)
 OFF = 0.13e-3              # m: the bodies' offset off the grid (the stage 3 box's)
@@ -33,40 +33,11 @@ def _layer_mesh(base, sdf, fine=FINE):
     return build(base, target)
 
 
-def _box_sdf(lo, hi):
-    """The exact signed distance to the box from `lo` to `hi` [m], negative inside."""
-    lo, hi = np.asarray(lo, float), np.asarray(hi, float)
-    c, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
-
-    def sdf(p):
-        q = np.abs(p - c) - half
-        return np.linalg.norm(np.maximum(q, 0.0), axis=1) + np.minimum(q.max(axis=1), 0.0)
-    return sdf
-
-
 def _slabs_sdf(*spans):
     """The exact signed distance to the union of disjoint slabs lo < y < hi [m] (the minimum of theirs)."""
     def sdf(p):
         y = p[:, 1]
         return np.min([np.maximum(lo - y, y - hi) for lo, hi in spans], axis=0)
-    return sdf
-
-
-def _polygon_sdf(corners):
-    """The exact signed distance in (x, y) to the polygon with these corners [m] (any order round it), negative inside,
-    the same at every z: a prism through the mesh."""
-    a = np.asarray(corners, float)
-    b = np.roll(a, -1, axis=0)
-
-    def sdf(p):
-        q = p[:, None, :2]
-        ab = b - a
-        t = np.clip(np.einsum("nek,ek->ne", q - a, ab) / np.einsum("ek,ek->e", ab, ab), 0.0, 1.0)
-        d = np.linalg.norm(q - (a + t[..., None] * ab), axis=2).min(axis=1)
-        crosses = ((a[:, 1] > q[..., 1]) != (b[:, 1] > q[..., 1])) & \
-            (q[..., 0] < a[:, 0] + (q[..., 1] - a[:, 1]) * ab[:, 0] / np.where(ab[:, 1] == 0.0, 1.0, ab[:, 1]))
-        inside = crosses.sum(axis=1) % 2 == 1
-        return np.where(inside, -d, d)
     return sdf
 
 
@@ -89,7 +60,7 @@ def _pair(d, a, b):
 def _seeded_box(lo, hi, base):
     """A box's exact signed distance on `base` refined through its layer, and markers seeded on it as the body seeds
     them (one per DESIGN_SPACING voxel)."""
-    sdf = _box_sdf(lo, hi)
+    sdf = box_sdf(lo, hi)
     mesh = _layer_mesh(base, sdf)
     phi = sdf(mesh.points)
     return mesh, phi, seeded(mesh, phi, DESIGN_SPACING, base.lo)
@@ -200,7 +171,7 @@ def test_a_concave_corner_column_widens_with_depth():
     """An L-shaped prism (an 8 mm square less its 4 mm quarter, through the mesh along z): the column on the concave
     edge owns, at depth, the level surface wrapped round the edge, and widens."""
     corners = OFF + np.array([[0.0, 0.0], [8.0, 0.0], [8.0, 4.0], [4.0, 4.0], [4.0, 8.0], [0.0, 8.0]]) * 1e-3
-    sdf = _polygon_sdf(corners)
+    sdf = polygon_sdf(corners)
     base = BoxBase.around((-BOX_H0, -BOX_H0, -4e-3), (8e-3 + BOX_H0, 8e-3 + BOX_H0, 4e-3), BOX_H0)
     mesh = _layer_mesh(base, sdf)
     phi = sdf(mesh.points)
@@ -281,7 +252,7 @@ def test_two_pieces_close_their_layers_separately():
     DIVISION_TOL of one, and each marker's piece the cube it stands on."""
     a_lo, b_lo = np.array([OFF - 8e-3, OFF - 3e-3, OFF - 3e-3]), np.array([OFF + 2e-3, OFF - 3e-3, OFF - 3e-3])
     side = np.full(3, 6e-3)
-    fa, fb = _box_sdf(a_lo, a_lo + side), _box_sdf(b_lo, b_lo + side)
+    fa, fb = box_sdf(a_lo, a_lo + side), box_sdf(b_lo, b_lo + side)
     sdf = lambda p: np.minimum(fa(p), fb(p))
     base = BoxBase.around((-8e-3 - BOX_H0, -3e-3 - BOX_H0, -3e-3 - BOX_H0), (8e-3 + BOX_H0, 3e-3 + BOX_H0,
                                                                               3e-3 + BOX_H0), BOX_H0)
@@ -305,7 +276,7 @@ def _close_pair():
     gap, side = 0.7e-3, np.full(3, 6e-3)
     a_lo = np.array([OFF - 6e-3 - 0.5 * gap, OFF - 3e-3, OFF - 3e-3])
     b_lo = np.array([OFF + 0.5 * gap, OFF - 3e-3, OFF - 3e-3])
-    fa, fb = _box_sdf(a_lo, a_lo + side), _box_sdf(b_lo, b_lo + side)
+    fa, fb = box_sdf(a_lo, a_lo + side), box_sdf(b_lo, b_lo + side)
     sdf = lambda p: np.minimum(fa(p), fb(p))
     base = BoxBase.around((-7e-3 - BOX_H0, -3e-3 - BOX_H0, -3e-3 - BOX_H0), (7e-3 + BOX_H0, 3e-3 + BOX_H0,
                                                                               3e-3 + BOX_H0), BOX_H0)

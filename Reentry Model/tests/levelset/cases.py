@@ -1,12 +1,17 @@
 """Builders the level-set tests share (Task 9b, fix round 1: moved here from the test modules that imported them from
 one another): the gas state of the loads and body tests, markers seeded as the body seeds them, a box mesh refined along a
 level set, and each marker's tessellated area against the area nearest it, with the acceptance numbers of the ruling on
-the neighbour test. Test-only; no physics of the level set lives here."""
+the neighbour test; and (plan 03b Task 2, moved here from test_levelset_division.py) the exact signed distances of a box
+and of a polygonal prism, and the stage 3 box on the body's mesh. Test-only; no physics of the level set lives here."""
+import functools
+from collections import namedtuple
+
 import numpy as np
 from scipy.spatial import cKDTree
 
-from reentry_model.levelset.boxmesh import build
-from reentry_model.levelset.cutcell import patches
+from reentry_model.levelset.boxmesh import BoxBase, build
+from reentry_model.levelset.criteria import kappa_max_nodal, make_target
+from reentry_model.levelset.cutcell import inside_volumes, patches
 from reentry_model.levelset.markers import Markers
 from reentry_model.levelset.repartition import surface_samples
 from reentry_model.levelset.skin import SKIN_PRESETS, SkinSettings
@@ -53,3 +58,98 @@ def refined(base, level, fine):
     """The box mesh of `base` refined to `fine` [m] where |level(x)| is within two fine cells (and the leaf's own size)
     of zero."""
     return build(base, lambda x, s: np.where(np.abs(level(x)) < 2.0 * fine + 0.87 * s, fine, np.inf))
+
+
+def box_sdf(lo, hi):
+    """The exact signed distance to the box from `lo` to `hi` [m], negative inside."""
+    lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    c, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
+
+    def sdf(p):
+        q = np.abs(p - c) - half
+        return np.linalg.norm(np.maximum(q, 0.0), axis=1) + np.minimum(q.max(axis=1), 0.0)
+    return sdf
+
+
+def polygon_sdf(corners):
+    """The exact signed distance in (x, y) to the polygon with these corners [m] (any order round it), negative inside,
+    the same at every z: a prism through the mesh."""
+    a = np.asarray(corners, float)
+    b = np.roll(a, -1, axis=0)
+
+    def sdf(p):
+        q = p[:, None, :2]
+        ab = b - a
+        t = np.clip(np.einsum("nek,ek->ne", q - a, ab) / np.einsum("ek,ek->e", ab, ab), 0.0, 1.0)
+        d = np.linalg.norm(q - (a + t[..., None] * ab), axis=2).min(axis=1)
+        crosses = ((a[:, 1] > q[..., 1]) != (b[:, 1] > q[..., 1])) & \
+            (q[..., 0] < a[:, 0] + (q[..., 1] - a[:, 1]) * ab[:, 0] / np.where(ab[:, 1] == 0.0, 1.0, ab[:, 1]))
+        inside = crosses.sum(axis=1) % 2 == 1
+        return np.where(inside, -d, d)
+    return sdf
+
+
+BODY_FINE, BODY_FLOOR = 0.7e-3, 0.25e-3    # m: the body's fine cells and cell floor (LevelSetSkinBody's defaults)
+BODY_MARGIN, BODY_LEAD = 4e-3, 0.6e-3      # m: its fine margin and the fine region's lead (stepend.LEAD)
+BODY_REFINES = 2                           # its refinements from the fields at construction (skinbody.INITIAL_REFINES)
+BOX_H0 = 2.8e-3                            # m: the stage 3 box's base cells (analysis/levelset/stage3_cases.py H0)
+BOX_LENGTH, BOX_HALF, BOX_OFF = 8e-3, 5e-3, 0.13e-3     # m: the stage 3 box and its offset off the grid (stage3_cases)
+
+Body = namedtuple("Body", "mesh phi x normal base sdf")
+
+
+def body_mesh(base, sdf, fine=BODY_FINE, floor=BODY_FLOOR):
+    """`base` refined as LevelSetSkinBody refines its mesh around a cold body (all rigid, so psi = phi), from the exact
+    signed distance `sdf`: BODY_REFINES passes of criteria.make_target with the body's fine size, margin, lead and cell
+    floor, the curvature of phi recovered within two base cells of it."""
+    mesh = build(base)
+    for _ in range(BODY_REFINES):
+        phi = sdf(mesh.points)
+        kp = kappa_max_nodal(mesh, phi, band=2.0 * base.h0)
+        mesh = build(base, make_target(mesh, phi, phi, kp, kp, fine=fine, margin=BODY_MARGIN, lead=BODY_LEAD,
+                                       floor=floor))
+    return mesh
+
+
+def body_on(base, sdf):
+    """A body's level set: the exact signed distance `sdf` on `base` refined as the body refines it (`body_mesh`), with
+    markers seeded on it as the body seeds them. Returns a Body (mesh, phi, marker positions, marker normals, base,
+    sdf)."""
+    mesh = body_mesh(base, sdf)
+    phi = sdf(mesh.points)
+    mk = seeded(mesh, phi, DESIGN_SPACING, base.lo)
+    return Body(mesh, phi, mk.x, mk.normal, base, sdf)
+
+
+def box_corners():
+    """The stage 3 box's lower and upper corners [m]: 8 x 10 x 10 mm, 0.13 mm off the grid."""
+    lo = np.array([BOX_OFF, BOX_OFF - BOX_HALF, BOX_OFF - BOX_HALF])
+    return lo, lo + np.array([BOX_LENGTH, 2.0 * BOX_HALF, 2.0 * BOX_HALF])
+
+
+@functools.lru_cache(maxsize=1)
+def stage3_box():
+    """The stage 3 box (analysis/levelset/stage3_cases.py's `box_body`: its BoxBase, the body's 0.7 mm fine cells and
+    0.25 mm cell floor) as a Body, phi its exact signed distance (`body_on`)."""
+    lo, hi = box_corners()
+    base = BoxBase.around((-BOX_H0, -BOX_HALF - BOX_H0, -BOX_HALF - BOX_H0),
+                          (BOX_LENGTH + BOX_H0, BOX_HALF + BOX_H0, BOX_HALF + BOX_H0), BOX_H0)
+    return body_on(base, box_sdf(lo, hi))
+
+
+def edge_length(size):
+    """The total length [m] of a box's twelve edges, its sides `size` (3,) [m]."""
+    return 4.0 * float(np.sum(size))
+
+
+def rounding_volume(d, length):
+    """What rounding an edge of length `length` [m] to radius |d| [m] changes [m3], (1 - pi/4) d^2 per unit length (plan
+    03b, planning ruling 11)."""
+    return (1.0 - np.pi / 4.0) * d * d * length
+
+
+def volume_between(mesh, a, b):
+    """The volume [m3] between the zero contours of the level sets a and b on the mesh, inside one and not the other:
+    inside_volumes of their nodal minimum less that of their nodal maximum (the union less the intersection, to within
+    the cells both contours cut). Planning ruling 11 judges sharpness by it."""
+    return float(inside_volumes(mesh, np.minimum(a, b)).sum() - inside_volumes(mesh, np.maximum(a, b)).sum())
