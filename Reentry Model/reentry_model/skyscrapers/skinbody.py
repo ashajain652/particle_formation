@@ -1002,6 +1002,31 @@ class SkinBody(ThermalBody):
             return self.theta
         return np.where(self.windward_corners(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
 
+    def load_meridian(self):
+        """The unit vectors (n, 3) along which the gas pressure gradient and the gas shear push the melt, each in its base's
+        tangent plane (the plane normal to `columns.normal`, where `momentum_step` solves for the velocities); None under
+        `windward_loads` `normals`, where the push follows each base normal's own meridian (`skin.along_meridian`).
+
+        Under `sphere` an exposed corner with a valid fitted sphere is pushed along the fitted sphere's meridian away from its
+        stagnation point, minus the tangential part of the flight direction about the unit ray from the fitted centre through
+        its top point, projected onto the base's tangent plane and made a unit vector (zero where that projection is no larger
+        than 1e-12, as `along_meridian` does). Every other corner keeps `along_meridian`'s direction."""
+        if self.windward_loads != "sphere":
+            return None
+        n, v = self.columns.normal, self.v_hat
+        mer = skin_mod.along_meridian(n, v, np.ones(len(n)))
+        sf = self.sphere_fit
+        if sf.concave:
+            return mer
+        k = np.flatnonzero(sf.exposed)
+        u = self.surface.points[k] - sf.centre
+        u /= np.linalg.norm(u, axis=1)[:, None]
+        away = -(v[None, :] - (u @ v)[:, None] * u)
+        away -= np.einsum("ij,ij->i", away, n[k])[:, None] * n[k]
+        size = np.linalg.norm(away, axis=1)
+        mer[k] = np.divide(away, size[:, None], out=np.zeros_like(away), where=size[:, None] > 1e-12)
+        return mer
+
     def _ray_angles(self, centre):
         """The angle [rad, (n,)] between the direction of motion and the unit ray from `centre` [m, (3,)] through each top
         corner."""
@@ -1237,9 +1262,10 @@ class SkinBody(ThermalBody):
         if self.flow_on:                                                    # the gas side's push at the part's middle
             f = self._forcing[0].toward(self._forcing[1], frac)
             sigma = mat.liquid.sigma if mat.liquid is not None else 0.0
-            flow = skin_mod.Flow(self.columns, f.dp_ds, skin_mod.along_meridian(self.columns.normal, self.v_hat, f.tau),
-                                 f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles, release=self._step_release,
-                                 slurry=self.slurry_spray)
+            mer = self.load_meridian()                                      # None under the normals' rule: today's push
+            shear = skin_mod.along_meridian(self.columns.normal, self.v_hat, f.tau) if mer is None else mer * f.tau[:, None]
+            flow = skin_mod.Flow(self.columns, f.dp_ds, shear, f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles,
+                                 release=self._step_release, slurry=self.slurry_spray, meridian=mer)
         eps = np.full(sk.n, self.emissivity)
         m_min = skin_mod.minimum_mass(mat, sk.area, self.settings)
         # implicit (sub-plan 21); with the height pairing heat passes between cells that touch (Asha's idea and decision of

@@ -17,7 +17,8 @@ DEV_BRIDGE = skin.SkinSettings(cell=20e-6, rheology="bridge")
 def make(m, T0=880.0, name="skfem", settings=DEV, **kw):
     copy = mesh.VolumeMesh(m.points.copy(), m.tets.copy(), dict(m.params))
     mat = material.Material.from_drama_json("AA7075_scheil")
-    return skinbody.SkinBody(copy, mat, thermal_solver(name), 1.47, settings, T0=T0, v_hat=(-1.0, 0.0, 0.0), **kw)
+    kw.setdefault("v_hat", (-1.0, 0.0, 0.0))
+    return skinbody.SkinBody(copy, mat, thermal_solver(name), 1.47, settings, T0=T0, **kw)
 
 
 def front_loads(b, q0):
@@ -2974,7 +2975,9 @@ def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_
     model = spray.SprayModel(mat.liquid, dispersion="profile")
     with pytest.raises(ValueError, match="needs the flow on"):
         make(coarse_sphere_mesh, spray=model)
-    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model)
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model,
+             windward_loads="normals")        # as the flow was set up: under `sphere` the push along the fitted meridian moves a
+                                              # corner 0.99 mm and the coarse mesh refuses the move (2026-11-13, Task 3)
     seen, profile_modes = {}, skinbody.melt_profile.profile_modes
 
     def keep(cols, windward, sigma):                     # the cells the plan read, which pass through unchanged
@@ -3248,3 +3251,82 @@ def test_a_state_without_the_attribute_flies_normals(coarse_sphere_mesh):
     assert b.sphere_fit is b.sphere_fit and not b.sphere_fit.concave
     with pytest.raises(ValueError, match="windward_loads"):
         make(coarse_sphere_mesh, windward_loads="rays")
+
+
+# -- the push along the fitted sphere's meridian (the fitted-sphere loads design, Asha 2026-11-13, Task 3) -----------------
+MERIDIAN_GAP_BAND = 2.0          # degrees; measured 2026-11-13 on the coarse 4 mm sphere: the largest gap between the fitted
+MERIDIAN_GAP_EXPOSED = 2.0      # sphere's meridian and the base normals' is 1.86 deg over the exposed corners with theta from 5 to
+                                # 80 deg (928 of them), and also 1.86 deg over all 1121 exposed corners with theta over 5 deg
+
+
+def test_the_load_meridian_of_an_untouched_sphere_is_the_normals_meridian_and_none_under_normals(coarse_sphere_mesh):
+    """On the untouched 4 mm sphere the fitted sphere is the body's own, so `load_meridian` is `along_meridian` of the base
+    normals to within the facets: the base normals of the coarse mesh are measured off radial by up to a few degrees.
+    Measured 2026-11-13 (see the bounds below). Unit vectors in the tangent plane of every corner; None under `normals`."""
+    b = make(coarse_sphere_mesh)
+    mer = b.load_meridian()
+    n = b.columns.normal
+    assert mer.shape == (b.columns.n, 3)
+    np.testing.assert_allclose(np.linalg.norm(mer, axis=1), 1.0, atol=1e-12)
+    assert np.abs(np.einsum("ij,ij->i", mer, n)).max() < 1e-12
+    own = skinbody.skin_mod.along_meridian(n, b.v_hat, np.ones(len(n)))
+    gap = np.degrees(np.arccos(np.clip(np.einsum("ij,ij->i", mer, own), -1.0, 1.0)))
+    exposed = b.sphere_fit.exposed
+    band = exposed & (b.theta > np.radians(5.0)) & (b.theta < np.radians(80.0))
+    assert band.sum() > 500
+    assert gap[band].max() < MERIDIAN_GAP_BAND
+    assert gap[exposed & (b.theta > np.radians(5.0))].max() < MERIDIAN_GAP_EXPOSED
+    leeward = ~exposed
+    np.testing.assert_array_equal(mer[leeward], own[leeward])
+    assert make(coarse_sphere_mesh, windward_loads="normals").load_meridian() is None
+
+
+@pytest.mark.parametrize("direction", [(-1.0, 0.0, 0.0), (-0.8, 0.5, 0.3)])
+def test_the_load_meridian_points_away_from_the_moved_stagnation_point(coarse_sphere_mesh, direction):
+    """The tops translated 10 mm across the flight direction move the fitted sphere's centre with them, and the meridian of
+    every exposed corner is the projection onto its base's tangent plane of the direction away from the point where the
+    flight direction's ray through the moved centre meets the sphere: minus the tangential part of v about the ray, for
+    the flight direction -x and for an oblique one."""
+    b = make(coarse_sphere_mesh, v_hat=np.array(direction) / np.linalg.norm(direction))
+    v = b.v_hat
+    across = np.cross(v, [0.0, 0.0, 1.0])
+    across /= np.linalg.norm(across)
+    with_tops(b, b.surface.points + 10e-3 * across)
+    sf = b.sphere_fit
+    assert not sf.concave and np.linalg.norm(sf.centre - 10e-3 * across) < 1e-4
+    mer, n = b.load_meridian(), b.columns.normal
+    r = b.surface.points - sf.centre
+    r /= np.linalg.norm(r, axis=1)[:, None]
+    want = -(v[None, :] - (r @ v)[:, None] * r)
+    want -= np.einsum("ij,ij->i", want, n)[:, None] * n
+    want /= np.linalg.norm(want, axis=1)[:, None]
+    k = sf.exposed & (np.degrees(np.arccos(np.clip(r @ v, -1, 1))) > 3.0)
+    assert k.sum() > 500
+    np.testing.assert_allclose(mer[k], want[k], atol=1e-9)
+    # away from the moved stagnation point: the meridian has a positive component along the chord from the stagnation point
+    stag = sf.centre + sf.fitted * v                      # the windward point: the ray at angle 0 to the flight direction
+    assert np.einsum("ij,ij->i", mer[k], b.surface.points[k] - stag).min() > 0.0
+
+
+def test_the_flow_built_for_a_part_carries_the_load_meridian_and_the_shear_along_it(coarse_sphere_mesh, monkeypatch):
+    """Under `sphere` the part's `Flow` has `meridian` = `load_meridian()` and its shear is that meridian times the surface
+    flow's tau; under `normals` the `Flow` is the earlier one: no meridian, the shear laid along each base normal's own."""
+    seen = {}
+    for rule in ("sphere", "normals"):
+        b = make(coarse_sphere_mesh, T0=600.0, flow=True, remove=False, windward_loads=rule)
+        got = []
+        advance = skin.advance
+        monkeypatch.setattr(skinbody.skin_mod, "advance",
+                            lambda sk, dt, *a, _g=got, _a=advance, **k: (_g.append(k["flow"]), _a(sk, dt, *a, **k))[1])
+        f = newtonian(b)
+        mer, normal = b.load_meridian(), b.columns.normal.copy()
+        b.advance(0.5, 0.5, front_loads(b, 1e6), forcing=f)
+        seen[rule] = got[0]
+        if rule == "sphere":
+            np.testing.assert_array_equal(got[0].meridian, mer)
+            np.testing.assert_array_equal(got[0].shear, mer * f.tau[:, None])
+        else:
+            assert got[0].meridian is None
+            np.testing.assert_array_equal(got[0].shear, skin.along_meridian(normal, b.v_hat, f.tau))
+        monkeypatch.undo()
+

@@ -1250,11 +1250,13 @@ def along_meridian(normals, v_hat, magnitude):
     return np.asarray(magnitude, dtype=float)[:, None] * unit
 
 
-def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma, wet=None):
+def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma, wet=None, meridian=None):
     """The push along the surface on every layer of every column [N/m3], (n, 3), and its four terms (spec 6.4), each in
     the column's own tangent plane -- the base's, where `momentum_step` solves for the velocities:
 
-        pressure      -dp_w/ds along the meridian away from the stagnation point, dp_ds [Pa/m, (n,)] the surface flow's
+        pressure      -dp_w/ds along the meridian away from the stagnation point (each base normal's own, or the given
+                      `meridian`, (n, 3) unit vectors in the columns' tangent planes: under the fitted-sphere loads the
+                      fitted sphere's, `SkinBody.load_meridian`), dp_ds [Pa/m, (n,)] the surface flow's
                       (`SurfaceFlowResult.dp_ds`), differentiated on its own fine bins of the angle. The gradient of the
                       corners' own p_w would carry the scatter of their normals' angles, amplified some 25 times (the
                       radius over the spacing) by the differentiation: on the 2 mm sphere a Newtonian pressure's push
@@ -1281,7 +1283,8 @@ def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma, wet=None):
     normals = columns.normal
     g = np.broadcast_to(np.asarray(g, dtype=float), (columns.n, 3))
     g_n = np.einsum("ij,ij->i", g, normals)
-    terms = {"pressure": -along_meridian(normals, v_hat, dp_ds),
+    pressure = -along_meridian(normals, v_hat, dp_ds) if meridian is None else -meridian * np.asarray(dp_ds)[:, None]
+    terms = {"pressure": pressure,
              "deceleration": rho_l * (g - g_n[:, None] * normals),
              "thickness": rho_l * g_n[:, None] * columns.gradient(H),
              "capillary": _capillary(columns, columns.film_curvature(H), wet, sigma)}
@@ -1907,8 +1910,10 @@ def landing_conduct(sk, landed, dt, depth=None):
 class Flow:
     """What drives the skins' flow over a part of a macro step, held over it (spec 6.4): `dp_ds` [Pa/m, (n,)] the
     surface flow's wall-pressure gradient along the meridian, `shear` [Pa, (n, 3)] the gas shear on the top cells in
-    each column's plane (`along_meridian` of the surface flow's tau), `g` [m/s2, (3,)] the acceleration the metal feels
-    in the body's frame, minus the body's own, `v_hat` the flight direction, `rho_l` [kg/m3] and `sigma` [N/m] the
+    each column's plane (`along_meridian` of the surface flow's tau, or `meridian` times it), `meridian` [(n, 3) unit
+    vectors, or None] the direction the pressure gradient pushes along where it is not each base normal's own meridian
+    (the fitted sphere's, `SkinBody.load_meridian`), `g` [m/s2, (3,)] the acceleration the metal feels in the body's
+    frame, minus the body's own, `v_hat` the flight direction, `rho_l` [kg/m3] and `sigma` [N/m] the
     liquid's density and surface tension, `A_top` [m2, (n,)] the top areas the shear acts over, and `cycles`, the flow
     sub-steps in each heat sub-step: None (the default since Task 6d) chooses them each heat sub-step (`flow_cycles`),
     a number fixes them. `plan` is what a trial pass chose, for its real pass (`advance`).
@@ -1936,6 +1941,7 @@ class Flow:
     plan: list = None
     release: object = None
     slurry: bool = False
+    meridian: np.ndarray = None
 
 
 @dataclass
@@ -2039,7 +2045,8 @@ def flow_substeps(sk, flow, dt, cycles=None):
             sk.regrid()
             clock("regrid", started)
         started = time.perf_counter()
-        G, terms = push(col, sk.thickness(), flow.dp_ds, flow.g, flow.v_hat, flow.rho_l, flow.sigma, wet=flowing_tops(sk))
+        G, terms = push(col, sk.thickness(), flow.dp_ds, flow.g, flow.v_hat, flow.rho_l, flow.sigma, wet=flowing_tops(sk),
+                        meridian=flow.meridian)
         clock("push", started)
         started = time.perf_counter()
         mb = momentum_step(sk, h, G, flow.shear, flow.A_top, response=True)
