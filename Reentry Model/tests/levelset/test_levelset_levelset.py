@@ -179,8 +179,8 @@ def test_departure_points_outside_the_box_give_finite_values():
 
 
 # The moves of the gas surface by each group's exact volume (design section 21.6; plan 03b Task 2, planning rulings 2 and
-# 11, the controller's ruling P1). Each body is a level set phi that is an exact signed distance on the body's mesh, with
-# markers seeded as the body seeds them. Each group is asked for the volume it sweeps between phi and an ideal shape
+# 11, the controller's ruling P1). Each body is a level set phi that is an exact signed distance, on the mesh the body's
+# refinement rule gives it (`cases.body_on`; not a body's own mesh), with markers seeded as the body seeds them. Each group is asked for the volume it sweeps between phi and an ideal shape
 # (`swept_volumes`, by the groups move_by_volumes divides the cells into), so the move must find that shape from the
 # groups' volumes alone. The ideal shape's exact signed distance on the same nodes is the reference (ruling P1): the P1
 # grid's own cut at every edge is then on both sides. Sharp is judged against rounding (ruling 11): within a tenth of

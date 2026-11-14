@@ -64,8 +64,8 @@ def test_fully_molten_metal_has_no_rigid_region():
 
 def test_the_skin_base_of_a_box_is_the_box_shrunk_by_the_depth_with_sharp_edges():
     """Design section 21.4: beta, the zero contour of phi + H with phi a signed distance, is the box shrunk by H with its
-    convex edges sharp. The stage 3 box (8 x 10 x 10 mm, 0.13 mm off the grid) on the body's mesh, phi its exact signed
-    distance. The reference is the sharp shrunk box's exact signed distance on the same nodes (the controller's ruling
+    convex edges sharp. The stage 3 box (8 x 10 x 10 mm, 0.13 mm off the grid), phi its exact signed distance, on the
+    mesh the body's refinement rule gives it (`cases.stage3_box`). The reference is the sharp shrunk box's exact signed distance on the same nodes (the controller's ruling
     P1), so that the P1 grid's own cut at every edge is on both sides; within a tenth of what rounding the edges to H
     would change (ruling 11), both in volume and in the volume between the two contours."""
     box = stage3_box()

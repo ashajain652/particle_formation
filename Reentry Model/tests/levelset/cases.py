@@ -2,7 +2,8 @@
 one another): the gas state of the loads and body tests, markers seeded as the body seeds them, a box mesh refined along a
 level set, and each marker's tessellated area against the area nearest it, with the acceptance numbers of the ruling on
 the neighbour test; and (plan 03b Task 2, moved here from test_levelset_division.py) the exact signed distances of a box
-and of a polygonal prism, and the stage 3 box on the body's mesh. Test-only; no physics of the level set lives here."""
+and of a polygonal prism, and the stage 3 box refined by the body's refinement rule around its exact distance.
+Test-only; no physics of the level set lives here."""
 import functools
 from collections import namedtuple
 
@@ -99,9 +100,16 @@ Body = namedtuple("Body", "mesh phi x normal base sdf")
 
 
 def body_mesh(base, sdf, fine=BODY_FINE, floor=BODY_FLOOR):
-    """`base` refined as LevelSetSkinBody refines its mesh around a cold body (all rigid, so psi = phi), from the exact
-    signed distance `sdf`: BODY_REFINES passes of criteria.make_target with the body's fine size, margin, lead and cell
-    floor, the curvature of phi recovered within two base cells of it."""
+    """`base` refined by LevelSetSkinBody's refinement rule at construction around a cold body (all rigid, so psi =
+    phi), applied to the exact signed distance `sdf`: BODY_REFINES passes of criteria.make_target with the body's fine
+    size, margin, lead and cell floor, the curvature of phi recovered within two base cells of it.
+
+    This is not a body's own mesh (plan 03b Task 2, fix round 1, measured once). A body refines around its own phi, and
+    rebuilds its mesh from its fields at construction. Today's body builds phi from beta moved out by the 0.8 mm stub,
+    so its edges are rounded to the stub. On the stage 3 box, `box_body("dev")` has 38,324 nodes and 216,000 cells,
+    against 65,296 nodes and 371,776 cells here, and the two share 34,407 nodes. Here the sharp edges' curvature puts
+    203,600 cells at the 0.175 mm floor, against the body's 62,672; within 2 mm of the surface the body's phi differs
+    from the box's exact distance by up to 0.69 mm."""
     mesh = build(base)
     for _ in range(BODY_REFINES):
         phi = sdf(mesh.points)
@@ -112,8 +120,8 @@ def body_mesh(base, sdf, fine=BODY_FINE, floor=BODY_FLOOR):
 
 
 def body_on(base, sdf):
-    """A body's level set: the exact signed distance `sdf` on `base` refined as the body refines it (`body_mesh`), with
-    markers seeded on it as the body seeds them. Returns a Body (mesh, phi, marker positions, marker normals, base,
+    """A body's level set: the exact signed distance `sdf` on `base` refined by the body's refinement rule
+    (`body_mesh`), with markers seeded on it as the body seeds them. Returns a Body (mesh, phi, marker positions, marker normals, base,
     sdf)."""
     mesh = body_mesh(base, sdf)
     phi = sdf(mesh.points)
@@ -129,8 +137,9 @@ def box_corners():
 
 @functools.lru_cache(maxsize=1)
 def stage3_box():
-    """The stage 3 box (analysis/levelset/stage3_cases.py's `box_body`: its BoxBase, the body's 0.7 mm fine cells and
-    0.25 mm cell floor) as a Body, phi its exact signed distance (`body_on`)."""
+    """The stage 3 box (analysis/levelset/stage3_cases.py's `box_body`: its BoxBase, its 0.7 mm fine cells and 0.25 mm
+    cell floor) as a Body, phi its exact signed distance, on the mesh the body's refinement rule gives that distance
+    (`body_on`; not `box_body`'s own mesh, `body_mesh`)."""
     lo, hi = box_corners()
     base = BoxBase.around((-BOX_H0, -BOX_HALF - BOX_H0, -BOX_HALF - BOX_H0),
                           (BOX_LENGTH + BOX_H0, BOX_HALF + BOX_H0, BOX_HALF + BOX_H0), BOX_H0)

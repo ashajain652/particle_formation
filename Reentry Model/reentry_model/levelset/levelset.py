@@ -35,7 +35,7 @@ from scipy.sparse.linalg import splu
 from scipy.spatial import cKDTree
 
 from .criteria import nodal_average
-from .cutcell import cell_gradients, inside_volumes, patches
+from .cutcell import cell_gradients, contour, inside_volumes, patches, subtets, volumes_below
 from .transfer import interpolate
 
 
@@ -264,126 +264,12 @@ Moved.__doc__ = """A move of phi by volumes: phi moved, reset to a distance with
 each group's swept volume (n,) [m3], outward positive; its miss (n,), |swept - dV| / max(|dV|, MOVE_FLOOR times the
 largest |dV|); and the rounds it was taken in (zero when nothing moved)."""
 
-_REF = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])   # the reference tetrahedron
-_REST = np.array([[j for j in range(4) if j != lone] for lone in range(4)])             # the corners but one
-
-
-def _cut(p, q, fp, fq):
-    return p + (fp / (fp - fq))[:, None] * (q - p)
-
-
-def _tvol(a, b, c, d):
-    return np.abs(np.einsum("ij,ij->i", b - a, np.cross(c - a, d - a))) / 6.0
-
-
-def _fraction(f):
-    """The share of a tetrahedron on which the linear function with the values f (m, 4) at its corners is negative (m,),
-    a corner at exactly zero outside (as `cutcell.inside_volumes`, whose construction on the reference tetrahedron this
-    is: the share is the same on any tetrahedron)."""
-    neg = f < 0
-    nneg = neg.sum(axis=1)
-    out = np.where(nneg == 4, 1.0, 0.0)
-    for want, flip in ((1, False), (3, True)):
-        m = np.flatnonzero(nneg == want)
-        if not len(m):
-            continue
-        ff = f[m]
-        lone = np.argmax(~neg[m] if flip else neg[m], axis=1)
-        fa = ff[np.arange(len(m)), lone]
-        corner = np.ones(len(m))
-        for j in range(4):
-            with np.errstate(divide="ignore", invalid="ignore"):
-                corner = np.where(j != lone, corner * fa / (fa - ff[:, j]), corner)
-        out[m] = 1.0 - corner if flip else corner
-    m = np.flatnonzero(nneg == 2)
-    if len(m):
-        order = np.argsort(~neg[m], axis=1, kind="stable")              # the two negative corners first
-        fo = np.take_along_axis(f[m], order, axis=1)
-        a, b, c, d = (_REF[order][:, i] for i in range(4))
-        fa, fb, fc, fd = (fo[:, i] for i in range(4))
-        pac, pad, pbc, pbd = _cut(a, c, fa, fc), _cut(a, d, fa, fd), _cut(b, c, fb, fc), _cut(b, d, fb, fd)
-        out[m] = 6.0 * (_tvol(a, pac, pad, b) + _tvol(pac, pad, b, pbc) + _tvol(pad, b, pbc, pbd))
-    return out
-
-
-def _below(S, f):
-    """The parts of the tetrahedra with corners S (m, 4, D) on which the linear function with the values f (m, 4) at the
-    corners is negative, as tetrahedra (k, 4, D), with the index (k,) of the one each came from (the construction of
-    `cutcell.inside_subtets`, for corners in any coordinates; here barycentric in a cell of the mesh)."""
-    neg = f < 0
-    nneg = neg.sum(axis=1)
-    m = np.flatnonzero(nneg == 4)
-    out, owner = [S[m]], [m]
-    for want in (1, 3):
-        m = np.flatnonzero(nneg == want)
-        if not len(m):
-            continue
-        r = np.arange(len(m))
-        lone = np.argmax(neg[m] if want == 1 else ~neg[m], axis=1)
-        o = _REST[lone]
-        Sm, fm = S[m], f[m]
-        p, fp = Sm[r, lone], fm[r, lone]
-        q = [_cut(p, Sm[r, o[:, i]], fp, fm[r, o[:, i]]) for i in range(3)]
-        if want == 1:
-            tets = ((p, q[0], q[1], q[2]),)
-        else:
-            a, b, c = (Sm[r, o[:, i]] for i in range(3))
-            tets = ((a, b, c, q[0]), (b, c, q[0], q[1]), (c, q[0], q[1], q[2]))
-        for tet in tets:
-            out.append(np.stack(tet, axis=1)), owner.append(m)
-    m = np.flatnonzero(nneg == 2)
-    if len(m):
-        order = np.argsort(~neg[m], axis=1, kind="stable")
-        So = np.take_along_axis(S[m], order[..., None], axis=1)
-        fo = np.take_along_axis(f[m], order, axis=1)
-        a, b, c, d = (So[:, i] for i in range(4))
-        fa, fb, fc, fd = (fo[:, i] for i in range(4))
-        pac, pad, pbc, pbd = _cut(a, c, fa, fc), _cut(a, d, fa, fd), _cut(b, c, fb, fc), _cut(b, d, fb, fd)
-        for tet in ((a, pac, pad, b), (pac, pad, b, pbc), (pad, b, pbc, pbd)):
-            out.append(np.stack(tet, axis=1)), owner.append(m)
-    return np.concatenate(out), np.concatenate(owner)
-
-
-def _contour(S, P, f):
-    """The zero contour of the linear function with the values f (m, 4) at the corners S (m, 4, 4) (barycentric in
-    cells whose corners are P (m, 4, 3) [m]): its area (m,) [m2] and its centroid's barycentric coordinates (m, 4)."""
-    neg = f < 0
-    nneg = neg.sum(axis=1)
-    area, centre = np.zeros(len(f)), np.zeros((len(f), 4))
-
-    def tri(a, b, c, m):
-        pa, pb, pc = (np.einsum("ki,kid->kd", v, P[m]) for v in (a, b, c))
-        return 0.5 * np.linalg.norm(np.cross(pb - pa, pc - pa), axis=1)
-    for want in (1, 3):
-        m = np.flatnonzero(nneg == want)
-        if not len(m):
-            continue
-        r = np.arange(len(m))
-        lone = np.argmax(neg[m] if want == 1 else ~neg[m], axis=1)
-        o = _REST[lone]
-        Sm, fm = S[m], f[m]
-        q = [_cut(Sm[r, lone], Sm[r, o[:, i]], fm[r, lone], fm[r, o[:, i]]) for i in range(3)]
-        area[m] = tri(q[0], q[1], q[2], m)
-        centre[m] = (q[0] + q[1] + q[2]) / 3.0
-    m = np.flatnonzero(nneg == 2)
-    if len(m):
-        order = np.argsort(~neg[m], axis=1, kind="stable")
-        So = np.take_along_axis(S[m], order[..., None], axis=1)
-        fo = np.take_along_axis(f[m], order, axis=1)
-        a, b, c, d = (So[:, i] for i in range(4))
-        fa, fb, fc, fd = (fo[:, i] for i in range(4))
-        pac, pbc, pbd, pad = _cut(a, c, fa, fc), _cut(b, c, fb, fc), _cut(b, d, fb, fd), _cut(a, d, fa, fd)
-        a1, a2 = tri(pac, pbc, pbd, m), tri(pac, pbd, pad, m)
-        area[m] = a1 + a2
-        whole = np.maximum(a1 + a2, 1e-300)[:, None]
-        centre[m] = (a1[:, None] * (pac + pbc + pbd) + a2[:, None] * (pac + pbd + pad)) / (3.0 * whole)
-    return area, centre
-
-
 class _Groups:
     """phi's band divided among the markers at x (n, 3) with normals (n, 3), for one round of a move (module
     docstring): each node's marker (`node`, -1 for none) and each cell's parts, whole (`whole`, `whole_owner`) or as
-    tetrahedra barycentric in the cell (`part`, `part_S`, `part_owner`, `part_volume`)."""
+    tetrahedra (`part`, `part_owner`), their corners barycentric in the cell (`part_S`) and in space (`part_P`). Every
+    volume and contour is `cutcell`'s construction (`inside_volumes`, `volumes_below`, `subtets`, `contour`), so that
+    the groups' volumes are the books' to round-off."""
 
     def __init__(self, mesh, phi, x, normal, band=None):
         from .division import _marker_pieces                # (division imports this module)
@@ -485,7 +371,7 @@ class _Groups:
                 q = src[act]
                 xu, xw = self.x[cand[many[pc[q]], pu[q]]], self.x[cand[many[pc[q]], j]]
                 h = 2.0 * np.einsum("kd,kvd->kv", xw - xu, F[many[pc[q]]] - 0.5 * (xu + xw)[:, None, :])
-                Sa, oa = _below(S[act], np.einsum("kvi,ki->kv", S[act], h))
+                Sa, oa = subtets(S[act], np.einsum("kvi,ki->kv", S[act], h), whole=True)
                 S, src = np.concatenate([S[~act], Sa]), np.concatenate([src[~act], q[oa]])
             keep = np.abs(np.linalg.det(S)) > 0.0
             S, src = S[keep], src[keep]
@@ -498,24 +384,42 @@ class _Groups:
         self.whole, self.whole_owner = join(self._whole, 0), join(self._whole_owner, 0)
         self.part, self.part_owner = join(self._part, 0), join(self._part_owner, 0)
         self.part_S = np.concatenate(self._part_S) if self._part_S else np.zeros((0, 4, 4))
-        self.part_volume = np.abs(np.linalg.det(self.part_S)) * self.mesh.volumes[self.part]
+        self.part_P = np.einsum("kvi,kid->kvd", self.part_S, self.mesh.points[self.mesh.tets[self.part]])
+        everywhere = np.full(len(self.phi), -1.0)
+        self.full = (inside_volumes(self.mesh, everywhere, self.whole),                # each whole cell's and each
+                     volumes_below(self.part_P, np.full((len(self.part), 4), -1.0)))   # part's volume, as cutcell's
         self.held = self._held(self.phi)
 
     def _held(self, f):
-        """The metal's volume [m3] in each whole cell and in each part, for the level set f."""
-        mesh = self.mesh
-        return (mesh.volumes[self.whole] * _fraction(f[mesh.tets[self.whole]]),
-                self.part_volume * _fraction(np.einsum("kvi,ki->kv", self.part_S, f[mesh.tets[self.part]])))
+        """The metal's volume [m3] in each whole cell and in each part for the level set f: `cutcell.inside_volumes` (the
+        books' own) over the whole cells f cuts and `cutcell.volumes_below` over the parts it cuts, their corners in
+        space; any other holds its whole volume (`full`, the same construction's) or none."""
+        tets = self.mesh.tets
+        fw = f[tets[self.whole]]
+        fp = np.einsum("kvi,ki->kv", self.part_S, f[tets[self.part]])
+        whole, cut = self._uncut(self.full[0], fw)
+        whole[cut] = inside_volumes(self.mesh, f, self.whole[cut])
+        parts, cut = self._uncut(self.full[1], fp)
+        parts[cut] = volumes_below(self.part_P[cut], fp[cut])
+        return whole, parts
+
+    @staticmethod
+    def _uncut(full, values):
+        """For tetrahedra with the volumes `full` and the level set's values (m, 4) at their corners: the volumes they
+        hold where it does not cut them (all, or none), and the indices of those it cuts."""
+        neg = (values < 0).sum(axis=1)
+        return np.where(neg == 4, full, 0.0), np.flatnonzero((neg > 0) & (neg < 4))
 
     def swept(self, f):
-        """Each group's swept volume [m3] (n,) from phi to the level set f, outward positive."""
+        """Each group's swept volume [m3] (n,) from phi to the level set f, outward positive (`_held`)."""
         (w0, p0), (w1, p1) = self.held, self._held(f)
         return np.bincount(self.whole_owner, w1 - w0, minlength=self.n) + \
             np.bincount(self.part_owner, p1 - p0, minlength=self.n)
 
     def jacobian(self, f):
         """J (n, n), csr [m2]: J[i, j] the rate at which group i's swept volume grows with group j's outward offset, at
-        the level set f (first order: each owned part's contour, weighted by its cell's nodes' hat functions over
+        the level set f (first order: each owned part's contour, `cutcell.contour` in the cell's barycentric
+        coordinates, weighted by its cell's nodes' hat functions, the coordinates at each triangle's centroid, over
         |grad f|)."""
         mesh, rows, cols, vals = self.mesh, [], [], []
         for cells, S, owner in ((self.whole, None, self.whole_owner), (self.part, self.part_S, self.part_owner)):
@@ -526,12 +430,15 @@ class _Groups:
             cut = np.flatnonzero((neg > 0) & (neg < 4))
             if not len(cut):
                 continue
-            a, lam = _contour(np.asarray(S[cut]), mesh.points[T[cut]], fv[cut])
-            g = np.linalg.norm(cell_gradients(mesh, f, cells[cut]), axis=1)
-            w = a[:, None] * lam / np.maximum(g, 1e-300)[:, None]
-            grp = self.node[T[cut]]
+            tris, k = contour(np.asarray(S[cut]), fv[cut])                # barycentric corners, the part each lies in
+            c = cut[k]
+            corners = np.einsum("tvi,tid->tvd", tris, mesh.points[T[c]])
+            area = 0.5 * np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1)
+            g = np.linalg.norm(cell_gradients(mesh, f, cells[c]), axis=1)
+            w = area[:, None] * tris.mean(axis=1) / np.maximum(g, 1e-300)[:, None]
+            grp = self.node[T[c]]
             ok = grp >= 0
-            rows.append(np.broadcast_to(owner[cut, None], grp.shape)[ok]), cols.append(grp[ok]), vals.append(w[ok])
+            rows.append(np.broadcast_to(owner[c, None], grp.shape)[ok]), cols.append(grp[ok]), vals.append(w[ok])
         if not rows:
             return coo_matrix((self.n, self.n)).tocsr()
         return coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
