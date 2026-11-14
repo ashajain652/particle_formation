@@ -1,7 +1,10 @@
 # The skins' windward loads from one fitted sphere, with a shelter test: design
 
 **Status:** the rule was decided by Asha on 2026-11-13, and she approved this document the same day. Branch `fitted-sphere-loads`,
-cut from main at 4e857e1.
+cut from main at 4e857e1. **Built on 2026-11-13** on that branch in five task commits: f8bcecc (the shelter test), 345fa6a
+(the sphere rule in `SkinBody`), 239a242 (the push along the fitted meridian), 12a82aa (the `--windward-loads` option) and
+acf52d8 (the check on the saved bodies); the documents and the level-set design text follow in a sixth commit. **Not yet
+merged into main:** the merge waits for `interim-gas-loads` to land on main first.
 
 ## Why
 

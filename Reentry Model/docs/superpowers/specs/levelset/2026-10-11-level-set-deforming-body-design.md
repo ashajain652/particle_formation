@@ -674,6 +674,11 @@ volume correction; pieces other than the largest removed in flight (to the later
 - 2026-11-10: which patches are leeward decided by a ray-cast shadow test through φ (Asha; §20.8).
 - 2026-11-10: hand-down to the volume mesh only for the anchored rigid run deeper than the stub; crusts never
   handed down; the pass moves no metal, only changes its resolution (Asha; §20.6).
+- 2026-11-13: one windward rule for both architectures (Asha: "change it too"): windward patches are those ahead of the
+  mass-centroid plane whose shadow ray does not re-enter metal, with the loads of the sphere fitted to them at the ray angle
+  from its centre and the flat-face cap kept; `--leeward` gains `sphere`, the default (the builder's call); §20.8, §20.10,
+  §20.11 item 5 and §20.14 item 3 amended in text only, with no level-set code or stage 3 task changed (the skyscrapers'
+  design is `2026-11-13-fitted-sphere-loads-design.md`).
 
 ## 20. Amendment of 2026-11-10: two tracked interfaces and the amended hybrid grid
 
@@ -869,8 +874,16 @@ The loads, the windward fitted nose sphere (skyscrapers Task 5g) and the leeward
 each patch's centroid, offset outward by a twentieth of its cell (steps of φ but at least a quarter of the smallest cell; a whole-cell offset carried leeward rays near a sphere's outline outside the body, so they missed it), a ray is marched upstream (along the direction of motion) through φ by
 sphere tracing (steps equal to φ); if it re-enters metal before leaving the box, the patch is **shadowed** and takes the
 leeward loads (base pressure, lee shear and lee heating, as bracketed in the Step 4 plan); otherwise it takes the
-angle law. Patches facing away from the flow are leeward by the angle law as before. On a convex body no ray re-enters
-metal, so the test changes nothing there; it differs only on overhangs, pockets and detached pieces, where the
+angle law. *Amended 2026-11-13 (Asha: "change it too", with the skyscrapers' fitted-sphere rule, design
+`2026-11-13-fitted-sphere-loads-design.md`):* the windward patches are those ahead of the plane through the body's mass
+centroid, at right angles to the flight direction, whose shadow ray does not re-enter metal; patches facing away are no
+longer leeward for that reason alone, so the top of a crest that nothing shelters is heated. Their loads are those of one
+sphere fitted by least squares to the windward patches, at the angle of the ray from the sphere's centre through each patch
+(past 90 degrees the patch is leeward through the angle), with the flat-face cap on the radius (1.67 times the windward
+transverse radius, kept by Asha). The shadow ray is the one above, so the two architectures share one windward rule; the
+skyscrapers' version is built on branch `fitted-sphere-loads` (not yet merged into main), and the level set builds this in
+its own stage 3 work. Before the amendment, patches facing away from the flow were leeward by the angle law. On a convex
+body no ray re-enters metal, so the test changes nothing there; it differs only on overhangs, pockets and detached pieces, where the
 skyscrapers' mass-centroid test (Task 5j) cannot see. Separated flow behind a ridge is not computed; §17 item 3's CFD
 hook stays the remedy. Cost: a few dozen lookups per ray (*estimated*).
 
@@ -892,7 +905,8 @@ Pinned to the skyscrapers at the commit on which step 1's plan is written, recor
 2026-11-10 it includes: layered skins with a velocity per cell, the 10 µm fine zone and graded cells; runoff over the
 whole surface, the leeward face included, with the arrival rule and deposits freezing on cold metal; the spreading of
 deposits; Girin's thick and thin branches with the conjugate depth from a momentum balance; the Rayleigh–Taylor
-droplet; the slurry spray switch; the windward loads from the fitted sphere; and, if merged by then, sub-plan 22 Tasks
+droplet; the slurry spray switch; the windward loads from the fitted sphere (as amended 2026-11-13: the sphere fitted to the exposed corners, read at the ray
+angle from its centre, `--windward-loads sphere`); and, if merged by then, sub-plan 22 Tasks
 5h–5j (new defaults, the slip-band gate, the leeward centroid test, which §20.8 replaces in this architecture) and the
 viscous-film gate of branch `we-critical-308`. Physics the skyscrapers gain later reaches the level set through the
 shared package; skin physics does not, by the 2026-10-11 rule, and is added here by amendment.
@@ -961,7 +975,8 @@ Stage 0 + S (the combined refactor) is unchanged and comes first. Then:
    pool's shape (depth and extent), its floor's melting rate, its surface speeds and the spray from its top must change
    by less than the agreed tolerance (proposed: 2 %, or within the seed scatter for spray) from 0.5 to 0.35 mm and from
    0.7 to 0.5 mm; if 0.7 mm fails, the default becomes the coarsest size that passes, and the cost is re-estimated.
-5. **Parity flights** (judged as in §20.14 item 3, with `--leeward centroid` for the comparison runs). The 50 mm and
+5. **Parity flights** (judged as in §20.14 item 3; amended 2026-11-13: the level set runs `--leeward sphere` against the
+   skyscrapers' `--windward-loads sphere`, and `--leeward centroid` is kept for comparison runs). The 50 mm and
    100 mm flights against the skyscrapers' flights at the parity commit, two seeds each: droplet
    count, thick share, medians by number and mass, sprayed mass and mass history within the scatter between seeds up to
    the time the skyscrapers' column assumptions first break (the first base fold above 30 degrees, or a column deeper
@@ -1027,7 +1042,10 @@ skin base; the true outer surface φ is derived from it, §20.3); §8.5 (the swi
    measures the real cost; the runs are parallelised as in §20.15.
 3. **How parity is judged — decided 2026-11-10 (Asha: "as recommended").** One compatibility switch only,
    `--leeward shadow|centroid` (default `shadow`; `centroid` uses the skyscrapers' Task 5j test through the shared
-   package; run-name suffix `_lee-centroid`). No switches reproduce the skyscrapers' skin rules (fixed cross-section,
+   package; run-name suffix `_lee-centroid`). *Amended 2026-11-13 (Asha; the third value and the default are the
+   builder's call):* the switch is `--leeward sphere|shadow|centroid`, and `sphere`, the new default, is the windward rule
+   of §20.8 as amended (the fitted sphere, the ray angle, the shadow test), the level set's counterpart of the skyscrapers'
+   `--windward-loads sphere`; `shadow` and `centroid` stay as they are, for comparison. No switches reproduce the skyscrapers' skin rules (fixed cross-section,
    thin-film curvature, no hand-down), which would put skyscraper skin code into the level set's skins. Parity is judged
    quantitatively, within the scatter between two seeds, on the plate tests, Girin's published cases and the early
    flight while layers are thin and the body convex (where the remaining differences are small: the cross-section
