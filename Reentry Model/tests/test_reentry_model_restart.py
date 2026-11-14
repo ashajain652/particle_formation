@@ -1055,7 +1055,11 @@ def test_a_failure_in_the_first_step_of_a_resume_saves_the_resumed_step(flown, t
 
 
 def test_a_failure_after_the_droplet_records_were_spooled_resumes_without_repeating_them(tmp_path, monkeypatch):
-    assert cli.main(FLIGHT + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "u"]) == 0
+    # the flight names the classic gas loads, on which it sprays from the step ending 0.05 s (interim gas loads, Task 7): on
+    # the similarity loads, the default since, its first release comes at 0.0875 s (1.5 mg in 2 records, against 0.81 g in
+    # 606 records by then on the classic loads; measured 2026-11-14), so the failing step of 0.075 s would have spooled none
+    classic = FLIGHT + ["--gas-loads", "classic"]
+    assert cli.main(classic + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "u"]) == 0
     real, calls = coupled.CoupledRun._frame, {"n": 0}
     def frame(self, *a, **k):
         calls["n"] += 1
@@ -1063,7 +1067,7 @@ def test_a_failure_after_the_droplet_records_were_spooled_resumes_without_repeat
             raise RuntimeError("frame writer failed")
         return real(self, *a, **k)
     monkeypatch.setattr(coupled.CoupledRun, "_frame", frame)
-    assert cli.main(FLIGHT + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    assert cli.main(classic + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "f"]) == 1
     monkeypatch.undo()
     assert cli.main(["resume", str(tmp_path / "f.end.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
     whole = np.load(str(tmp_path / "u" / "particles.npz"))
@@ -1222,3 +1226,63 @@ def test_resuming_with_dispersion_table_cuts_its_columns_and_a_state_without_it_
     assert list(got) == spray.record_columns(36)
     assert all(np.array_equal(got[k][:2], held[:, i]) for i, k in enumerate(spray.SOURCE_COLUMNS))
     assert all(np.isnan(got[k][:2]).all() for k in spray.PROFILE_COLUMNS)
+
+
+# -- the interim gas loads (docs/superpowers/plans/2026-11-13-interim-gas-loads.md, Task 7; Review Focus 5) -------------------
+def test_a_flight_on_the_provider_saves_it_and_resumes_with_it(flown, tmp_path, capsys):
+    """The test flight flies on the similarity loads, the default: its state carries one `GasLoads` shared by the skins'
+    surface flow and the `SimilarityHeating` (pickle keeps the one object), with no solve cached (`GasLoads.__getstate__`),
+    and a skin body whose sheltered corners are read at pi (ruling R15). Resumed with nothing changed it repeats the flight
+    to the last bit (as `test_the_resume_command_repeats_the_flight_...` checks on the same state), says the loads in the line
+    before the flight, records them in the settings, and the state it saves keeps the provider."""
+    from reentry_model import heating
+    from reentry_model.shared.gas_loads import GasLoads
+    out, flight, records, state_path = flown
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["gas_loads"] == "similarity"
+    state = restart.load(state_path)
+    run = state["run"]
+    assert type(run.heating) is heating.SimilarityHeating and type(run.heating.gas_loads) is GasLoads
+    assert run.body.surface_flow.gas_loads is run.heating.gas_loads and run.heating.gas_loads._cache == {}
+    assert run.body.sheltered_angle == np.pi and state["meta"]["args"]["gas_loads"] == "similarity"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r", "--save-state-at", "0.2"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "gas loads similarity" in line
+    assert rows_of(str(tmp_path / "r.csv")) == flight[14:]
+    assert json.load(open(str(tmp_path / "r.json")))["settings"]["gas_loads"] == "similarity"
+    again = restart.load(str(tmp_path / "r.state.pkl"))
+    assert type(again["run"].heating) is heating.SimilarityHeating
+    assert again["run"].body.surface_flow.gas_loads is again["run"].heating.gas_loads
+    assert again["run"].body.sheltered_angle == np.pi and again["meta"]["args"]["gas_loads"] == "similarity"
+
+
+def test_a_state_saved_before_the_gas_loads_resumes_on_the_classic_loads(tmp_path, capsys):
+    """A state saved before the interim gas loads has a `SurfaceFlow` with no `gas_loads` on the instance, a `PhysicsHeating`,
+    a skin body with no sheltered angle of its own and no `gas_loads` among its arguments: a flight on `--gas-loads classic`
+    saves exactly such objects, so one, with the argument removed, stands in for it. It resumes on the classic loads (the
+    class attributes: no provider, sheltered corners at 90 degrees plus a microradian), says and records `classic`, and
+    repeats the unbroken classic flight from the saved step to the last bit."""
+    from reentry_model import heating
+    pytest.importorskip("cantera")
+    out = str(tmp_path / "classic")
+    assert cli.main(FLIGHT + ["--gas-loads", "classic", "--t-max", "0.1", "--outdir", out, "--name", "f",
+                              "--save-state-at", "0.05"]) == 0
+    flight = rows_of(os.path.join(out, "f.csv"))
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["gas_loads"] == "classic"
+    state = restart.load(os.path.join(out, "f.state.pkl"))
+    run = state["run"]
+    assert "gas_loads" not in vars(run.body.surface_flow) and run.body.surface_flow.gas_loads is None
+    assert type(run.heating) is heating.PhysicsHeating and "sheltered_angle" not in vars(run.body)
+    assert run.body.sheltered_angle == 0.5 * np.pi + 1e-6
+    del state["meta"]["args"]["gas_loads"]                     # the arguments of a flight saved before the option existed
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    capsys.readouterr()
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "r", "--save-state-at", "0.075"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "gas loads classic" in line
+    assert len(flight) == 8 and rows_of(str(tmp_path / "r.csv")) == flight[state["step"]:]
+    doc = json.load(open(str(tmp_path / "r.json")))
+    assert doc["settings"]["gas_loads"] == "classic" and doc["resumed_from"]["changed"] == {"--save-state-at": 0.075}
+    again = restart.load(str(tmp_path / "r.state.pkl"))
+    assert again["run"].body.surface_flow.gas_loads is None and type(again["run"].heating) is heating.PhysicsHeating
+    assert again["meta"]["args"]["gas_loads"] == "classic"

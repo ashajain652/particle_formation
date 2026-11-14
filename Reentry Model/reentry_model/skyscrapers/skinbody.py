@@ -212,6 +212,15 @@ NOSE_COLUMNS = ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nos
 # (12-20 degrees off the flow, median), which the first test counted as windward though they sit behind the body; the
 # centroid itself was 30 mm behind the original centre by 187.0 s, the metal having run to the back.
 LEEWARD_TESTS = ("facing", "centroid")
+# The angle the loads read at a sheltered corner -- one whose normal faces the flow but which the `centroid` test puts behind
+# the plane through the mass centroid (`SkinBody.load_angles`). On the classic loads a microradian past 90 degrees, where
+# they are zero, as since Task 5j; on the interim gas loads' provider pi, the rear of the separated wake: its base
+# pressure, no shear and no heating, where an angle just past 90 degrees would carry shoulder-level loads (decision 2a, Asha
+# 2026-11-12; ruling R15 of the interim gas loads, 2026-11-14: only the sheltered corners move, a corner facing away keeps
+# its true angle and the provider's lee loads). The class default is the classic one, so a state saved before the interim
+# gas loads resumes as it flew; `cli.build_thermal` gives a run on the provider SHELTER_WAKE.
+SHELTER_CLASSIC = 0.5 * np.pi + 1e-6
+SHELTER_WAKE = np.pi
 # the history's two leeward columns (`SkinBody.nose_stats`), with either setting: the centroid's position along the flight
 # direction relative to the 3D mesh's mean point [mm, positive forward], and the corners that face the flow but lie behind the
 # plane through it
@@ -744,7 +753,10 @@ class SkinBody(ThermalBody):
     `centroid` (`LEEWARD_TESTS`; the command line's default): which top corners are windward for every consumer of the angle
     to the flow -- the heating, the surface flow, the spray plan (its shear modes and its Rayleigh-Taylor mode) and the
     windward sphere fit (`load_angles`, `windward_corners`; sub-plan 22 Task 5j, Asha, 2026-11-10). `theta` itself, the frames and the
-    release angle (`spray.enclosed_centroid`) do not change."""
+    release angle (`spray.enclosed_centroid`) do not change.
+    `sheltered_angle` [rad, within (90, 180] degrees, or None for the class's `SHELTER_CLASSIC`]: the angle every consumer of
+    `load_angles` reads at a corner the `centroid` test shelters; `SHELTER_WAKE`, pi, for the loads of the interim gas loads'
+    provider (decision 2a, ruling R15)."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
@@ -753,6 +765,7 @@ class SkinBody(ThermalBody):
     size_feedback = "initial"            # the nose radius's source (Task 5g): the states saved before it flew on the mesh's radius
     _nose_raw = None                     # the fit of the tops, made at the first read after `_refresh_geometry`; old states have none
     leeward_test = "facing"              # which corners are windward (Task 5j): the states saved before it flew on `theta` alone
+    sheltered_angle = SHELTER_CLASSIC    # where a sheltered corner's loads are read: the states saved before the provider, classic
     _leeward_raw = None                  # (the centroid, the corners ahead of its plane) of the surface, made at the first read
     geometry_stop = True                 # the run ends at a geometry breach (open item 4): the states saved before it fly on with it on
     _moment3d = None                     # the 3D model's (mass, mass moment) since the last move, made at the first read
@@ -765,7 +778,11 @@ class SkinBody(ThermalBody):
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
                  spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth",
-                 size_feedback="current", leeward_test="facing", geometry_stop=True):
+                 size_feedback="current", leeward_test="facing", geometry_stop=True, sheltered_angle=None):
+        if sheltered_angle is not None:                  # None: the class's classic angle, stored on no instance
+            if not 0.5 * np.pi < sheltered_angle <= np.pi:
+                raise ValueError("sheltered_angle must be None or an angle within (pi/2, pi] rad, got {!r}".format(sheltered_angle))
+            self.sheltered_angle = float(sheltered_angle)
         self.geometry_stop = bool(geometry_stop)
         if leeward_test not in LEEWARD_TESTS:
             raise ValueError("leeward_test must be one of {}, got {!r}".format(LEEWARD_TESTS, leeward_test))
@@ -924,11 +941,15 @@ class SkinBody(ThermalBody):
         flow (`flow_forcing`) and the spray plan (`girin_plan`: its shear modes, and through its `windward` and `w_n` the
         Rayleigh-Taylor mode) -- (sub-plan 22 Task 5j; Asha, 2026-11-10: a corner behind the centroid's plane gets no shear,
         no spray and no Rayleigh-Taylor mode, whichever way its normal faces). `theta` itself under `facing`, bit for bit;
-        under `centroid` `theta` where `windward_corners` and the larger of `theta` and 90 degrees plus a microradian where not. `theta`
-        itself, the frames and the release angle do not change."""
+        under `centroid` `theta` where `windward_corners` and, where not, on the classic loads (`sheltered_angle` the class's
+        `SHELTER_CLASSIC`) the larger of `theta` and 90 degrees plus a microradian, and on the provider's (`SHELTER_WAKE`) `theta`
+        where the corner faces away from the flow and `sheltered_angle` where it faces the flow -- a sheltered corner, read in
+        the separated wake (decision 2a, ruling R15). `theta` itself, the frames and the release angle do not change."""
         if self.leeward_test != "centroid":
             return self.theta
-        return np.where(self.windward_corners(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
+        if self.sheltered_angle == SHELTER_CLASSIC:      # the classic loads' rule, as it was (bit for bit)
+            return np.where(self.windward_corners(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
+        return np.where(self.windward_corners() | (self.theta > 0.5 * np.pi), self.theta, self.sheltered_angle)
 
     def _fit_nose(self):
         """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
