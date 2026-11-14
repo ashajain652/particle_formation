@@ -398,6 +398,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
                          "size_feedback": "current",                  # always recorded: the default changed (Task 5g)
                          "leeward_test": "centroid",                  # always recorded: new, centroid by default (Task 5j)
                          "rheology": "composite", "internal_solid_fraction": 0.5,       # always recorded (Asha, 2026-11-12)
+                         "base_cell_mm": 0.2,                         # always recorded: new (open item 7, 2026-11-14)
                          "part_count_from": "melting", "hand_down": "off"}   # and these, whose defaults changed (Task 5h)
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
