@@ -1058,3 +1058,305 @@ Rejected for now: the whole model distributed by MPI from the start (mesh, marke
 processes) — the most scalable, but about twice the work in every stage, and needed only if one flight's flow solve
 outgrows one machine, which nothing measured yet suggests.
 
+## 21. Amendment of 2026-11-13: one skin depth everywhere, and the gas surface evolved
+
+Designed with Asha in the brainstorming session of 2026-11-13, started when stage 3's Task 11 (second fix round) stopped
+on a limit of §20.3 and §20.6 rather than on a bug. Where this section and an earlier one disagree, this section
+governs; §21.13 lists what it supersedes. Numbers are marked *measured* (from runs, each said once if run once) or
+*estimated*, as in §20. The amendment covers one piece of a larger change in full (the geometry, §21.3–§21.8, §21.11)
+and sets out the two pieces that follow it (§21.9, §21.10).
+
+### 21.1 Why
+
+- **The distance offset rounds and bulges** (*measured*, Task 11 fix round 2, the q6p box, 2026-11-13). φ rebuilt as
+  β moved outward by each marker's thickness and redistanced rounds every convex edge to the skin's depth from the
+  first step; it bulges over a column thicker than about its half-width (up to about 0.9 mm); an outward move of β at a
+  convex edge sweeps 16 to 23 % more volume than the books give it, because a move outward along diverging normals
+  sweeps more than area times distance, and the curvature cap (`KAPPA_DEPTH_SHARE` 0.1) hides the divergence where the
+  surface bends more tightly than ten skin depths; and the base groups' areas ran from 0.57 to 1.30 of the owned areas
+  on the box's face at 1.0 s, a twentieth at its rims.
+- **Asha, 2026-11-13:** sharp-edged bodies are in scope ("Sharp-edged bodies too"); "When an edge starts to melt, I
+  expect the surface to become rounded and recede due to melt flow and spraying." No geometric rule may round an edge.
+  The gas surface must recede where spraying removes metal; no construction may move it where no mass changed (her
+  concern that a rebuilt gas surface "would hide spraying").
+- **Asha, 2026-11-13, relayed verbatim by a side session:** "allow runoff in the skins between any touching neighbors.
+  The 3D mesh should also be solving melt flow too." Sideways conduction across the same boundaries was raised in the
+  same session.
+- **Finer markers alone made things worse** (*measured* once, 2026-11-13, the box at development cells with markers
+  0.4 mm apart against 2 mm, on the laptop; script and outputs in the session's scratchpad, not in the repository). The
+  first step (to 0.5 s) took 1528 s against 31.4 s: runoff 1293 s (85 %) against 8.1 s, 160 times for 24 times the
+  markers; 25 parts against 1, because the part limit (`MOVE_SHARE` of the target spacing) is tied to the spacing. The
+  second step did not finish within the two-hour cap (175.3 s at 2 mm). Before any metal melted, 337 of the 2954 skins
+  (11 %) switched to top-zone and the face became uneven by 0.47 mm (peak to peak), against none and flat at 2 mm.
+- **Asha's choice, 2026-11-13: "B: one skin depth"**, over keeping the two modes and fixing the geometry around them.
+  Every skin has the same depth, there are no modes, and the volume holds all metal below the skins and will solve its
+  flow wherever it is molten. Asha also asked that each move of the surface count the volume it actually sweeps.
+
+### 21.2 Goals, non-goals, anti-goals
+
+- **Goals.** An edge or corner of any body, sharp or smooth, stays exactly as it is until the metal's own changes —
+  spraying, runoff, swelling on melting, deposits freezing — move it. The skins' columns tile the layer between φ and
+  β exactly, the skins' metal fills it exactly, and each piece's φ encloses exactly its metal's volume, all checked
+  every step. One division of the layer serves everything: the gas loads, the base groups, runoff and sideways heat.
+  Spraying from the shared kinked-profile physics.
+- **Non-goals here:** the volume melt flow (§21.9, the next piece); finer markers near edges (§21.10); metal thinner
+  than twice the skin depth (§21.11, stops the run).
+- **Anti-goals:** §20.2's stand. Added: any rule that rounds, bevels or smooths an edge by geometry; a construction
+  that moves the gas surface where no mass changed; a mode switch.
+
+### 21.3 One skin depth
+
+- **Every marker's skin is H deep**, a numerical setting recorded with every run (`SkinSettings.depth` or the builder's
+  name), **default 1.2 mm** (Claude's call, for Asha to check). It is today's starting depth, the 0.4 mm fine zone plus
+  the 0.8 mm stub, so every case starts as it does now. It holds every flowing layer measured on the skyscrapers'
+  100 mm flight to 30 s with the profile dispersion (Mac Studio, 2026-11-12, *measured* once): the 3950 release records'
+  flowing depths lay between 0.84 and 0.92 mm, and the largest anywhere on the body was 0.93 mm. That flight was still
+  heating at 30 s, so later melt may be deeper.
+- **Cells** as §20.6: 10 µm (production; 20 µm development) in the top 0.4 mm, then each 10 % thicker than the one
+  above, down to H.
+- **No modes.** The full-depth skin, the top-zone skin, the thin test (§20.5) with its hysteresis, the mode changes and
+  the full-depth skin's absorption of the volume's non-rigid metal (`_absorb`) are retired. Every skin works as today's
+  top-zone skin does, at depth H: it keeps its column exactly full (§21.5) by drawing metal from the volume at its base,
+  at the volume's own temperature, and returning at its base, at the cells' own enthalpy, every cell below H whatever
+  its phase.
+- **The hand-down rule of 2026-11-10 is superseded** (for Asha to check: it changes a rule she tightened). That rule
+  passed down only the anchored rigid run below the stub and never a crust, so that metal refrozen on liquid could not
+  be carried below that liquid. A hand-down moves no metal — only the owner changes and β follows — so that property
+  holds without the rule. A crust deeper than H becomes the volume's crust (§20.3: carried by the volume flow as a
+  rigid body, once the flow exists).
+- **Melt deeper than H lies in the volume.** Until the volume flow is built (§21.9) it is held, as melt under a
+  top-zone skin is held today, and a skin's flow treats its base as a no-slip floor.
+
+### 21.4 The two surfaces: φ evolved, β derived
+
+- **φ, the gas surface, is the evolved, authoritative level set** (decided by Asha, 2026-11-13: "The gas surface",
+  after both options were drawn on an edge). This reverses §20.3's call of 2026-11-10, which was Claude's. Why: β
+  cannot carry φ's edges. Every φ whose
+  edges are rounded by a radius smaller than H has the same inner surface at depth H, because moving a corner of
+  radius r inward by more than r leaves a sharp corner. A φ rebuilt from β therefore always has edges rounded to at
+  least H: today's distance offset rounds them to exactly H, and a mitred offset would hold them sharp until the
+  physics had rounded them past H and then jump. Only an evolved φ lets an edge round by its own mass loss at any
+  radius, and only an evolved φ recedes exactly where spraying removes metal.
+- **φ moves** in each part by each column's net volume change at its top (§21.6) and is reset to a signed distance and
+  corrected per piece to the piece's metal volume (the skins' cells at their own densities and the volume's metal at the
+  solid's, §21.6; §6.4), as β was.
+- **β, the skin base, is derived:** the surface at distance H inside φ, the zero contour of φ + H with φ a signed
+  distance (negative in metal), rebuilt whenever φ moves; φ's distance reset must therefore reach at least H into the
+  metal. Moving a surface inward by a distance keeps its convex edges sharp and rounds its concave corners to radius H,
+  which is exactly the boundary of "the metal within H of the gas". The volume mesh owns the metal inside β, the skins
+  own the layer between φ and β, and nothing is counted twice. §20.3 rejected an evolved φ because the volume would
+  then end on an unnamed surface whose books would not close; with one depth that surface is named and its books close
+  (§21.5, §21.6).
+- **ψ** is unchanged (§20.3), rebuilt from the skins' cell profiles and the volume's temperature field.
+- **Sharpness is limited by the grid:** φ's zero contour on the P1 mesh is sharp to within the cell floor (§20.5);
+  features below the floor stay sub-grid.
+
+### 21.5 The division of the layer: columns, cross-sections, neighbours
+
+- **The division** extends C1's `markers.ownership` (every point of φ belongs to its nearest marker) down through the
+  layer: a point x of the layer belongs to the marker that owns the point of φ nearest x, and its depth z is its
+  distance from φ. Column i is the part marker i owns; its cross-section A_i(z) is that column's area at depth z;
+  A_i(0) is marker i's owned area of φ, and A_i(H) its base group on β.
+- **The columns tile the layer exactly:** the integral of A_i(z) from 0 to H, summed over the markers of a piece,
+  equals the piece's volume inside φ less its volume inside β. At a convex edge a column beside the edge narrows with
+  depth and may end before H, where it meets the column across the edge on the plane halfway between the two faces; at
+  a concave corner the corner's column widens with depth. No curvature formula and no cap: `Skins.cross_section`'s
+  A₀ (1 − κ₁ z)(1 − κ₂ z), `cap_curvature` and `KAPPA_DEPTH_SHARE` are retired. φ's curvature stays for the capillary
+  pressure (§20.6).
+- **Cells fill their columns:** each cell spans the depths over which A_i(z) holds its volume m/ρ(T) (today's `dz`,
+  with the measured profile in place of the formula).
+- **Metal stays where it is; only its owner changes** (Claude's call after the builder check, 2026-11-13). When φ
+  moves, or the markers snap, split or merge, the division changes. The metal in a region that changes column moves
+  to the new column's cells at the same depth, with its mass, enthalpy and momentum exactly; this is Task 9b's
+  re-partition extended through the depth. Draws and returns happen only where metal crosses β, between the layer and
+  the volume, and they are credited to the column that owns that part of β. A column that ends before β, beside a
+  convex edge, has no base: it never draws or returns, and changes only by its own top exchanges, by runoff and by
+  re-partition. Every column is then exactly full by construction. The alternative, filling each column from the volume
+  at its own base, was not chosen: a column with no base cannot use it, and Task 9b was built to avoid it after a
+  backlog was handed down 10 mm at once on the full-size cube.
+- **Neighbours:** two columns are neighbours wherever they share a boundary in the layer, at any depth — side by side
+  on a face, across an edge on the halfway plane, around a corner. A point on a shared boundary is at the same depth from
+  either side, so the cells that meet across it are the cells at that depth in each column. The shared boundary's area
+  between each pair of cells is the face for both **runoff** (§20.6's exchange with the arrival rule, upwind and
+  implicit, Asha's request) and **sideways conduction** (implicit within each heat sub-step, as the skyscrapers' sub-plan
+  21 made theirs; books exact). The tangent-plane tessellation that runoff uses today (`Markers.tessellate`'s Ruling 2
+  faces, `_neighbours`, `NEIGHBOUR_REACH`, `NEIGHBOUR_PATH`, `OPPOSED_NORMALS`) is retired; the markers' areas come
+  from C1 alone.
+- **Ownership never crosses gas.** A point of φ may be owned only by a marker on the same side of the gas: not by a
+  marker whose normal opposes the surface's there (n_i · n < −0.5, Task 9b's facing-pair threshold). C1 as built does
+  not check this; it is new.
+- **How the division is integrated** (on the volume mesh's cut cells or otherwise) is the builder's; it is rebuilt
+  whenever φ moves, and its accuracy sets the closure tolerance (§21.8). Task 11's second fix round sketched a
+  nearest-point assignment of this kind (recorded in the stage 3 ledger).
+
+### 21.6 Moves
+
+- In each part (Ruling 7's parts and `MOVE_SHARE` stand for now; §21.10 unties them), each column's net volume change
+  at its top — metal sprayed or fed away, runoff in and out, its cells' change of density on melting or freezing —
+  moves φ over the column's owned area. **The displacement is the one whose swept volume over that area is exactly the
+  column's change** (Asha: each move counts the volume it actually sweeps): not area times distance, since an outward
+  move at a convex edge sweeps more and an inward one less. It is extended to the nodes from the nearest point of φ,
+  reset to a distance and corrected per piece, and each group's swept volume is checked against its change.
+- Then β is re-derived and the division rebuilt; the metal between the old and the new β changes owner between the
+  layer and the volume (§21.5), and the volume's enthalpy change is booked as now (`CutThermal.move`, pending at the
+  bases).
+- **The volume keeps one density, the solid's, for now** (Claude's call after the builder check, 2026-11-13, for Asha to
+  check). A skin cell takes its own phase's density, so a molten cell returned to the volume shrinks by about 15 %
+  (1 − ρ_l/ρ_s for AA7075), and molten volume metal drawn into a skin swells by the same share. That difference counts
+  as a volume change at the top of the column that made the exchange, so φ moves above the place where it happened
+  rather than over the whole piece. It is a known limitation, not physics: it moves φ where only the owner changed, and
+  the volume's own melt does not swell. It arises only where melt lies deeper than H, which no flowing layer reached on
+  the skyscrapers' 100 mm flight to 30 s. A density per volume cell changes the thermal solve's mass matrix and belongs
+  with the volume flow (§21.9), which must handle the swelling of melt in the volume anyway.
+- **How the books close** (shown to Asha, 2026-11-13). Mass and energy are held by the skin cells and the volume mesh,
+  never by a surface; a surface only decides which store owns a given piece of metal. Metal changes hands in four ways, each
+  booked once as taken from one store and given to another: spraying (skin to droplets), runoff (skin to skin),
+  re-partition (skin to skin, §21.5) and the base's move (volume to skin or back, the metal between the old and new β,
+  an amount read from the geometry, so it cannot miss). Energy moves with the metal, by conduction across shared faces
+  (antisymmetric) and at the base (the interface coupling of §20.6, owed heat carried to the next part as now). Only
+  one move must meet a volume target, φ's, and a miss there misplaces φ without creating or losing mass; the per-group
+  check reports it at the step where it happens. The earlier failures (Task 11: 4 % of the beam unbooked at the start,
+  36 % at 1.0 s, from two definitions of area; base moves missing their volume targets by 0.19 to 2.98 % of the body;
+  φ not enclosing the skins' metal) all came from two descriptions of the same quantity disagreeing, with β evolved.
+- **What the moves do to edges and corners** (Claude's call after the builder check, 2026-11-13). A surface moved along
+  its normal and reset to a distance takes the shape that a surface moving at that speed really takes. A convex edge
+  stays sharp while it recedes. It rounds while metal is added on it, to a radius equal to the depth added, because
+  the added metal lies within that depth of the old surface. A concave corner is the reverse: it stays sharp while
+  metal is added and rounds while it recedes, to a radius equal to the depth removed. So an edge or corner rounds only
+  where metal is added or removed, and only by the depth moved; where nothing changes, nothing rounds. An edge also
+  rounds when its columns lose more than the faces beside them. A mitred construction that kept edges sharp under
+  deposits was considered and not chosen: it would put the added metal farther from the old surface than the depth
+  added, which is geometry deciding the shape.
+
+### 21.7 The merge of main, the kinked-profile spraying and the rheology (requests relayed 2026-11-13)
+
+- **Merge main into `levelset-stage3` first.** The branch lacks at least 08cca55 (the kinked-profile dispersion),
+  69aba28 (the near-liquidus composite viscosity law) and 4e857e1 (the geometry stop); its merge base is 655d1a2. The
+  merge waits until the other sessions' merges onto main have landed (on 2026-11-13: `interim-gas-loads`, then
+  `fitted-sphere-loads`), and nothing is pushed without Asha's yes. **The geometry (§21.3–§21.6) does not wait for it**
+  (Claude's call after the builder check): main since 655d1a2 and both pending branches change no file under
+  `reentry_model/levelset/` (checked 2026-11-13), so the merge is a later task, placed before the kinked-profile
+  connection and the rheology change, with conflicts expected in the shared nose and loads code that the level set's
+  `loads.py` reads.
+- **Kinked-profile spraying through the shared package** (`reentry_model/shared/`; `profile` the default, `--dispersion
+  table` kept as Girin's theory). The kink and the floor come from each skin's own speed profile, its cells'
+  velocities. It is connected after §21.3–§21.6 are built, since it reads the skins those sections change (Claude's
+  call; Asha was told the merge and this connection would come first).
+- **§20.6's spraying line, amended** (for Asha to check): b and the kink are read from the skin's profile. Where the
+  flowing layer reaches the skin's base, so that the melt continues into the volume, a kink inside the skin is used if
+  there is one; otherwise the profile beneath would come from the volume flow (§21.9). Until that flow exists the
+  volume's melt is held, so the skin's base acts as a floor-like wall at depth H. On the skyscrapers' 100 mm flight to
+  30 s no flowing layer reached 1.2 mm, so this case did not arise there.
+- **The rheology follows main's `--rheology composite|bridge`** (composite the default since 69aba28). The level set's
+  `SkinSettings` gains `rheology` and its skins' viscosity comes from the shared `rheology.law_viscosity` with the
+  shared `rate_cap`. Corrected while planning, 2026-11-13: the request relayed earlier asked the skins to read stored
+  shear rates rather than rates recomputed from rest, but on main the composite law depends on solid fraction alone
+  and ignores the shear rate, and no skin stores rates (the skyscrapers recompute them on demand,
+  `skin.cell_shear_rates`). So there is nothing to store. Under `bridge` the rates come from the momentum step as now.
+  The shared `slurry_modes`, which this branch moved into `shared/spray.py` with the bridge law written in, takes the law
+  and its rate cap as arguments, so that the skyscrapers' slurry mode keeps following `--rheology` after the merge.
+
+### 21.8 Verification of this piece (replaces §20.11 item 3's mode tests)
+
+1. **A sharp box at rest:** at t = 0, φ is the box to within the cell floor and β the box shrunk by H with sharp
+   edges; cold steps (nothing melting) move φ by round-off only and change no column. At 2 mm spacing here; at 0.4 mm
+   in §21.10.
+2. **Equal recession** (a prescribed equal loss per unit area on every face): the edges stay sharp, every face recedes
+   by the same depth, and each group's swept volume equals its loss.
+3. **Loss at an edge** (extra loss prescribed on the columns along one edge): the edge rounds, with each group's swept
+   volume equal to its loss.
+4. **A deposit on a convex edge:** the swept volume equals the added volume, where today's moves overfill by 16 to
+   23 %, and the edge rounds to a radius equal to the depth added, within the cell floor. A concave corner receding
+   rounds to the depth removed, likewise.
+4b. **Re-partition:** when the division changes (a move, a snap, a split, a merge), mass, enthalpy and momentum are
+   exact, and no metal crosses β except where β moved.
+5. **Closure, every step of every case:** the columns' volumes sum to the layer's; the skins' metal volume equals the
+   layer's after the draws; each piece's φ encloses its metal's volume. Tolerance from the division's integration,
+   recorded.
+6. **A spherical shell:** the columns' volumes against the analytic shell volume, as §20.11 item 3.
+7. **Sideways heat:** a temperature step along a plate's skins relaxes at the analytic rate; across the box's edge,
+   heat passes between the two faces' columns, against a reference that resolves the corner in the volume alone (the
+   builder's reference).
+8. **Runoff:** every pair of columns that share a boundary exchanges metal; no pair exchanges across gas (a slot
+   narrower than the marker spacing); a uniform flow over a flat face neither gathers nor spreads metal.
+9. **The plates at 0.5 s steps** (Task 11 Step 1's acceptance), with the melting front crossing the skin's base at H
+   (the risk in §21.12).
+10. **The box and the shoulder** (Task 11 Steps 2 and 3) re-judged, and the box's cost per step at 2 mm against
+    today's 31.4 s and 175.3 s.
+11. **Spraying:** Girin's published cases through the shared spray model, unchanged; a skin whose flowing layer reaches
+    its base uses its base as the floor until §21.9.
+12. **Rheology:** under `composite` a level-set skin's cell viscosities equal the shared law's at the cells' solid
+    fractions, whatever their shear rates, and the same column gives the same viscosities in both architectures; under
+    `bridge` they are unchanged from today.
+
+### 21.9 The next piece, set out: the volume melt flow
+
+§20.7's solve with a larger domain: all molten metal inside β, not only thick melt under top-zone skins. Its rigid wall
+is ψ's zero contour and its free surface is β, where it couples to the skins as §20.6 coupled the top-zone skins: the
+skins take the flow's tangential velocity at β as their bottom condition, and the flow takes the skins' shear and
+weight there. Spraying reads the volume's profile beneath a skin that has no kink of its own (§21.7). It is brought
+forward from stage 4 at Asha's request and gets its own design after this piece is built. §20.13's estimate of its cost
+stands (30–170 hours a flight while thick melt persists, *estimated*, very rough), with §20.15's third layer for it.
+
+### 21.10 The piece after, set out: finer markers near edges
+
+Marker spacing set by φ's curvature, smaller where it bends tightly, down to a floor of about 0.4 mm (the fine zone's
+depth), 2 mm elsewhere. Two prerequisites from the timing of §21.1: runoff's cost made to grow no faster than the
+number of markers, and the part limit untied from the marker spacing. Then the box is re-timed at 0.4 mm on the new
+geometry (§21.8 item 1).
+
+### 21.11 Metal thinner than twice the skin depth (proposed in the playback Asha approved, 2026-11-13)
+
+Where two columns whose normals oppose (n_i · n_j < −0.5) share a boundary in the layer — the metal there is thinner
+than 2H, or an edge is sharper than about 60 degrees — the step stops with a RuntimeError that names the place, as a
+step with no rigid metal left does (`stepend.NO_CORE`). Columns across an ordinary edge, whose normals do not oppose,
+meet on the halfway plane and exchange as any neighbours. The thin case is designed later.
+
+### 21.12 Costs and risks (estimated)
+
+- **Cells per skin:** about 37 in development and 63 in production (*estimated* from the grading), against up to about
+  80 for today's full-depth skins and about 40 for top-zone ones (§20.13).
+- **The division** is rebuilt at every move: a nearest-point query for each integration point of the layer's cells.
+  Its cost is unknown; it is measured on the box.
+- **Sideways heat** makes each heat sub-step one coupled solve over all skins instead of independent columns. §20.15's
+  second layer (skins split across cores) must then exchange within each solve, not only between sub-steps.
+- **Risk: the melting front at the skin base.** The 0.8 mm stub kept the skin–volume interface in rigid metal: in the
+  skyscrapers the cold plate melted 3.6 % slow with the interface on the front, and about half that with it 0.8 mm into
+  rigid metal (§20.4). With one depth, the front crosses the base whenever the molten depth passes H. The plates
+  (§21.8 item 9) test it; if they fail, a larger H is Asha's decision then.
+- **Risk: a film deeper than H is split** between the skin's flow and the volume's, joined at β, and the volume
+  resolves it at its 0.7 mm fine size (§20.4), coarser than the skin's cells (§21.9).
+- **Risk:** the division's accuracy along sharp edges sets how tight the closure (§21.8 item 5) can be.
+- **Gone:** the thin test chattering at its threshold and mode changes at a moving front (§20.13).
+
+### 21.13 What this amendment supersedes
+
+- **§20.3:** the evolved β and the rebuilt φ (now an evolved φ and a derived β, §21.4).
+- **§20.5:** the thin test and its settings (`--thin-curvature`, `--thin-slope`, `--mode-hold`, `--mode-min-markers`),
+  and the two-mode bullet.
+- **§20.6:**
+  - the cross-section formula (now from the division);
+  - the full-depth and top-zone skins;
+  - the hand-down rule;
+  - "where a thin region meets a thick one";
+  - the mode changes;
+  - the spraying line (§21.7);
+  - known limitation 1, a surface bending more tightly than the skin's depth (now exact by the division, down to the
+    cell floor).
+- **§20.7:** its domain (all melt inside β) and its switch (none).
+- **§20.11:** item 3's two modes and mode-change tests (§21.8), and item 4's "pool fed past the thin test" (now a pool
+  deeper than H).
+- **§20.13:** the marker cell counts and the thin-test risk (§21.12).
+- **The stage 3 plan:** Task 10's modes are retired; Tasks 11 and 12 are re-done after this amendment's plan.
+
+Everything else stands.
+
+### 21.14 Left to the builder
+
+- how the division is integrated, and its tolerance;
+- how the displacement that sweeps an exact volume is found (for example a per-group correction of the offset, or a
+  lumped projection like the one Task 11's second fix round sketched);
+- the solver for the coupled sideways conduction;
+- the setting's name;
+- whether stage 1's thin-test functions are kept as unused geometry or removed with their tests.
+
