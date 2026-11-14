@@ -11,7 +11,13 @@ Cells move with the metal: nothing re-divides a whole column. After every sub-st
 SPLIT_ABOVE times its target thickness is split in two and one less than MERGE_BELOW times it is merged into the cell
 beneath (the bottom cell into the one above), exactly in mass and enthalpy. The target is the fine cell within the fine
 zone (`fine_zone` below the top) and grows by (growth - 1) per unit depth below it -- the continuous form of each cell
-being `growth` times thicker than the one above.
+being `growth` times thicker than the one above -- and, with a base cell (`base_cell`, 0.2 mm by default), it is at most
+the base cell at the skin's base, growing by (growth - 1) per unit height above it, so a thick skin is fine at both ends
+and coarse in its middle. Graded from the top alone, the bottom cell of a 28 mm skin was 2-4 mm thick and the drop from
+a hot pool to the rigid front below it fell across its lower half: the jump-fault probe's 10 K steps, and on the
+single-column test (a 28 mm pool at 906 K on rigid metal, against a 5 um one-dimensional reference) a rigid front 17-64 %
+too far, or stuck and then 28 % too far under heating; with the 0.2 mm base cell it was within 1.2 % from 0.5 s on
+(open item 7, 2026-11-14).
 
 The minimum and the fine zone are set apart (Asha, 2026-10-16, option B'): a skin holds at least 0.8 mm of metal, so
 that where the non-rigid layer is thinner -- a cold body melting fast -- its bottom is rigid metal and the skin-3D
@@ -77,13 +83,19 @@ class SkinSettings:
                                            # composite law by default, in the library as on the command line (Asha,
                                            # 2026-11-12); a state pickled before this field existed flew the bridge law
                                            # and keeps it on resume (`__setstate__`)
+    base_cell: float = 0.2e-3              # m, the target of the cell at a skin's base, growing by (growth - 1) per
+                                           # unit height above it; a cell's target is the smaller of this and the top's
+                                           # (`Skins.targets`; open item 7, Asha 2026-11-14: "Go with option 1"); None:
+                                           # the top's alone, the grading before, which a state pickled before this field
+                                           # existed keeps on resume (`__setstate__`)
 
     def __setstate__(self, state):
         """Unpickle, giving a state saved before the `rheology` field existed the law it flew, "bridge" (no entry in its
         __dict__), rather than the class default, so that resuming an old flight does not change its viscosity unasked
-        (`resume --rheology` switches it)."""
+        (`resume --rheology` switches it); and one saved before `base_cell` existed the grading it flew, None."""
         self.__dict__.update(state)
         self.__dict__.setdefault("rheology", "bridge")
+        self.__dict__.setdefault("base_cell", None)
 
     def __post_init__(self):
         if not (self.min_thickness > 0.0 and self.fine_zone > 0.0 and self.cell > 0.0 and self.substep > 0.0):
@@ -94,6 +106,8 @@ class SkinSettings:
             raise ValueError("a skin needs at least two fine cells: cell <= min(min_thickness, fine_zone) / 2")
         if self.rheology not in rheology.LAWS:
             raise ValueError(f"skin rheology must be one of {rheology.LAWS}, not {self.rheology!r}")
+        if self.base_cell is not None and not self.base_cell >= self.cell:
+            raise ValueError("the skin base cell must be None or at least the fine cell")
 
 
 def thomas(sub, diag, sup, rhs):
@@ -243,11 +257,16 @@ class Skins:
         return self.dz().sum(axis=1)
 
     def targets(self, dz=None):
-        """Target thickness of every cell [m] from the depth of its top below the column's top (module docstring)."""
+        """Target thickness of every cell [m] from the depth of its top below the column's top and, with a base cell, the
+        height of its bottom above the column's base (module docstring)."""
         dz = self.dz() if dz is None else dz
-        z = np.cumsum(dz, axis=1) - dz
+        below = np.cumsum(dz, axis=1)
+        z = below - dz
         s = self.settings
-        return s.cell + (s.growth - 1.0) * np.maximum(z - s.fine_zone, 0.0)
+        t = s.cell + (s.growth - 1.0) * np.maximum(z - s.fine_zone, 0.0)
+        if s.base_cell is None:
+            return t
+        return np.minimum(t, s.base_cell + (s.growth - 1.0) * np.maximum(below[:, -1:] - below, 0.0))
 
     # -- installing cells -------------------------------------------------------------------------------------------
     def _install(self, m, H, count, S=None, T=None, U=None):

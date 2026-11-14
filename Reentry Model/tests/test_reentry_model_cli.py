@@ -417,6 +417,8 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-fine-zone", "0"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-preset", "fine"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-growth", "0.9"],
+    MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-base-cell", "-0.1"],
+    MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-base-cell", "0.005"],   # below the 10 um fine cell
     MELT + ["--removal", "instant", "--surface-model", "skin", "--deform-depth", "0"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-band", "-1"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-size", "0"],
@@ -1062,6 +1064,40 @@ def test_the_leeward_test_marks_the_run_s_name_only_for_facing():
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, leeward_test="facing") == "_leeward-facing"
 
 
+def test_skin_base_cell_option():
+    """`--skin-base-cell` (open item 7, 2026-11-14; Asha: "Go with option 1"): the target of the cell at a skin's base,
+    0.2 mm by default, reaching the skins' settings in metres; 0 turns the base rule off (None, the grading before it)."""
+    p = cli.build_parser()
+    assert p.parse_args(SKINS).skin_base_cell == 0.2
+    assert cli.skin_settings(p.parse_args(SKINS)).base_cell == pytest.approx(0.2e-3, rel=1e-12)
+    assert cli.skin_settings(p.parse_args(SKINS + ["--skin-base-cell", "0.5"])).base_cell == pytest.approx(0.5e-3, rel=1e-12)
+    assert cli.skin_settings(p.parse_args(SKINS + ["--skin-base-cell", "0"])).base_cell is None
+
+
+def test_skin_base_cell_run_names():
+    """Another base cell marks a skin run's name `_skinbase<mm>mm` after the growth's mark, and 0 `_skinbase-off`; the
+    default, 0.2 mm, leaves every name as it was."""
+    p = cli.build_parser()
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, base_cell_mm=0.2) == ""
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, base_cell_mm=0.5) == "_skinbase0.5mm"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, base_cell_mm=0.0) == "_skinbase-off"
+    assert (cli.skin_name_suffix(0.4, 5.0, 1.2, 20.0, "production", 10.0, base_cell_mm=0.3)
+            == "_skinmin0.4mm_cell5um_growth1.2_skinbase0.3mm_sub20ms_deform10mm")
+    base = name(SKINS)
+    assert name(SKINS + ["--skin-base-cell", "0.2"]) == base and "skinbase" not in base
+    assert name(SKINS + ["--skin-base-cell", "0"]) == base + "_skinbase-off"
+
+
+def test_skin_base_cell_json(tmp_path):
+    """A skin run's JSON always records `settings.skin.base_cell_mm`, 0 where the base rule is off."""
+    for value, name in (("0.2", "on"), ("0", "off")):
+        argv = SKINS + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
+                        "--outdir", str(tmp_path), "--name", name, "--skin-base-cell", value]
+        assert cli.main(argv) == 0
+        assert json.load(open(tmp_path / (name + ".json")))["settings"]["skin"]["base_cell_mm"] == float(value)
+
+
 def test_rheology_option():
     """`--rheology` (Asha, 2026-11-12) is the composite law by default, reaches the skins' settings, is refused (exit 2)
     for an unknown law, and is accepted without skins or without melting (it then marks no name)."""
@@ -1298,7 +1334,7 @@ def test_the_switch_back_is_named_and_every_skin_run_records_its_dispersion(tmp_
 
 # --- the --architecture flag (Task 6 of the combined refactor) ---
 
-BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--dispersion', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--rheology', '--leeward-test', '--geometry-stop', '--particles', '--no-particles']
+BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-base-cell', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--dispersion', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--rheology', '--leeward-test', '--geometry-stop', '--particles', '--no-particles']
 
 
 def _run_parser():

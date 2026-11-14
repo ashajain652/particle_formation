@@ -44,7 +44,7 @@ Those two files are the contract with the thesis; keep them true when you change
 - `reentry_model/wake_column/` — the wake column, a sub-package with its own `analysis/` and `tests/`: the
   chemistry and condensation of the aluminium the droplets vaporise (see "The wake column" below). Its committed
   inputs are in `data/wake_column/`.
-- `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot; the Step 3 scripts (`melt_verification.py`, `melt_sensitivity.py`, `girin_reference.py`, `flow_wavelengths.py`, `skin_plate.py`, `skin_timing.py`, `ablation_1d.py`, `movemesh_recession.py`); `analysis/skyscrapers_port/`, the port's own tools (path map, checks, three-way resolver, `same_results.py`) with its README; and `analysis/flights/`, the launcher of long flights (`fly.py`, `launch.sh`, which keep a flight's history rows as they are made) with its README.
+- `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot; the Step 3 scripts (`melt_verification.py`, `melt_sensitivity.py`, `girin_reference.py`, `flow_wavelengths.py`, `skin_plate.py`, `skin_timing.py`, `ablation_1d.py`, `movemesh_recession.py`); `analysis/skyscrapers_port/`, the port's own tools (path map, checks, three-way resolver, `same_results.py`) with its README; and `analysis/flights/`, the launcher of long flights (`fly.py`, `launch.sh`, which keep a flight's history rows as they are made) with its README; and `analysis/skin_base_cells/`, the single-column test of a thick skin's base (`column.py`, `compare.py`).
 - `tests/` — the package's tests (`conftest.py` puts this folder on `sys.path` and holds the session
   mesh fixtures). `pytest.ini` also collects `reentry_model/droplet_reentry/tests/` and
   `reentry_model/wake_column/tests/`.
@@ -133,6 +133,8 @@ From inside `Reentry Model/`:
 ```
 
 The melting skins' slurry viscosity is chosen by `--rheology composite|bridge` (`run` and `resume`). Since 2026-11-12 the default for a melting skin run is `composite` (`shared/rheology.py`: a function of the solid fraction alone; a suspension law below 10 % solid, assumed, then Li et al.'s fit at 489.88 1/s up to half solid; the jump at 10 % solid is unresolved). `--rheology bridge` is the earlier law and marks the run name with `_rheology-bridge`; `SkinSettings.rheology` defaults to `"composite"` in the library too; a state saved before the option existed flew the bridge law and keeps it on resume (`SkinSettings.__setstate__`). `--slurry-spray` stays off by default. Read `docs/model_assumptions.md` section 13 for the law's sources and what is assumed before quoting a result under it.
+
+`--skin-base-cell MM` (`run` and `resume`; 0.2 mm by default since 2026-11-14) keeps a thick skin's cells fine at its base as well as its top: a cell's target is the smaller of the one graded down from the top and one graded up from the base. `0` is the grading from the top alone (named `_skinbase-off`), which a state saved before the option keeps on resume. Graded from the top alone a 28 mm skin's bottom cell was 2-4 mm and put the rigid front 17-64 % too far on the single-column test (`analysis/skin_base_cells/`); read `docs/model_assumptions.md` section 14.
 
 Exit codes are part of the interface: 0 ok (the geometry stop included), 1 a model/integration failure (message printed,
 including a Newton non-convergence from either thermal backend) or an escape, 2 bad arguments or a missing optional

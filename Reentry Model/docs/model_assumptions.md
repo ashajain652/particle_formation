@@ -1066,3 +1066,41 @@ Fact 196 and the probe report (`output/near_liquidus_viscosity/probe.md`, git-ig
 heat off, so whether a heated flight keeps a near-liquid layer on the windward face under the composite law is not
 known; that is level 5 of the design (resumed flights on the Mac Studio), which Asha has deferred until more changes from
 other agents land on main (2026-11-12).
+
+## 14. The skins' cells at their base (`--skin-base-cell`, skyscrapers)
+
+A skin's cells are sized by a target: the fine cell (10 um in production) within the fine zone, the top 0.4 mm, growing
+by 10 % per cell below it (`--skin-growth 1.10`); a cell is split above 1.5 times its target and merged below half of it.
+Since 2026-11-14 (open item 7; Asha: "Go with option 1") the target is also at most the base cell, 0.2 mm by default, at
+the skin's base, growing by the same 10 % per cell above it (`Skins.targets`), so a thick skin is fine at both ends and
+coarse in its middle. A skin thinner than about 2.3 mm is unchanged, its targets from the top being the smaller
+throughout; a 28 mm skin has about a quarter more cells (120-126 against 100-103).
+
+*Why.* Graded from the top alone a 28 mm skin's bottom cell is 2-4 mm thick. The skin holds its base at the 3D model's
+temperature through its bottom half-cell (`skin._conduct`), so where a hot pool sits on rigid metal the whole drop to
+the rigid front (895.1 K) falls across that half-cell. The jump-fault probe of the 50 mm flight (178.5-186.5 s, hand-down
+off, re-run 2026-11-14) counted 30,848 faults, every one a bottom cell about 10 K above the metal crossing its base, in
+skins 24-32 mm thick; Task 5k's rule passed 5,228 of them, the marginal ones.
+
+*Verified, in one dimension (`analysis/skin_base_cells/`, pinned by `tests/test_skin_base_cells_column.py`).* One real skin
+column holding a 28 mm pool at 906 K on rigid metal, coupled as `skinbody` couples it (12.5 ms steps, the damped
+repeat), against the same column on one uniform grid with no skin; mass and energy close to rounding in every run. The
+reference converges: 5 and 10 um cells and 1 and 0.5 ms steps agree to 5 um. Case A, rigid metal at 894 K and no
+heating: graded from the top alone the rigid front is 17, 50, 64, 55, 31 and 25 % too far at 0.1, 0.2, 0.5, 1, 2 and 3 s,
+the step from the bottom cell to the base 7.1 K at 0.1 s; a 2.5 ms coupling step gives the same (24.4 against 24.8 % at
+3 s), so the error is the cell's; with uniform 10 um cells the skins reproduce the reference to its grid; with the 0.2 mm
+base cell the front is 5.9 % too far at 0.1 s and within 1.2 % from 0.5 s on, the step at most 0.26 K. Case B, rigid metal
+at 885 K and the pool heated at 2 MW/m2: graded from the top alone the front does not move for 0.1 s (the reference's
+moves 0.30 mm), is 17 % short at 0.5 s and 28 % too far at 2 s, the step 11.1 K at 0.1 s falling to 1.9 K at 3 s; with the
+0.2 mm base cell it is 3.4 % short at 0.1 s and within 0.8 % from 0.5 s on. Base cells of 0.1, 0.3 and 0.5 mm put the
+front within 0.3, 2.3 and 6.2 % from 0.5 s on in case A, with 130-137, 114-123 and 110-115 cells; 0.2 mm was chosen as
+within about 1 % for about 20 cells more than the grading from the top (Claude's choice, 2026-11-14).
+
+*Assumed, and not tested.* The test is one-dimensional: no flow, no sideways heat, one density (the skins' swelling
+off). Its rigid metal is on 5 um cells where a flight's 3D model has 0.7 mm elements at its surface, so with a fine skin
+base the 3D model's elements may be the next limit. Its two pools were chosen to resemble the faulted columns, not taken
+from the flight. No flight has yet been flown with the base cell: whether the 50 mm flight's faults go, and what it costs
+(the skins took 59,521 of the probe's 60,277 s, and their tridiagonal solve loops over the most cells of any column, so
+the cost follows the thickest skin), are not known. The sideways exchange's depth grid (`skin.depth_grid`,
+`--sideways-heat depth`) is still spaced by the targets from the top. A state saved before the option resumes with the
+grading from the top alone unless `resume --skin-base-cell 0.2` is given.

@@ -3458,3 +3458,24 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
      need it: under the composite law the hottest top cell of that test sphere reaches 905.25 K, not the liquidus, so a
      release of liquid finds none); after the pins those tests and their two files pass. `model_assumptions.md` section
      13 holds the law (section 12 is the profile path's).
+
+198. **The skins' base cells (2026-11-14, branch `skin-base-cells`, off `main` 4e857e1; open item 7; Asha: "Go with
+     option 1, test it on the column first"; numbered 198 because branch `kink-depth-column` adds fact 197).**
+     *Why.* The jump-fault probe re-run on the laptop (Asha's one-time exception to the Mac Studio rule;
+     `output/jump_probe_5k/`, git-ignored) reproduced the first probe exactly (562 rows, 588 fault checks) and counted
+     30,848 faulted column-checks under the old rule and 25,620 under Task 5k's. Every fault was a bottom cell about 10 K
+     above the rigid-front metal (895.1 K) crossing its base, the skin's bottom two cells within 0.07 K of each other, in
+     skins 24-32 mm thick whose bottom cell was 2-4 mm: not a gradient across a thick cell, which Task 5k's extrapolation
+     corrects, but the whole drop to the rigid front falling across the bottom half-cell. *The test.* A single skin column
+     (the model's own code, coupled by `skinbody`'s damped rule) holding a 28 mm pool on rigid metal, against a
+     one-dimensional reference on 5 um cells: graded from the top alone the rigid front is 17-64 % too far (case A) or
+     stuck and then 28 % too far (case B, heated); with 10 um cells throughout it matches; with a 0.2 mm base cell it is
+     within 1.2 % from 0.5 s on (`docs/model_assumptions.md` section 14 has every number). *The change.* `SkinSettings
+     .base_cell` (0.2 mm by default; None for none): a cell's target is the smaller of the target from the top and
+     `base_cell + (growth - 1) x` its height above the base (`Skins.targets`). `run --skin-base-cell MM` (0: none, named
+     `_skinbase-off`; another value `_skinbase<mm>mm`; below the fine cell refused, exit 2) and `resume --skin-base-cell`;
+     a state saved before the field resumes with None (`SkinSettings.__setstate__`). The run JSON records
+     `skin.base_cell_mm`, a resumed one `settings.skin_base_cell_mm`. The test is `analysis/skin_base_cells/` with
+     `tests/test_skin_base_cells_column.py`. *Not yet known:* the effect on a flight (the 50 mm flight from 178.5 s would
+     show whether its faults go) and the cost there; the 3D model's 0.7 mm surface elements may be the next limit.
+     *The jump-fault test* stays as it was, with Task 5k's rule: it caught a real error.

@@ -34,8 +34,13 @@ subpackage landed on main (655d1a2). Built from the post-refactor open-items inv
 ## Investigations and analysis
 
 6. Analyse the 100 mm Mac Studio flights; move their results branch (`skin-fixes-flights-macstudio`) onto main's layout.
-7. Test the jump-fault rule (thick graded bottom cells against the 5 K tolerance) on the faults that prompted it
-   (a re-run of about 10 h).
+7. ~~Test the jump-fault rule (thick graded bottom cells against the 5 K tolerance) on the faults that prompted it
+   (a re-run of about 10 h).~~ Done 2026-11-14 (fact 198). The re-run counted 30,848 faults under the old rule and
+   25,620 under Task 5k's; they were a step of about 10 K across thick skins' 2-4 mm bottom cells, which a single-column
+   test showed puts the rigid front 17-64 % too far. Fixed by fine cells at a skin's base (`--skin-base-cell`, 0.2 mm,
+   within about 1 % on that test; `docs/model_assumptions.md` section 14); the jump-fault test and Task 5k's rule stay.
+   Still open: a flight with the base cells (the 50 mm flight from 178.5 s, on the Mac Studio) to see the faults go and
+   measure the cost.
 8. Facts 163(b) and 168(a)-(e) from `we-critical-308`: the thin branch's threshold, the spray within 10 degrees of
    stagnation, the momentum-balance record, the droplet population, the subsonic patches.
 9. Why the 75 deposit columns sit at about 0.7 of their steady state; whether the melt-speed result holds at other times

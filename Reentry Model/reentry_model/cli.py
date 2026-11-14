@@ -5,7 +5,7 @@
         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
         [--architecture skyscrapers|levelset]                          (default skyscrapers; levelset exits 2 until built)
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
-        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
+        [--surface-model skin|elements --skin-flow on|off --skin-base-cell MM --slurry-spray on|off --spread-limit DEG|off
         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
         --size-feedback current|initial --leeward-test facing|centroid --rheology composite|bridge --geometry-stop on|off
         --spray-gates 2026-11-10|before --slip-band on|off --dispersion table|profile ...]
@@ -16,7 +16,7 @@
         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
         --hand-down on|off --sideways-heat depth|height --size-feedback current|initial --leeward-test facing|centroid
         --rheology composite|bridge --geometry-stop on|off --spray-gates 2026-11-10|before --slip-band on|off
-        --dispersion table|profile]
+        --dispersion table|profile --skin-base-cell MM]
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
@@ -288,11 +288,13 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
                      slurry_spray=False, spread_limit=None, part_count_from="moves",
                      hand_down=True, sideways_pairing="depth", size_feedback="current", melting_skins=False,
                      leeward_test="centroid", geometry_stop=True, rheology=viscosity_laws.DEFAULT_LAW,
-                     dispersion="profile"):
+                     dispersion="profile", base_cell_mm=0.2):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
     preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth,
+    `_skinbase<mm>mm` for another base cell than 0.2 mm and `_skinbase-off` for none (open item 7, 2026-11-14), after the
+    growth's mark,
     `_noswell` for skins held at the solid's density, `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none);
     `_skinflow-off` for the heat-only skins of a melting run (`flow` False: the flow, sub-plan 21 Task 6c, is on by default
     with melting since sub-plan 22 Task 3b; None for a run that does not melt, which the flow does not concern), and with
@@ -323,6 +325,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_cell{:g}um".format(cell_um)
     if growth != 1.10:
         out += "_growth{:g}".format(growth)
+    if base_cell_mm != 0.2:
+        out += "_skinbase-off" if base_cell_mm == 0.0 else "_skinbase{:g}mm".format(base_cell_mm)
     if substep_ms != 10.0:
         out += "_sub{:g}ms".format(substep_ms)
     if deform_mm != 15.0:
@@ -415,6 +419,9 @@ def resume_arguments(rs):
     rs.add_argument("--rheology", choices=viscosity_laws.LAWS, default=None,
                     help="the skins' viscosity law, composite or bridge (default: the saved flight's, bridge for one saved "
                          "before the option existed)")
+    rs.add_argument("--skin-base-cell", type=float, default=None,
+                    help="the target of the cell at a skin's base [mm], 0 for none (default: the saved flight's, none for one "
+                         "saved before the option existed)")
     rs.add_argument("--save-state-at", type=float, default=None,
                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
@@ -503,6 +510,10 @@ def build_parser():
     me.add_argument("--skin-cell", type=float, default=None, help="skin fine cell [um] (default: the preset's)")
     me.add_argument("--skin-growth", type=float, default=1.10,
                     help="each skin cell below the fine zone this much thicker than the one above (default %(default)s)")
+    me.add_argument("--skin-base-cell", type=float, default=0.2,
+                    help="the target of the cell at a skin's base [mm], growing by --skin-growth per cell above it, so that a "
+                         "thick skin is fine at its base as well as its top; 0: none, the grading from the top alone, named "
+                         "_skinbase-off (open item 7, 2026-11-14; default %(default)s)")
     me.add_argument("--skin-substep", type=float, default=10.0, help="skin sub-step [ms] (default %(default)s)")
     me.add_argument("--fine-band", type=float, default=FINE_BAND_MM,
                     help="with --surface-model skin: the 3D model's elements are --fine-size to this depth [mm] below the "
@@ -727,6 +738,7 @@ def build_thermal(args, settings, mass, spool=None):
         info["skin"]["leeward_test"] = skin_leeward_test_of(args)          # always: it is new, and centroid by default (Task 5j)
         info["geometry_stop"] = "on" if skin_geometry_stop_of(args) else "off"       # top level, as `cmd_resume` records it
         info["skin"]["rheology"] = args.rheology                           # always: the default changed (Asha, 2026-11-12)
+        info["skin"]["base_cell_mm"] = args.skin_base_cell                 # always: it is new (open item 7, 2026-11-14)
         info["skin"]["internal_solid_fraction"] = viscosity_laws.INTERNAL_SOLID_FRACTION      # the composite law's assumed value
         if flow:
             info["skin"]["dispersion"] = dispersion_of(args)               # always: the default changed (kinked profile)
@@ -767,7 +779,8 @@ def skin_settings(args):
     cell = args.skin_cell * 1e-6 if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset]
     return skin.SkinSettings(min_thickness=args.skin_min_thickness * 1e-3, cell=cell, growth=args.skin_growth,
                              substep=args.skin_substep * 1e-3, swell=args.skin_swell == "on",
-                             fine_zone=args.skin_fine_zone * 1e-3, rheology=args.rheology)
+                             fine_zone=args.skin_fine_zone * 1e-3, rheology=args.rheology,
+                             base_cell=args.skin_base_cell * 1e-3 if args.skin_base_cell > 0.0 else None)
 
 
 def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_continuum):
@@ -793,7 +806,7 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     geometry_stop=skin_geometry_stop_of(args),
                                                                     rheology=args.rheology,
                                                                     dispersion=dispersion_of(args) if spraying_skins_of(args)
-                                                                    else None),
+                                                                    else None, base_cell_mm=args.skin_base_cell),
                                        spray_suffix=spray_name_suffix(args.spray_gates, args.slip_band == "on",
                                                                       spraying_run(args)))
 
@@ -853,6 +866,9 @@ def cmd_run(args, parser):
             parser.error("{} must be > 0".format(label))
     if args.skin_growth < 1.0:
         parser.error("--skin-growth must be at least 1")
+    cell_mm = (args.skin_cell * 1e-3 if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset] * 1e3)
+    if args.skin_base_cell < 0.0 or 0.0 < args.skin_base_cell < cell_mm * (1.0 - 1e-12):
+        parser.error("--skin-base-cell must be 0 (none) or at least the skin's fine cell, {:g} mm".format(cell_mm))
     if args.fine_band < 0.0 or args.fine_size <= 0.0:
         parser.error("--fine-band must be >= 0 and --fine-size > 0")
     cell_um = args.skin_cell if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset] * 1e6
@@ -1217,6 +1233,13 @@ def cmd_resume(args, parser):
         if not skins:
             parser.error("--rheology needs a saved flight of skins: it sets the viscosity of their cells")
         changed["--rheology"] = args.rheology
+    if args.skin_base_cell is not None:
+        if not skins:
+            parser.error("--skin-base-cell needs a saved flight of skins: it sets the cells at their base")
+        cell_mm = run.body.settings.cell * 1e3
+        if args.skin_base_cell < 0.0 or 0.0 < args.skin_base_cell < cell_mm * (1.0 - 1e-12):
+            parser.error("--skin-base-cell must be 0 (none) or at least the skin's fine cell, {:g} mm".format(cell_mm))
+        changed["--skin-base-cell"] = args.skin_base_cell
     # a state saved at the end of a flight resumes only past an end that no longer holds; any other value of "end" (None for
     # a state saved on the way, or an old state with no key, and the failed or stopped ends) resumes as it is
     end = state.get("end")
@@ -1289,6 +1312,8 @@ def cmd_resume(args, parser):
         run.body.geometry_stop = args.geometry_stop == "on"
     if "--rheology" in changed and skins:
         run.body.settings.rheology = args.rheology      # the same object as run.body.skins.settings
+    if "--skin-base-cell" in changed and skins:          # the cells follow at the next sub-step's split and merge
+        run.body.settings.base_cell = args.skin_base_cell * 1e-3 if args.skin_base_cell > 0.0 else None
     if "--spray-gates" in changed:
         run.body.spray.spray_gates = args.spray_gates
     if "--slip-band" in changed:
@@ -1332,7 +1357,7 @@ def cmd_resume(args, parser):
                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
                       ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback"), ("leeward_test", "--leeward-test"),
-                      ("geometry_stop", "--geometry-stop"), ("rheology", "--rheology"),
+                      ("geometry_stop", "--geometry-stop"), ("rheology", "--rheology"), ("skin_base_cell", "--skin-base-cell"),
                       ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band"), ("dispersion", "--dispersion")):
         if flag in changed:
             setattr(saved, key, changed[flag])
@@ -1340,7 +1365,7 @@ def cmd_resume(args, parser):
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
           "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, geometry stop {}, "
-          "rheology {}, spray gates {}, slip band {}, dispersion {}, save state at {}; files {}".format(
+          "rheology {}, skin base cell {}, spray gates {}, slip band {}, dispersion {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
@@ -1353,6 +1378,8 @@ def cmd_resume(args, parser):
               run.body.leeward_test if skins else "n/a",
               ("on" if run.body.geometry_stop else "off") if skins else "n/a",
               run.body.settings.rheology if skins else "n/a",
+              ("off" if run.body.settings.base_cell is None else "{:g} mm".format(run.body.settings.base_cell * 1e3))
+              if skins else "n/a",
               run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
               ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
               run.body.spray.dispersion if getattr(run.body, "spray", None) is not None else "n/a",
@@ -1382,6 +1409,8 @@ def cmd_resume(args, parser):
     if skins:
         thermal_info["geometry_stop"] = "on" if run.body.geometry_stop else "off"
         thermal_info["rheology"] = run.body.settings.rheology      # always, whether saved, given here or the old state's bridge
+        thermal_info["skin_base_cell_mm"] = (0.0 if run.body.settings.base_cell is None      # always; 0 for none, as `run`
+                                             else run.body.settings.base_cell * 1e3)
         thermal_info["internal_solid_fraction"] = viscosity_laws.INTERNAL_SOLID_FRACTION      # as `run` records it
     if getattr(run.body, "spray", None) is not None:
         thermal_info["spray_gates"] = run.body.spray.spray_gates      # always, as `run` records it (Task 5k, review minor 1)
