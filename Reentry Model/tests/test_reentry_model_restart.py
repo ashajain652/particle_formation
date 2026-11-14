@@ -553,6 +553,8 @@ def test_resume_windward_loads_keeps_the_saved_rule_switches_it_and_reads_an_old
     back = str(tmp_path / "n.end.state.pkl")
     assert cli.main(["resume", back, "--outdir", str(tmp_path), "--name", "s", "--windward-loads", "sphere", "--t-max", "0.3"]) == 0
     assert all(k in rows_of(str(tmp_path / "s.csv"))[0] for k in skinbody.SPHERE_COLUMNS)
+    # the saved header, the `normals` one, with the three sphere columns at its end (cli.cmd_resume adds them to the saved row)
+    assert open(str(tmp_path / "s.csv")).readline().strip().split(",") == header + list(skinbody.SPHERE_COLUMNS)
     # a state saved before the option
     state = restart.load(state_path)
     del vars(state["run"].body)["windward_loads"]

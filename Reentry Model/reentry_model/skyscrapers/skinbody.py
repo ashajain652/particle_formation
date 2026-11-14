@@ -1054,9 +1054,13 @@ class SkinBody(ThermalBody):
         ray up the flow crosses any triangle of the tops is sheltered (`shelter.upstream_hits`), the others are exposed. The
         sphere is `body.fit_sphere` on the exposed corners, unweighted; it is not valid with fewer than 4 of them, with a radius
         not finite and positive, with the corners coplanar to rounding (the smallest singular value of the centred corners
-        below 1e-9 of the largest, as `_fit_nose` tests it) or with its centre on the flow side of their mean point. The radius
-        used is the fit capped at the flat-face bound (`_windward_bound` over the corners ahead of the plane; Asha: keep the
-        cap), or, with no valid sphere, the bound, or the mesh's radius where there is no bound."""
+        below 1e-9 of the largest, as `_fit_nose` tests it) or with its centre on the flow side of their mean point. Corners
+        that all coincide exactly (every singular value zero) count as flat here and read the bound; `_fit_nose` does not
+        test that case and hands them to the least-squares fit, whose answer for coincident points is not a surface's radius
+        (a radius near their distance from the origin, or zero, no fit, and so the mesh's radius, for points at the origin).
+        The radius used is the fit capped at the flat-face bound (`_windward_bound` over the corners ahead of the plane; Asha:
+        keep the cap), the fit itself where there is no bound, or, with no valid sphere, the bound, or the mesh's radius
+        where there is no bound."""
         s, v = self.surface, self.v_hat
         ahead = self._leeward()[1]
         sheltered = shelter.upstream_hits(s.points, s.faces, s.normals, s.areas, v, candidates=ahead)

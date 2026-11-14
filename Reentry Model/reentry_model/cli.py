@@ -1352,7 +1352,8 @@ def cmd_resume(args, parser):
         # columns were computed under the old setting, while the first resumed step's loads read the new one, so they are
         # recomputed here, as the saved step's surface reads under the new setting)
         redo = "--size-feedback" in changed or "--leeward-test" in changed or "--windward-loads" in changed
-        if "--windward-loads" in changed:      # a switch to `normals` drops the sphere columns, one to `sphere` adds them
+        if "--windward-loads" in changed:      # a switch to `normals` drops the sphere columns, one to `sphere` adds them at
+            # the end of the row (the update below appends the keys the row lacks), the saved columns keeping their order
             for key in skinbody.SPHERE_COLUMNS:
                 state["row"].pop(key, None)
         state["row"].update({k: v for k, v in run.body.nose_stats().items() if redo or k not in state["row"]})

@@ -2976,8 +2976,12 @@ def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_
     with pytest.raises(ValueError, match="needs the flow on"):
         make(coarse_sphere_mesh, spray=model)
     b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model,
-             windward_loads="normals")        # as the flow was set up: under `sphere` the push along the fitted meridian moves a
-                                              # corner 0.99 mm and the coarse mesh refuses the move (2026-11-13, Task 3)
+             windward_loads="normals")
+    # the earlier rule, as the flow was set up. Under `sphere` the second step's 0.99 mm move of rear corners (117 to 128
+    # degrees from the flow, none exposed) is refused, and so is the retry on the rebuilt mesh: the coarse mesh's thin margin at
+    # the rear, not the fitted push. The refused move is the same size in every variant and was already refused at 345fa6a,
+    # before the push followed the fitted meridian, whose rebuilt mesh happened to take the retry (2026-11-13, Task 3 report,
+    # "Mesh failure investigation")
     seen, profile_modes = {}, skinbody.melt_profile.profile_modes
 
     def keep(cols, windward, sigma):                     # the cells the plan read, which pass through unchanged
@@ -3219,6 +3223,106 @@ def test_a_flat_exposed_face_falls_back_to_normal_angles_at_the_bound(coarse_sph
     b._windward_bound = lambda ahead=None: float("nan")
     b._sphere_raw = None
     assert b.sphere_fit.concave and b.nose_radius() == 0.05
+
+
+def test_fewer_than_four_exposed_corners_are_no_sphere_and_read_their_normals_at_the_bound(coarse_sphere_mesh):
+    """Three candidates, the corners nearest the nose (the centroid test's mask set by hand): the fit needs at least 4 exposed
+    corners, so there is no valid sphere -- no fitted radius, centre or misfit, the row's `nose_cap_concave` set -- the three
+    read their own normals' angles, the radius is the flat-face bound over them, and every other corner is leeward. (Three
+    points always lie in one plane, so the coplanar test would refuse them too: this pins the outcome, not which test gave
+    it.) With no candidate at all there is no bound either, and the radius is the mesh's."""
+    b = make(coarse_sphere_mesh)
+    three = np.zeros(b.columns.n, dtype=bool)
+    three[np.argsort(b.theta)[:3]] = True
+    b._leeward_raw = (b.mass_centroid(), three)
+    b._sphere_raw = None
+    sf = b.sphere_fit
+    assert np.array_equal(sf.exposed, three) and not sf.sheltered.any() and sf.points == 3
+    assert sf.concave and np.isnan(sf.fitted) and np.isnan(sf.centre).all() and np.isnan(sf.rms)
+    assert sf.bound == b._windward_bound(three) > 0.0 and b.nose_radius() == sf.used == sf.bound
+    eff = b.load_angles()
+    np.testing.assert_array_equal(eff[three], b.theta[three])
+    np.testing.assert_array_equal(eff[~three], np.maximum(b.theta, 0.5 * np.pi + 1e-6)[~three])
+    np.testing.assert_array_equal(b.windward_corners(), three)
+    assert b.skin_stats()["nose_cap_concave"] == 1.0
+    b._leeward_raw = (b.mass_centroid(), np.zeros(b.columns.n, dtype=bool))
+    b._sphere_raw = None
+    sf = b.sphere_fit
+    assert sf.points == 0 and sf.concave and np.isnan(sf.bound) and b.nose_radius() == sf.used == 0.05
+    assert not b.windward_corners().any()
+
+
+def test_a_valid_sphere_with_no_bound_is_used_as_fitted(coarse_sphere_mesh):
+    """With no flat-face bound (`_windward_bound` nan, as where no candidate's base normal faces the flow) a valid sphere's
+    radius is used as fitted, uncapped: on the untouched sphere the 50 mm fit, its angles the rays' from its centre, and the
+    row's bound nan."""
+    b = make(coarse_sphere_mesh)
+    b._windward_bound = lambda ahead=None: float("nan")
+    b._sphere_raw = None
+    sf = b.sphere_fit
+    assert not sf.concave and np.isnan(sf.bound) and abs(sf.fitted / 0.05 - 1) < 0.01
+    assert b.nose_radius() == sf.used == sf.fitted
+    np.testing.assert_array_equal(b.load_angles()[sf.exposed], ray_angles(b, sf.centre)[sf.exposed])
+    s = b.skin_stats()
+    assert np.isnan(s["nose_bound_mm"]) and s["nose_radius_mm"] == s["fitted_nose_radius_mm"] == sf.fitted * 1e3
+    assert s["nose_cap_concave"] == 0.0
+
+
+def test_a_ringed_body_flies_a_macro_step_with_its_sheltered_corners_unloaded_and_its_books_closed(coarse_sphere_mesh,
+                                                                                                    monkeypatch):
+    """A body with sheltered corners advanced under the default rule (the final review of 2026-11-13, I1). The ring's columns
+    (base normals 45 to 52 degrees from the flow) take RING_RAISE more metal (`skins.fill`) and the top surface is refreshed
+    (`_refresh_geometry`), as the pool test does; then one 0.25 s macro step of the 4 mm test sphere from 890 K, the flow on
+    with one flow sub-step a heat sub-step and a spray model, under the 100 mm flight's gas state at 93 s. The heating comes
+    through `CoupledRun.loads_at`, so at the body's `load_angles()` and `nose_radius()`, as the free-molecular cosine
+    distribution at 1 MW/m2: a modest load, chosen to stay clear of the coarse mesh's thin margin at the rear (Task 3's mesh
+    failure investigation). The books close, as the other flow and spray tests check them; the corners sheltered at the step's
+    start take no heat flux in any part and no pressure gradient or gas shear in any part's flow; and a crest corner of the
+    ring whose top normal faces away from the flow (`theta`, the angle the earlier rule reads, above 90 degrees; the ring's
+    base normals face the flow) is exposed and heated. Measured 2026-11-13: 125 corners sheltered and 30 such crest corners,
+    heated at about 0.6 MW/m2; the books close to 2e-16 (mass), 4e-12 (energy) and 7e-17 (momentum). The ring's tops fall 1.3
+    to 3.0 mm over the step as the hand-down passes its rigid metal to the 3D model, so 18 corners are sheltered at its end."""
+    pytest.importorskip("cantera")
+    from types import SimpleNamespace
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import spray
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid))
+    assert b.windward_loads == "sphere"
+    ang = np.degrees(np.arccos(np.clip(b.columns.normal @ b.v_hat, -1.0, 1.0)))
+    ring = (ang >= 45.0) & (ang <= 52.0)
+    b.skins.fill(b.skins.column_mass() + np.where(ring, mat.rho * RING_RAISE * b.skins.area, 0.0), 890.0)
+    b._refresh_geometry()
+    b.energy0 = b.energy()                       # the ring was added after the body was built: its heat is the start's
+    sf = b.sphere_fit
+    sheltered = sf.sheltered.copy()
+    crest = ring & sf.exposed & (b.theta > 0.5 * np.pi)
+    assert sheltered.any() and crest.any() and not sf.concave
+    state = aero_state_at(93.0)
+    q0 = 1e6
+    seen = {}
+
+    def evaluate(a, theta, T, R, T_mean=None):
+        seen["heating"] = (np.array(theta), R)
+        return heating.HeatingResult(q0 * heating.cosine_shape(theta), q0, 0.0, 0.0, 0.0)
+    ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: state), body=b,
+                          heating=SimpleNamespace(evaluate=evaluate))
+    _, loads = coupled.CoupledRun.loads_at(ran, 0.25, np.zeros(6))
+    np.testing.assert_array_equal(seen["heating"][0], b.load_angles())
+    assert seen["heating"][1] == b.nose_radius() == sf.used
+    parts = []
+    advance = skin.advance
+    monkeypatch.setattr(skinbody.skin_mod, "advance",
+                        lambda sk, dt, *a, **k: (parts.append((np.array(a[0]), k["flow"])), advance(sk, dt, *a, **k))[1])
+    M0 = b.mass()
+    b.advance(0.25, 0.25, loads, state=state)
+    assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-13)
+    assert abs(b.energy_balance_residual()) < 1e-8 and b.skin_stats()["momentum_residual"] < 1e-12
+    assert len(parts) >= 2 and all(f is not None for _, f in parts)
+    for q, f in parts:
+        assert not q[sheltered].any() and (q[crest] > 0.0).all()
+        assert not f.dp_ds[sheltered].any() and not f.shear[sheltered].any()
+        assert f.dp_ds[sf.exposed].any() and f.shear[sf.exposed].any()      # the flow does push the exposed face
 
 
 def test_the_history_has_the_sphere_columns_only_under_sphere(coarse_sphere_mesh):
