@@ -25,6 +25,7 @@ ETA = np.linspace(0.0, 12.0, 500)
 AIR_X = {"N2": 0.79, "O2": 0.21}
 F_SEPARATION = 0.005
 HOMOTOPY_STEPS = 12
+BVP_MAX_NODES = 20000    # converged solves reach at most 1866 nodes over the four Holman-Boyd marches; a solve that needs more than 10 times that is not converging, and must fail fast
 
 
 class SimilarityError(RuntimeError):
@@ -151,7 +152,7 @@ class SimilaritySolver:
             guess = (self._sol.x, self._sol.y)
         with warnings.catch_warnings(), np.errstate(all="ignore"):
             warnings.simplefilter("ignore")
-            s = solve_bvp(rhs, bc, *guess, tol=1e-4, max_nodes=200000)
+            s = solve_bvp(rhs, bc, *guess, tol=1e-4, max_nodes=BVP_MAX_NODES)
         if not s.success:
             raise SimilarityError(s.message)
         self._sol = s

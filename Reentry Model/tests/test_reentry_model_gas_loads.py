@@ -147,3 +147,14 @@ def test_meridian_cost():
     dt = time.time() - t0
     print(f"meridian cost {dt:.2f} s")
     assert dt < 5.0
+
+
+def test_meridian_cost_near_separation_failure():
+    """The Kn 0.01 state (Kn_body 0.013) has a separation bin whose solve fails; it must fail fast."""
+    g = gas_loads.GasLoads()
+    g.meridian(aero_state(1.007e-4), RADIUS, T_W)
+    t0 = time.time()
+    g.meridian(aero_state(2.014e-5), RADIUS, T_W)
+    dt = time.time() - t0
+    print(f"Kn 0.01 meridian cost {dt:.2f} s")
+    assert dt < 5.0
