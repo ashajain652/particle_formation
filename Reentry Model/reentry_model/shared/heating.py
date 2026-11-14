@@ -168,6 +168,38 @@ class PhysicsHeating:
         return HeatingResult(q_stag * shape * per_patch_hot_wall, float(q_stag), float(q_c), float(q_fm), float(w))
 
 
+class SimilarityHeating:
+    """Convective heating with the continuum flux and its angular shape taken from the shared gas-loads provider
+    (duck-typed: `meridian(state, radius, T_wall)` and `wall_enthalpy(T)`) instead of Fay-Riddell and Lees, so the
+    heating reaches round the shoulder and onto the lee until the boundary layer separates:
+        q = q_stag [(1 - w) q_sim(theta)/q_sim(0) + w max(cos theta, 0)] (H_e - h_w(T_patch))/(H_e - h_w(T_stag)),
+    q_stag = Matting bridge of q_c = q_sim(0) and q_fm = accommodation rho V (H_e - h_w), w = 1 - q_stag/q_c.
+    The provider is solved at the stagnation patch's wall temperature; `T_mean` is ignored."""
+
+    name = "physics"
+
+    def __init__(self, gas_loads, bridging="matting", matting_n=1.0, accommodation=0.8):
+        if bridging != "matting":
+            raise ValueError("SimilarityHeating supports only matting bridging, got {!r}".format(bridging))
+        self.gas_loads, self.bridging, self.matting_n, self.accommodation = gas_loads, bridging, matting_n, accommodation
+
+    def evaluate(self, state, theta, T_wall, radius, T_mean=None):
+        theta, T_wall = np.asarray(theta, dtype=float), np.asarray(T_wall, dtype=float)
+        rho, V = state.freestream.rho, state.V
+        if rho <= 0.0 or V <= 0.0:
+            return HeatingResult(np.zeros(theta.size), 0.0, 0.0, 0.0, 1.0)
+        L = self.gas_loads.meridian(state, radius, float(T_wall[int(np.argmin(theta))]))
+        q_c = L.q_c0
+        q_fm = self.accommodation * rho * V * (L.H_e - L.h_w)
+        if q_c <= 0.0 or L.H_e - L.h_w <= 0.0:
+            return HeatingResult(np.zeros(theta.size), 0.0, float(q_c), float(max(q_fm, 0.0)), 1.0)
+        q_stag = matting_bridge(q_fm, q_c, self.matting_n)
+        w = 1.0 - q_stag / q_c
+        shape = (1.0 - w) * L.at(theta, "q_c") / q_c + w * cosine_shape(theta)
+        hot = np.maximum(0.0, (L.H_e - self.gas_loads.wall_enthalpy(T_wall)) / (L.H_e - L.h_w))
+        return HeatingResult(q_stag * shape * hot, float(q_stag), float(q_c), float(q_fm), float(w))
+
+
 class TabulatedHeating:
     """Reserved (spec 6.3): q_stag and q(theta)/q_stag interpolated from an offline CFD/DSMC table over (V, rho, T_w).
     Only the interface exists; constructing it raises NotImplementedError."""
@@ -185,5 +217,8 @@ def heating_by_name(name, **options):
     if name == "sesam":
         return SesamEquivalentHeating(**options)
     if name == "physics":
+        if options.get("gas_loads") is not None:
+            return SimilarityHeating(**options)
+        options.pop("gas_loads", None)
         return PhysicsHeating(**options)
     raise ValueError("heating must be one of {}, got {!r}".format(HEATING_NAMES, name))

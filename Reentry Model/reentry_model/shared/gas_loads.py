@@ -85,6 +85,12 @@ class GasLoads:
             self._props = FrozenAirProperties(self._air)
             self._solver = SimilaritySolver(self._props)
 
+    def wall_enthalpy(self, T):
+        """Frozen-air specific enthalpy (J/kg) at wall temperature(s) T (K), the same spline `meridian` uses for h_w;
+        vectorised (a scalar in gives a 0-d array)."""
+        self._build()
+        return np.asarray(self._props._h(np.asarray(T, dtype=float)))
+
     def meridian(self, state, radius, T_wall):
         fs = state.freestream
         key = (fs.rho, fs.T, state.V, radius, T_wall)
