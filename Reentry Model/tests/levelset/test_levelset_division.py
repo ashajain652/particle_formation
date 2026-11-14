@@ -4,12 +4,13 @@ at every depth, the same-side rule, metal thinner than twice the skin depth, and
 
 Every phi here is a body's exact signed distance sampled at the nodes of a box mesh refined through the layer, so its
 level surfaces down to the skin depth are well defined."""
+import functools
 import time
 
 import numpy as np
 
 from reentry_model.levelset.boxmesh import BoxBase, build
-from reentry_model.levelset.cutcell import patches
+from reentry_model.levelset.cutcell import inside_volumes, patches
 from reentry_model.levelset.division import DIVISION_LEVELS, DIVISION_TOL, divide
 from reentry_model.levelset.levelset import pieces
 from reentry_model.levelset.markers import OPPOSED_NORMALS, OWN_SHARE, ownership
@@ -151,9 +152,10 @@ def test_columns_beside_a_convex_edge_narrow_and_meet_on_the_halfway_plane():
     The narrowing is judged on the column's mean cross-section over bands one cell deep, each band's below the last:
     the depth the P1 mesh resolves. Level by level, the volume per unit depth (the coarea measure, ruling T1-a) of a
     column beside the edge jumps where the level surfaces pass the mesh's planes of nodes, since the nearly flat P1
-    cells along the edge hold their volume within a narrow depth there: measured once, rises of 12 to 44 % of the top
-    at single levels, one cell apart. (The level surfaces' own areas fall smoothly but for rises of 4e-4 of the top
-    near the base in two columns; Task 1's report.)"""
+    cells along the edge hold their volume within a narrow depth there: measured once (96 levels, before Task 1's fix
+    round 1 placed such cells' volumes whole at their depths), rises of 12 to 44 % of the top at single levels, one
+    cell apart. (The level surfaces' own areas fall smoothly but for rises of 4e-4 of the top near the base in two
+    columns; Task 1's report.)"""
     lo = np.array([OFF, OFF - BOX_HALF, OFF - BOX_HALF])
     hi = lo + np.array([BOX_LENGTH, 2.0 * BOX_HALF, 2.0 * BOX_HALF])
     base = BoxBase.around((-BOX_H0, -BOX_HALF - BOX_H0, -BOX_HALF - BOX_H0),
@@ -293,3 +295,58 @@ def test_two_pieces_close_their_layers_separately():
     assert len(d.factor) == 2
     assert np.abs(d.factor - 1.0).max() <= DIVISION_TOL
     assert np.array_equal(d.piece, np.where(mk.x[:, 0] < 0.0, cube[0], cube[1]))
+
+
+@functools.lru_cache(maxsize=1)
+def _close_pair():
+    """Two 6 mm cubes 0.7 mm apart across gas, off the grid (the review's case for Task 1's fix round 1): the pair's
+    signed distance on a base mesh refined through both layers at FINE, markers seeded on both as the body seeds them.
+    Returns (mesh, the pair's phi, cube B's own phi, the markers, which of them stand on B, B's lower corner)."""
+    gap, side = 0.7e-3, np.full(3, 6e-3)
+    a_lo = np.array([OFF - 6e-3 - 0.5 * gap, OFF - 3e-3, OFF - 3e-3])
+    b_lo = np.array([OFF + 0.5 * gap, OFF - 3e-3, OFF - 3e-3])
+    fa, fb = _box_sdf(a_lo, a_lo + side), _box_sdf(b_lo, b_lo + side)
+    sdf = lambda p: np.minimum(fa(p), fb(p))
+    base = BoxBase.around((-7e-3 - BOX_H0, -3e-3 - BOX_H0, -3e-3 - BOX_H0), (7e-3 + BOX_H0, 3e-3 + BOX_H0,
+                                                                              3e-3 + BOX_H0), BOX_H0)
+    mesh = _layer_mesh(base, sdf)
+    phi = sdf(mesh.points)
+    mk = seeded(mesh, phi, DESIGN_SPACING, base.lo)
+    return mesh, phi, fb(mesh.points), mk, mk.x[:, 0] >= OFF, b_lo
+
+
+def test_cells_too_thin_for_the_levels_keep_their_volume():
+    """Task 1's fix round 1 (the review's Important 1): a 6 mm cube from x = 0.48 to 6.48 mm, y and z from -2.87 to 3.13
+    mm (both of its faces at an edge equally off their planes of nodes), divided alone with its own markers. Beside each
+    edge, at the depths where the two faces' planes of nodes lie equally deep, the P1 distance is constant over whole
+    cells, which no level surface cuts: here they hold more than 1 % of the layer, and the levels alone left the columns
+    2.1 % short. Placed whole (`division.THIN_SHARE`), the columns close the layer to within DIVISION_TOL."""
+    mesh, _, phi, mk, on_b, _ = _close_pair()
+    f = phi[mesh.tets]
+    layer_volume = inside_volumes(mesh, phi) - inside_volumes(mesh, phi + H)
+    flat = (f.max(axis=1) - f.min(axis=1) < 1e-7) & (layer_volume > 0.0)
+    d = divide(mesh, phi, H, mk.x[on_b], mk.normal[on_b])
+    print("cube B alone: {} markers; {} flat cells hold {:.2%} of the layer; factor - 1 = {:.2e}".format(
+        on_b.sum(), flat.sum(), layer_volume[flat].sum() / layer_volume.sum(), d.factor[0] - 1.0))
+    assert layer_volume[flat].sum() > 0.01 * layer_volume.sum()
+    assert len(d.factor) == 1 and abs(d.factor[0] - 1.0) <= DIVISION_TOL
+
+
+def test_no_column_crosses_from_one_piece_to_another():
+    """Task 1's fix round 1 (the review's Important 2; the controller's ruling T1-i): the same two cubes 0.7 mm apart,
+    divided together. Faces of the two cubes that lie side by side across the gap are parallel, so the same-side rule
+    alone lets markers of one cube own the other's surface; the same-piece rule does not. Each marker's piece is the
+    cube it stands on, no shared boundary joins the two cubes' markers, and each piece's factor is within
+    DIVISION_TOL."""
+    mesh, phi, _, mk, on_b, b_lo = _close_pair()
+    label, _ = pieces(mesh, phi)
+    cube_b = label[np.argmin(np.linalg.norm(mesh.centroids - (b_lo + 3e-3), axis=1))]
+    P = patches(mesh, phi)
+    W = ownership(mk.x, P.tris, P.tri_patch, len(P.area), OWN_SHARE * DESIGN_SPACING, normals=mk.normal,
+                  tri_normal=P.normal[P.tri_patch]).tocoo()
+    assert np.any(on_b[W.row] != (label[P.cell[W.col]] == cube_b))     # the same-side rule alone crosses the gap
+    d = divide(mesh, phi, H, mk.x, mk.normal)
+    print("the pair together: factors - 1 = {}".format(d.factor - 1.0))
+    assert np.array_equal(d.piece == cube_b, on_b)
+    assert len(d.i) > 0 and np.all(on_b[d.i] == on_b[d.j])
+    assert len(d.factor) == 2 and np.abs(d.factor - 1.0).max() <= DIVISION_TOL

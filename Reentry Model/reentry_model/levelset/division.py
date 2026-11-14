@@ -21,7 +21,26 @@ marker owning its centroid. Each column's volume is the trapezoid integral of it
 each piece of metal (`levelset.pieces`) are then scaled by one factor so that its columns' volumes sum to its layer's
 volume, inside_volumes(phi) - inside_volumes(phi + H). The factor's departure from one is the closure measure of design
 section 21.8 item 5; more than DIVISION_TOL fails a step's check, which is the caller's (the body records it; the tests
-raise on it). A column is counted with the piece holding most of its volume.
+raise on it).
+
+Pieces (the controller's ruling T1-i, Task 1's fix round 1). Two pieces of metal are parted by gas, so ownership never
+crosses from one to the other: the level triangles of a piece, and its cells, are divided among that piece's markers
+alone (`ownership` is called piece by piece). A marker's piece is the piece of the cell holding it
+(`transfer.locate`); a marker on a face of a cell that holds no metal takes the piece of the patch of phi whose
+centroid is nearest it. Every column then lies in one piece, and each piece's factor measures that piece's closure
+alone. (With the same-side rule alone, faces of two cubes 0.7 mm apart that lie side by side across the gap are
+parallel, and markers of each owned 0.39 % of the other's surface, the factors moving about 2e-3 apart; the review's
+measurement.)
+
+Cells too thin for the levels (Task 1's fix round 1). Where both faces at an edge stand equally off their planes of
+nodes, the P1 distance is constant over whole cells beside the edge, at the depths where the two faces' planes of nodes
+lie equally deep: no level cuts such a cell, and nearly flat ones are cut by one or two levels with a weight of
+1 / |grad phi| far above one. On a 6 mm cube so placed, 474 cells constant to 0.1 um held 2.0 % of the layer and the
+levels alone left the columns 2.1 % short (the review's measurement, 96 levels). So a cell whose nodes' depths spread
+less than THIN_SHARE level spacings, and whose |grad phi| is not one (to UNIT_SLOPE: a cell of a flat face never is),
+leaves the levels' sums: its exact volume in the layer goes whole to the column owning its centroid's foot (centroid -
+phi g, by the nodes' means, under the same-side rule judged with g itself), shared between the two levels about its
+mean depth with weights whose trapezoid integral is that volume.
 
 Why each triangle's area is divided by |grad phi| (plan 03b Task 1, the controller's ruling T1-a; ruling 1 took the
 area itself). The volume of {phi < -z} on the P1 mesh falls with z at the rate sum(area / |grad phi|) over the level
@@ -31,11 +50,11 @@ cell of a smooth one. But the P1 |grad phi| is not 1 in the cells along a sharp 
 distance (the larger of the two faces' distances) has gradients from 0 to sqrt(2) long, and those cells hold more
 volume than their level surfaces' area shows. With the level areas themselves, the columns of edged bodies fell short
 of their layers by 0.7 to 5.2 % (two 6 mm cubes and the stage 3 box, on cells of 0.175 to 0.7 mm); with the areas over
-|grad phi|, the shortfall is gone, and what remains is the levels' sampling of those edge cells (Task 1's report).
-That sampling sets DIVISION_LEVELS (ruling T1-b; measured once each, on the stage 3 box with markers seeded 2 mm
-apart): with 24, 48 and 96 levels the factor's departure from one was -2.0e-3, +3.3e-3 and +5.6e-4 at 0.7 mm cells
-(divide 2.9, 5.6 and 11.4 s) and -6.6e-4, -8.1e-5 and -1.6e-5 at 0.175 mm (32, 54 and 92 s). It is not monotone in the
-levels, and it is not a bound for other bodies: two 6 mm cubes at 0.7 mm cells closed to only 2.5e-3 at 96 levels.
+|grad phi|, the shortfall is gone, and what remains is the levels' sampling of those edge cells (Task 1's report),
+which the thin cells' exact volumes (below) take most of. That sets DIVISION_LEVELS (ruling T1-b; measured once each,
+on the stage 3 box with markers seeded 2 mm apart, after the fix round): with 24, 48 and 96 levels the factor's
+departure from one was -3.7e-4, +3.3e-3 and +5.6e-4 at 0.7 mm cells (divide 1.6, 3.1 and 6.1 s) and -3.6e-4, -5.0e-4
+and +2.6e-4 at 0.175 mm (18, 29 and 53 s). It is not monotone in the levels, and it is not a bound for other bodies.
 
 Why the recovered gradient, not each cell's own. Carried by its own cell's gradient, each level triangle would move
 rigidly, and the feet of neighbouring triangles would part where the gradient turns. Across a convex edge the level
@@ -63,13 +82,16 @@ from .criteria import nodal_average
 from .cutcell import cell_gradients, inside_volumes, patches
 from .levelset import pieces
 from .markers import OPPOSED_NORMALS, OWN_SHARE, _nearest, ownership
-from .transfer import barycentric
+from .transfer import barycentric, locate
 
-DIVISION_LEVELS = 96       # level surfaces below phi down to H, less the one at phi itself (ruling 1 named 24; the
-                           # controller's ruling T1-b: the fewest of 24, 48 and 96 that closed the stage 3 box to
-                           # DIVISION_TOL at both 0.7 and 0.175 mm cells, its divide at most four times as long as at 24;
-                           # module docstring)
+DIVISION_LEVELS = 24       # level surfaces below phi down to H, less the one at phi itself (ruling 1; the controller's
+                           # ruling T1-b: the fewest of 24, 48 and 96 that close the stage 3 box to DIVISION_TOL at
+                           # both 0.7 and 0.175 mm cells, re-measured after Task 1's fix round 1; module docstring)
 DIVISION_TOL = 1e-3        # a piece's closure factor at most this from one passes the step's check (ruling 1)
+THIN_SHARE = 4.0           # of the level spacing: a cell whose nodes' depths spread less than this is too thin for the
+                           # levels, and its volume is placed whole (module docstring; Task 1's fix round 1)
+UNIT_SLOPE = 1e-6          # a cell whose |grad phi| is within this of one is a piece of a distance, its level surfaces
+                           # exact at any depth, and never counts as thin (module docstring)
 
 _EDGES = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))     # a tetrahedron's edges, by its corners
 
@@ -127,6 +149,20 @@ def _boundary_normals(x, normal, i, j):
     return unit(v)
 
 
+def _marker_pieces(mesh, x, label, top):
+    """Each marker's piece of metal (n,): the piece of the cell holding it (`transfer.locate`); for a marker on a face of
+    a cell that holds no metal, the piece of the patch of phi (`top`) whose centroid is nearest it; -1 where phi has no
+    patch."""
+    piece = np.full(len(x), -1, dtype=np.int64)
+    if not len(x):
+        return piece
+    piece = label[locate(mesh, x)[0]]
+    lost = np.flatnonzero(piece < 0)
+    if len(lost) and len(top.centroid):
+        piece[lost] = label[top.cell[cKDTree(top.centroid).query(x[lost])[1]]]
+    return piece
+
+
 def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
     """The layer between phi and phi = -depth divided among the markers at `x` (n, 3) with normals `normal` (n, 3), at
     `levels` + 1 uniform depths (module docstring). phi must be a signed distance at least `depth` [m] deep, and a cell
@@ -136,8 +172,9 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
     x = np.asarray(x, dtype=float).reshape(-1, 3)
     normal = np.asarray(normal, dtype=float).reshape(-1, 3)
     n = len(x)
-    z = depth * np.arange(levels + 1) / levels
-    w = np.full(levels + 1, depth / levels)
+    dz = depth / levels
+    z = dz * np.arange(levels + 1)
+    w = np.full(levels + 1, dz)
     w[[0, -1]] *= 0.5                                         # the trapezoid rule's weights
     f = phi[mesh.tets]
     layer = np.flatnonzero((f.min(axis=1) < 0.0) & (f.max(axis=1) >= -depth))
@@ -146,51 +183,85 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
     G = nodal_average(mesh, grad, near)
     slope = np.zeros(len(mesh.tets))
     slope[near] = np.linalg.norm(grad, axis=1)                # |grad phi| per cell (a cut cell's is never zero)
+    exact = inside_volumes(mesh, phi) - inside_volumes(mesh, phi + depth)     # each cell's volume in the layer [m3]
+    thin = np.zeros(len(mesh.tets), dtype=bool)               # cells too thin in depth for the levels (docstring)
+    thin[layer] = (f[layer].max(axis=1) - f[layer].min(axis=1) < THIN_SHARE * dz) & (exact[layer] > 0.0) & \
+        (np.abs(slope[layer] - 1.0) > UNIT_SLOPE)
     label, n_pieces = pieces(mesh, phi)
-    tree = cKDTree(x)
+    top = patches(mesh, phi, layer)
+    piece = _marker_pieces(mesh, x, label, top)
+    members = [np.flatnonzero(piece == p) for p in range(n_pieces)]            # each piece's markers (the same-piece
+    trees = [cKDTree(x[mq]) if len(mq) else None for mq in members]           # rule, docstring)
+    if size is None:
+        size = OWN_SHARE * np.sqrt(top.area.sum() / max(n, 1))
     area = np.zeros((n, levels + 1))
-    held = np.zeros((n, n_pieces))                            # each column's volume in each piece [m3]
     found = []
-    top = None
     for k, zk in enumerate(z):
-        P = patches(mesh, phi + zk, layer)
+        P = top if k == 0 else patches(mesh, phi + zk, layer)
         if not len(P.tris):
             continue
         Q = len(P.tris)
-        cell = np.repeat(P.cell[P.tri_patch], 3)
+        tri_cell = P.cell[P.tri_patch]
+        cell = np.repeat(tri_cell, 3)
         corners = P.tris.reshape(-1, 3)
         g = np.einsum("ni,nik->nk", barycentric(mesh, cell, corners), G[mesh.tets[cell]])
         feet = (corners + zk * g).reshape(Q, 3, 3)
         tri_area = 0.5 * np.linalg.norm(np.cross(P.tris[:, 1] - P.tris[:, 0], P.tris[:, 2] - P.tris[:, 0]), axis=1)
-        own = tri_area / slope[P.cell[P.tri_patch]]           # each triangle's measure (docstring)
-        if top is None:
-            top = P
-            size = OWN_SHARE * np.sqrt(tri_area.sum() / max(n, 1)) if size is None else size
+        own = np.where(thin[tri_cell], 0.0, tri_area / slope[tri_cell])       # each triangle's measure (docstring)
         tn = P.normal[P.tri_patch]
-        W, (bi, bj, bl) = ownership(x, feet, np.arange(Q), Q, size, normals=normal, tri_normal=tn, boundaries=True,
-                                    measure=P.tris)
-        W = W.tocoo()
-        foot = np.bincount(W.col, W.data, minlength=Q)
-        ok = foot[W.col] > 0.0
-        rows, cols = W.row[ok], W.col[ok]
-        vals = W.data[ok] / foot[cols] * own[cols]
-        flat = np.flatnonzero(foot <= 0.0)                    # carried to a segment or a point (or owned by none)
-        if len(flat):
-            _, o = _nearest(tree, feet[flat].mean(axis=1), 1, normal, tn[flat])
-            mine = o[:, 0] < n
-            rows = np.concatenate([rows, o[mine, 0]])
-            cols = np.concatenate([cols, flat[mine]])
-            vals = np.concatenate([vals, own[flat[mine]]])
-        area[:, k] = np.bincount(rows, vals, minlength=n)
-        np.add.at(held, (rows, label[P.cell[P.tri_patch]][cols]), w[k] * vals)
-        found.append((np.full(len(bi), k), bi, bj, bl))
+        tri_piece = label[tri_cell]
+        rows, vals = [], []
+        for p, mq in enumerate(members):
+            tq = np.flatnonzero(tri_piece == p)
+            if not len(tq) or not len(mq):
+                continue
+            W, (bi, bj, bl) = ownership(x[mq], feet[tq], np.arange(len(tq)), len(tq), size, normals=normal[mq],
+                                        tri_normal=tn[tq], boundaries=True, measure=P.tris[tq])
+            W = W.tocoo()
+            foot = np.bincount(W.col, W.data, minlength=len(tq))
+            ok = foot[W.col] > 0.0
+            r, c = W.row[ok], W.col[ok]
+            v = W.data[ok] / foot[c] * own[tq[c]]
+            flat = np.flatnonzero(foot <= 0.0)                # carried to a segment or a point (or owned by none)
+            if len(flat):
+                o = _nearest(trees[p], feet[tq[flat]].mean(axis=1), 1, normal[mq], tn[tq[flat]])[1][:, 0]
+                mine = o < len(mq)
+                r, v = np.concatenate([r, o[mine]]), np.concatenate([v, own[tq[flat[mine]]]])
+            rows.append(mq[r]), vals.append(v)
+            found.append((np.full(len(bi), k), mq[bi], mq[bj], bl))
+        if rows:
+            area[:, k] = np.bincount(np.concatenate(rows), np.concatenate(vals), minlength=n)
+
+    # the thin cells' volumes, each whole to the column owning its centroid's foot, at the two levels about its depth
+    for p, mq in enumerate(members):
+        cells = np.flatnonzero(thin & (label == p))
+        if not len(cells) or not len(mq):
+            continue
+        T = mesh.tets[cells]
+        fc, gc = phi[T].mean(axis=1), G[T].mean(axis=1)
+        o = _nearest(trees[p], mesh.points[T].mean(axis=1) - fc[:, None] * gc, 1, normal[mq], gc)[1][:, 0]
+        mine = o < len(mq)
+        s = np.clip(-fc[mine], 0.0, depth) / dz
+        kk = np.minimum(np.floor(s).astype(np.int64), levels - 1)
+        rows, V = mq[o[mine]], exact[cells[mine]]
+        np.add.at(area, (rows, kk), V * (1.0 - (s - kk)) / w[kk])
+        np.add.at(area, (rows, kk + 1), V * (s - kk) / w[kk + 1])
 
     # the shared boundaries, at every level, and the pairs whose normals oppose that meet face to face (docstring)
     lev, bi, bj, bl = (np.concatenate(v) for v in zip(*found)) if found else (np.zeros(0, dtype=np.int64),) * 4
+    labelled = layer[label[layer] >= 0]
+    node_piece = np.full(len(phi), -1, dtype=np.int64)          # each node's piece, from a layer cell holding it
+    for corner in range(4):
+        node_piece[mesh.tets[labelled, corner]] = label[labelled]
     nodes = np.flatnonzero((phi < 0.0) & (phi >= -depth))
     owner = np.full(len(phi), n, dtype=np.int64)
-    if len(nodes) and n:
-        owner[nodes] = _nearest(tree, mesh.points[nodes] - phi[nodes, None] * G[nodes], 1, normal, G[nodes])[1][:, 0]
+    for p, mq in enumerate(members):
+        sel = nodes[node_piece[nodes] == p]
+        if not len(sel) or not len(mq):
+            continue
+        o = _nearest(trees[p], mesh.points[sel] - phi[sel, None] * G[sel], 1, normal[mq], G[sel])[1][:, 0]
+        mine = o < len(mq)
+        owner[sel[mine]] = mq[o[mine]]
     T = mesh.tets[layer]
     ci, cj = [], []
     for a, b in _EDGES:
@@ -204,17 +275,13 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
     np.add.at(length, (np.searchsorted(key, bi * n + bj), lev.astype(np.int64)), bl)
     i, j = key // n, key % n
 
-    # pieces and closure (docstring)
-    piece = np.where(held.sum(axis=1) > 0.0, np.argmax(held, axis=1) if n_pieces else -1, -1)
-    lost = np.flatnonzero(piece < 0)
-    if len(lost) and top is not None:
-        _, t = cKDTree(top.centroid).query(x[lost])
-        piece[lost] = label[top.cell[t]]
-    layer_volume = np.bincount(label[label >= 0], (inside_volumes(mesh, phi) - inside_volumes(mesh, phi + depth))
-                               [label >= 0], minlength=n_pieces)
-    columns = np.bincount(piece[piece >= 0], (area @ w)[piece >= 0], minlength=n_pieces)
+    # closure, piece by piece (docstring)
+    inside = label >= 0
+    layer_volume = np.bincount(label[inside], exact[inside], minlength=n_pieces)
+    counted = piece >= 0
+    columns = np.bincount(piece[counted], (area @ w)[counted], minlength=n_pieces)
     with np.errstate(divide="ignore", invalid="ignore"):
         factor = np.where(columns > 0.0, layer_volume / columns, np.where(layer_volume > 0.0, np.inf, 1.0))
-    area = area * np.where(piece >= 0, factor[np.maximum(piece, 0)] if n_pieces else 1.0, 1.0)[:, None]
+    area = area * np.where(counted, factor[np.maximum(piece, 0)] if n_pieces else 1.0, 1.0)[:, None]
     return Division(z, area, area @ w, i, j, length, _boundary_normals(x, normal, i, j),
                     np.einsum("ek,ek->e", normal[i], normal[j]) < OPPOSED_NORMALS, piece, factor)
