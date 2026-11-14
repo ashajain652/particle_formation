@@ -377,7 +377,10 @@ class SurfaceFlow:
             # the provider's loads on the whole body: pressure and its gradient (so G) and shear come from it, the lee included
             L = self.gas_loads.meridian(state, radius, float(T_w[np.argmin(theta)]))
             p_w = L.at(theta, "p_w")
-            lam_w, kn_local = wall_knudsen(p_w, T_w, mu_wall, radius)     # the lee's from its own pressure
+            # the windward lam_w, kn_local, slip factor, u_eff, closure and flagged stay as today (the classic equilibrium p_w);
+            # only the lee's Knudsen number and slip factor come from the provider's lee pressure
+            lam_L, kn_L = wall_knudsen(p_w, T_w, mu_wall, radius)
+            lam_w, kn_local = np.where(windward, lam_w, lam_L), np.where(windward, kn_local, kn_L)
             slip = 1.0 / (1.0 + self.slip_C * kn_local)
             tau_c = tau_c_out = L.at(theta, "tau")
             if L.shear_source == "similarity":
@@ -386,18 +389,14 @@ class SurfaceFlow:
                     f = self.bridging(state.kn)
                     tau = (1.0 - f) * tau_slip + f * tau_fm
                 elif self.rarefied_shear == "slip":
-                    tau = np.where(kn_local >= KN_LOCAL_SLIP, tau_fm, tau_slip)
+                    # the free-molecular switch is the windward side's; the lee keeps the slip-corrected continuum shear
+                    tau = np.where(windward & (kn_local >= KN_LOCAL_SLIP), tau_fm, tau_slip)
                 else:
                     f = self.bridging(state.kn)
                     tau = (1.0 - f) * tau_slip + f * tau_fm
             else:
                 tau = tau_c                                                # already rarefied: no slip factor, no blending
             tau = np.where(np.isfinite(tau), tau, 0.0)
-            if branch == BRANCH_MERGED:
-                closure = np.full(n, CLOSURE_COUETTE)
-            else:
-                closure = np.where(windward & (kn_local < KN_LOCAL_CONTINUUM), CLOSURE_GIRIN, CLOSURE_COUETTE)
-                flagged = closure != CLOSURE_GIRIN
             dp_ds_w = L.at(theta, "dp_ds")
             G = -dp_ds_w + G_inertial
         mach_e = np.where(a_e > 0.0, u_e / np.maximum(a_e, 1e-300), 0.0)

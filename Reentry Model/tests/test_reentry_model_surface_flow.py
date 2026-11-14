@@ -294,3 +294,28 @@ def test_free_molecular_and_degenerate():
     assert (r.p_w == hb_state(rho).freestream.p).all()
     r0 = run(flow, 0.0, [0.0, 60.0, 120.0, 180.0])
     assert np.isfinite(r0.tau).all() and np.isfinite(r0.G).all()
+
+
+def test_lee_shear_survives_a_high_lee_knudsen_number():
+    """Shock-layer slip mode: the lee has no free-molecular switch, so its shear stays the slip-corrected continuum shear
+    where the lee wall Knudsen number is above 0.1, and does not jump to zero before the separation angle."""
+    rho = 3.0e-5                                          # Kn_body about 0.009, the shock-layer branch
+    flow, th_deg = provider_flow(), np.arange(100.0, 160.0, 2.0)
+    r = run(flow, rho, th_deg)
+    L = flow.gas_loads.meridian(hb_state(rho), _RAD, _TW)
+    mu = sf.gas.wilke_viscosity(_TW, {"N2": 0.79, "O2": 0.21}, flow.air.molar_masses)
+    _, kn_lee = sf.wall_knudsen(r.p_w, np.full(th_deg.size, _TW), np.full(th_deg.size, mu), _RAD)
+    ahead = th_deg < L.separation_deg - 3.0
+    assert r.branch == sf.BRANCH_SHOCK_LAYER and (kn_lee[ahead] >= sf.KN_LOCAL_SLIP).any()
+    assert (r.tau[ahead] > 0.0).all()
+    assert (r.tau[th_deg >= L.separation_deg] == 0.0).all()
+    ratio = r.tau[ahead][1:] / r.tau[ahead][:-1]
+    assert ratio.min() > 0.5 and ratio.max() < 1.5       # no jump between neighbouring lee patches
+
+
+def test_windward_knudsen_closure_and_edge_fields_stay_classic():
+    for rho in (1.007e-4, 2.014e-5, 8.057e-7):    # shock layer, merged, merged
+        th = [0.0, 20.0, 45.0, 70.0, 90.0]
+        a, b = run(provider_flow(), rho, th), run(sf.SurfaceFlow(), rho, th)
+        for f in ("lambda_w", "kn_local", "u_eff", "closure", "flagged"):
+            np.testing.assert_array_equal(getattr(a, f), getattr(b, f), err_msg=f)
