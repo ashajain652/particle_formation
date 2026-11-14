@@ -1222,9 +1222,28 @@ The two rules also load different corners. A corner windward under `normals` (it
 flow and ahead of the centroid's plane: its `windward_corners()`) that is sheltered under `sphere` loses its heating, shear
 and spraying: 401 on the 100 mm body and 34 on the 50 mm body. A corner leeward under `normals` that is exposed under
 `sphere` is one whose own normal faces away from the flow, such as a crest top; on both bodies every one of them has a ray
-angle of at most 90 degrees from the fitted centre, so it is newly heated: 158 and 66. **(assumed, not measured)** Whether
-these moved loads, with the sharp step in heating where exposed corners meet sheltered ones (14.2), make refused mesh moves
-more likely on a deformed body is not known until such a body is flown under the new default (14.7).
+angle of at most 90 degrees from the fitted centre, so it is newly heated: 158 and 66. Whether these moved loads, with the
+sharp step in heating where exposed corners meet sheltered ones (14.2), make refused mesh moves more likely on a deformed
+body was then measured on short resumed flights.
+
+**(verified, one run of each rule on each body)** On 2026-11-14 both saved bodies were resumed under each rule, the earlier
+rule at today's `run` defaults (`--size-feedback current --leeward-test centroid`); the report is
+`output/shape_feedback/resume_check/report.md` of the main checkout (git-ignored). The 50 mm body flew four macro steps of
+0.5 s, from 178.5 s to 180.5 s. Each rule had two refused mesh moves, each cured by one rebuild, and no move was refused
+after a rebuild; the first refusal came at the same instant (178.75 s) under both rules, so it belongs to the shape and the
+mesh at that moment, not to the rule, and the worst radius ratio of a kept move was 0.052 under both. Its sheltered corners
+fell from 116 to 4 over the four steps. The 100 mm body flew 80 macro steps of 0.0125 s, from 32.5 s to 33.5 s, with no
+refused move and no rebuild under either rule; the smallest radius ratio of each step's last move fell steadily from 0.118
+to 0.085 under `sphere` and to 0.089 under `normals`, so the new rule brought the mesh a little closer to the 0.05 limit
+(a decline of 0.033 against 0.029 over the second), and its sheltered corners rose from 568 to 700. Every flight exited 0
+at its end time. Over these spans the new rule did not make refused moves more frequent; on the 100 mm body it would bring
+the next rebuild somewhat earlier. **(verified, same runs)** The new rule melts both bodies faster. The metal drawn from the
+3D model into the skins was 12.9 g against 8.9 g on the 50 mm body (45 % more) and 5.8 g against 3.3 g on the 100 mm body
+(74 % more), while on the 100 mm body the whole-body convective heating was only about 5 % higher (16.0 against 15.2 kW,
+averaged over the second) and the stagnation heating 25 % higher (2.62 against 2.10 MW/m^2, from the radii 50.9 and
+83.8 mm). **(assumed)** The heat concentrated at the smaller nose radius is taken to be why the melting rises far more than
+the total heating; this was not tested. No metal was released as droplets in any of these flights, so how the spray
+responds to the rule is not measured.
 
 ### 14.5 The interface, and what it was checked against
 
@@ -1296,4 +1315,5 @@ base melt-back on 4 mm elements, is the same size in every variant, including th
 (commit 345fa6a), where the smallest radius ratio of the touched elements was 0.0439 against the 0.05 limit and the move was
 refused, and the retry on the rebuilt mesh passed at 0.1451. Under `normals` the same move has a ratio of 0.0667. The test is
 pinned to `normals` for that reason. This was one coarse mesh, one gas state, two steps and one run per variant. A real
-spraying flight on the sphere default should be watched for refused rear moves; no real flight has been run on it yet.
+spraying flight on the sphere default should be watched for refused rear moves; the short resumed flights of 14.4 are the
+only deformed-body flights on it so far, and none of them sprayed.
