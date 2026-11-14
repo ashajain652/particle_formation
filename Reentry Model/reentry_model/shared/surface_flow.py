@@ -265,8 +265,11 @@ class SurfaceFlowResult:
 
 
 class SurfaceFlow:
+    gas_loads = None     # the interim gas-loads provider (`gas_loads.GasLoads`, duck-typed here: it imports this module);
+                         # None is the classic loads, and what an instance pickled before the provider existed reads
+
     def __init__(self, air=None, rarefied_shear="slip", bridging=None, sigma_v=SIGMA_V, sigma_t=SIGMA_T,
-                 gamma_pm=GAMMA_PM, kn_body_shock=KN_BODY_SHOCK, kn_body_fm=KN_BODY_FM):
+                 gamma_pm=GAMMA_PM, kn_body_shock=KN_BODY_SHOCK, kn_body_fm=KN_BODY_FM, gas_loads=None):
         if rarefied_shear not in RAREFIED_SHEAR_NAMES:
             raise ValueError("rarefied_shear must be one of {}, got {!r}".format(RAREFIED_SHEAR_NAMES, rarefied_shear))
         if not 1.0 < gamma_pm < 2.0:
@@ -276,6 +279,8 @@ class SurfaceFlow:
         self.slip_C, self.sigma_t, self.gamma_pm = (2.0 - sigma_v) / sigma_v, sigma_t, gamma_pm
         self.kn_body_shock, self.kn_body_fm = kn_body_shock, kn_body_fm
         self.last_bins = None
+        if gas_loads is not None:
+            self.gas_loads = gas_loads
 
     # -- the gate ---------------------------------------------------------------------------------------------
     def branch_of(self, state):
@@ -322,10 +327,14 @@ class SurfaceFlow:
         if branch == BRANCH_FREE_MOLECULAR:
             # Schaaf-Chambre from the freestream directly: no compression model, no edge state, no boundary layer
             lam_inf = aero.mean_free_path(fs.rho, fs.m_bar)
+            tau_fm_out, tau_fm_cont = tau_fm, zero
+            if self.gas_loads is not None:
+                # the provider's shear (Daniels and Schwartzentruber's, already rarefied) on both sides; p_w stays p_inf
+                tau_fm_out = tau_fm_cont = self.gas_loads.meridian(state, radius, float(T_w[np.argmin(theta)])).at(theta, "tau")
             return SurfaceFlowResult(branch, state.kn, float("nan"), state.ma, float("nan"), p_inf, float("nan"), decel,
                                      self.gamma_pm, np.full(n, p_inf), zero, zero, np.full(n, fs.rho), np.full(n, fs.T),
                                      zero, zero, nan, np.full(n, lam_inf), np.full(n, lam_inf / radius),
-                                     np.full(n, CLOSURE_COUETTE), np.ones(n, dtype=bool), tau_fm, zero, tau_fm,
+                                     np.full(n, CLOSURE_COUETTE), np.ones(n, dtype=bool), tau_fm_out, tau_fm_cont, tau_fm,
                                      np.where(windward, G_inertial, 0.0), zero)
         # shock-layer construction: the reservoir (also the bridge's continuum endpoint in the merged branch)
         stag = self.air.stagnation(fs.rho, fs.T, V)
@@ -363,6 +372,34 @@ class SurfaceFlow:
         dp_ds = np.gradient(p_b, s_b)                              # from the actual p_w(theta), not a Newtonian formula
         G = np.where(windward, -at(dp_ds) + G_inertial, 0.0)
         dp_ds_w = np.where(windward, at(dp_ds), 0.0)
+        tau_c_out = np.where(windward, tau_c, 0.0)
+        if self.gas_loads is not None:
+            # the provider's loads on the whole body: pressure and its gradient (so G) and shear come from it, the lee included
+            L = self.gas_loads.meridian(state, radius, float(T_w[np.argmin(theta)]))
+            p_w = L.at(theta, "p_w")
+            lam_w, kn_local = wall_knudsen(p_w, T_w, mu_wall, radius)     # the lee's from its own pressure
+            slip = 1.0 / (1.0 + self.slip_C * kn_local)
+            tau_c = tau_c_out = L.at(theta, "tau")
+            if L.shear_source == "similarity":
+                tau_slip = tau_c * slip
+                if branch == BRANCH_MERGED:
+                    f = self.bridging(state.kn)
+                    tau = (1.0 - f) * tau_slip + f * tau_fm
+                elif self.rarefied_shear == "slip":
+                    tau = np.where(kn_local >= KN_LOCAL_SLIP, tau_fm, tau_slip)
+                else:
+                    f = self.bridging(state.kn)
+                    tau = (1.0 - f) * tau_slip + f * tau_fm
+            else:
+                tau = tau_c                                                # already rarefied: no slip factor, no blending
+            tau = np.where(np.isfinite(tau), tau, 0.0)
+            if branch == BRANCH_MERGED:
+                closure = np.full(n, CLOSURE_COUETTE)
+            else:
+                closure = np.where(windward & (kn_local < KN_LOCAL_CONTINUUM), CLOSURE_GIRIN, CLOSURE_COUETTE)
+                flagged = closure != CLOSURE_GIRIN
+            dp_ds_w = L.at(theta, "dp_ds")
+            G = -dp_ds_w + G_inertial
         mach_e = np.where(a_e > 0.0, u_e / np.maximum(a_e, 1e-300), 0.0)
         u_e, rho_e, mu_e = (np.where(np.isfinite(x), x, 0.0) for x in (u_e, rho_e, mu_e))
         # the integrated shear of the slip band (sub-plan 22 Task 5i), from the final bridged shear: the merged branch only
@@ -370,5 +407,5 @@ class SurfaceFlow:
         return SurfaceFlowResult(branch, float(state.kn), re_shock, float(state.ma), float(stag.p), p_inf, float(phi_star),
                                  decel, self.gamma_pm, p_w, u_e, u_e * slip, rho_e, T_e, mu_e, mach_e,
                                  np.where(windward, delta_a, np.nan), lam_w, np.where(windward, kn_local, np.inf),
-                                 closure, flagged | ~windward, tau, np.where(windward, tau_c, 0.0), tau_fm, G, dp_ds_w,
+                                 closure, flagged | ~windward, tau, tau_c_out, tau_fm, G, dp_ds_w,
                                  shear_integral, float(radius) if shear_integral is not None else None)
