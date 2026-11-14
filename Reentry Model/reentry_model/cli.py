@@ -8,15 +8,15 @@
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
         --size-feedback current|initial --leeward-test facing|centroid --rheology composite|bridge --geometry-stop on|off
-        --spray-gates 2026-11-10|before --slip-band on|off --dispersion table|profile ...]
+        --windward-loads sphere|normals --spray-gates 2026-11-10|before --slip-band on|off --dispersion table|profile ...]
                                      (the layered skins, the default with --thermal fem and --melt on, their flow and
                                       spraying the default there; the element model with --surface-model elements, and
                                       the default of a thermal run that does not melt)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
         --hand-down on|off --sideways-heat depth|height --size-feedback current|initial --leeward-test facing|centroid
-        --rheology composite|bridge --geometry-stop on|off --spray-gates 2026-11-10|before --slip-band on|off
-        --dispersion table|profile]
+        --rheology composite|bridge --geometry-stop on|off --windward-loads sphere|normals
+        --spray-gates 2026-11-10|before --slip-band on|off --dispersion table|profile]
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
@@ -175,6 +175,13 @@ def skin_leeward_test_of(args):
     return args.leeward_test or "centroid"
 
 
+def skin_windward_loads_of(args):
+    """How a skin run's windward loads are read: `sphere`, from one sphere fitted to the exposed tops with each corner at the
+    angle of the ray from its centre, unless --windward-loads says `normals`, the earlier rule (each corner's own normal, with
+    --size-feedback's nose radius and --leeward-test's windward test; fitted-sphere loads design, Asha, 2026-11-13)."""
+    return args.windward_loads or "sphere"
+
+
 def spraying_run(args):
     """Whether a run of `run`'s arguments has a spray model: --melt on with the layered skins' flow on, or with the element model
     and Girin's removal (the instant-removal devices and the heat-only skins have none)."""
@@ -288,7 +295,7 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
                      slurry_spray=False, spread_limit=None, part_count_from="moves",
                      hand_down=True, sideways_pairing="depth", size_feedback="current", melting_skins=False,
                      leeward_test="centroid", geometry_stop=True, rheology=viscosity_laws.DEFAULT_LAW,
-                     dispersion="profile"):
+                     dispersion="profile", windward_loads="sphere"):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
@@ -351,6 +358,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_nose-{}".format(size_feedback)
     if leeward_test != "centroid":
         out += "_leeward-{}".format(leeward_test)
+    if windward_loads != "sphere":
+        out += "_windward-{}".format(windward_loads)
     if not geometry_stop:
         out += "_geomstop-off"
     if melting_skins and rheology != viscosity_laws.DEFAULT_LAW:       # the law concerns only the skins that melt
@@ -412,6 +421,11 @@ def resume_arguments(rs):
     rs.add_argument("--geometry-stop", choices=("on", "off"), default=None,
                     help="whether the skins' flight ends itself at a geometry breach (default: the saved flight's, on for one "
                          "saved before the option existed)")
+    rs.add_argument("--windward-loads", choices=skinbody.WINDWARD_LOADS, default=None,
+                    help="how the skins read their windward loads: sphere, from one sphere fitted to the exposed tops, each "
+                         "corner at the angle of the ray from its centre, or normals, the earlier rule, each corner's own normal "
+                         "(default: the saved flight's, normals for one saved before the option existed; a switch adds or drops "
+                         "the three sphere columns of the history)")
     rs.add_argument("--rheology", choices=viscosity_laws.LAWS, default=None,
                     help="the skins' viscosity law, composite or bridge (default: the saved flight's, bridge for one saved "
                          "before the option existed)")
@@ -625,6 +639,12 @@ def build_parser():
                          "describing the metal: the core's front lies past the sphere's original centre, or the column tops "
                          "enclose more than 1.25 times the metal's volume, whichever comes first (Asha, 2026-11-12, open item 4; "
                          "default on, off named _geomstop-off)")
+    me.add_argument("--windward-loads", choices=skinbody.WINDWARD_LOADS, default=None,
+                    help="with --surface-model skin: how the skins read their windward loads: sphere, from one sphere fitted to "
+                         "the exposed tops, each corner at the angle of the ray from its centre, with the corners the ray "
+                         "re-enters the tops sheltered, or normals, the earlier rule, each corner's own normal, with "
+                         "--size-feedback's nose radius and --leeward-test's windward test, which apply only under normals "
+                         "(default sphere, normals named _windward-normals; fitted-sphere loads, Asha, 2026-11-13)")
     me.add_argument("--particles", dest="particles", action="store_true", default=True,
                     help="write the particle source table and the size distribution of a spraying run (default)")
     me.add_argument("--no-particles", dest="particles", action="store_false")
@@ -684,7 +704,8 @@ def build_thermal(args, settings, mass, spool=None):
                                      spool=spool if flow else None, spread_limit=spread_limit_of(args),
                                      part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args),
                                      sideways_pairing=args.sideways_heat, size_feedback=skin_size_feedback_of(args),
-                                     leeward_test=skin_leeward_test_of(args), geometry_stop=skin_geometry_stop_of(args))
+                                     leeward_test=skin_leeward_test_of(args), geometry_stop=skin_geometry_stop_of(args),
+                                     windward_loads=skin_windward_loads_of(args))
     elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray_model_of(args, mat)
@@ -723,8 +744,10 @@ def build_thermal(args, settings, mass, spool=None):
         info["skin"]["hand_down"] = "on" if hand_down_of(args) else "off"
         if args.sideways_heat != "depth":
             info["skin"]["sideways_heat"] = args.sideways_heat
-        info["skin"]["size_feedback"] = skin_size_feedback_of(args)        # always: the default changed (Task 5g)
-        info["skin"]["leeward_test"] = skin_leeward_test_of(args)          # always: it is new, and centroid by default (Task 5j)
+        info["skin"]["windward_loads"] = skin_windward_loads_of(args)      # always: it is new, and sphere by default
+        if skin_windward_loads_of(args) == "normals":                      # the earlier rule's two options, which the sphere ignores
+            info["skin"]["size_feedback"] = skin_size_feedback_of(args)    # always: the default changed (Task 5g)
+            info["skin"]["leeward_test"] = skin_leeward_test_of(args)      # always: it is new, and centroid by default (Task 5j)
         info["geometry_stop"] = "on" if skin_geometry_stop_of(args) else "off"       # top level, as `cmd_resume` records it
         info["skin"]["rheology"] = args.rheology                           # always: the default changed (Asha, 2026-11-12)
         info["skin"]["internal_solid_fraction"] = viscosity_laws.INTERNAL_SOLID_FRACTION      # the composite law's assumed value
@@ -791,6 +814,7 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     melting_skins=melting_skins_of(args),
                                                                     leeward_test=skin_leeward_test_of(args),
                                                                     geometry_stop=skin_geometry_stop_of(args),
+                                                                    windward_loads=skin_windward_loads_of(args),
                                                                     rheology=args.rheology,
                                                                     dispersion=dispersion_of(args) if spraying_skins_of(args)
                                                                     else None),
@@ -893,6 +917,13 @@ def cmd_run(args, parser):
         parser.error("--sideways-heat height needs --surface-model skin: it pairs the skins' cells")
     if args.leeward_test is not None and args.surface_model != "skin":
         parser.error("--leeward-test needs --surface-model skin: it says which of the skins' top corners are windward")
+    if args.windward_loads is not None and args.surface_model != "skin":
+        parser.error("--windward-loads needs --surface-model skin: it says how the skins read their windward loads")
+    if args.surface_model == "skin" and skin_windward_loads_of(args) == "sphere":
+        for flag, given in (("--leeward-test", args.leeward_test), ("--size-feedback", args.size_feedback)):
+            if given is not None:
+                parser.error("{} applies only with --windward-loads normals: the sphere rule has its own windward test and "
+                             "nose radius".format(flag))
     if args.geometry_stop is not None and args.surface_model != "skin":
         parser.error("--geometry-stop needs --surface-model skin: it ends a flight whose skin columns stop describing the metal")
     if args.surface_model == "skin":
@@ -1213,6 +1244,15 @@ def cmd_resume(args, parser):
         if not skins:
             parser.error("--geometry-stop needs a saved flight of skins: it ends a flight whose columns stop describing the metal")
         changed["--geometry-stop"] = args.geometry_stop
+    if args.windward_loads is not None:
+        if not skins:
+            parser.error("--windward-loads needs a saved flight of skins: it says how they read their windward loads")
+        changed["--windward-loads"] = args.windward_loads
+    if skins and (args.windward_loads or getattr(run.body, "windward_loads", "normals")) == "sphere":
+        for flag, given in (("--leeward-test", args.leeward_test), ("--size-feedback", args.size_feedback)):
+            if given is not None:
+                parser.error("{} applies only with --windward-loads normals: the sphere rule has its own windward test and "
+                             "nose radius".format(flag))
     if args.rheology is not None:
         if not skins:
             parser.error("--rheology needs a saved flight of skins: it sets the viscosity of their cells")
@@ -1284,7 +1324,10 @@ def cmd_resume(args, parser):
         run.body.size_feedback = args.size_feedback
     if "--leeward-test" in changed and skins:
         run.body.leeward_test = args.leeward_test
-        run.body._leeward_raw = run.body._nose_raw = None      # the saved step's surface read again under the new test
+        run.body._leeward_raw = run.body._nose_raw = run.body._sphere_raw = None      # the saved step's surface read again under the new test
+    if "--windward-loads" in changed and skins:
+        run.body.windward_loads = args.windward_loads
+        run.body._sphere_raw = run.body._nose_raw = None       # the fits read again under the new rule
     if "--geometry-stop" in changed and skins:
         run.body.geometry_stop = args.geometry_stop == "on"
     if "--rheology" in changed and skins:
@@ -1308,7 +1351,10 @@ def cmd_resume(args, parser):
         # (Task 5k, review minor 2: under a changed --size-feedback or --leeward-test the saved row's own nose and leeward
         # columns were computed under the old setting, while the first resumed step's loads read the new one, so they are
         # recomputed here, as the saved step's surface reads under the new setting)
-        redo = "--size-feedback" in changed or "--leeward-test" in changed
+        redo = "--size-feedback" in changed or "--leeward-test" in changed or "--windward-loads" in changed
+        if "--windward-loads" in changed:      # a switch to `normals` drops the sphere columns, one to `sphere` adds them
+            for key in skinbody.SPHERE_COLUMNS:
+                state["row"].pop(key, None)
         state["row"].update({k: v for k, v in run.body.nose_stats().items() if redo or k not in state["row"]})
         # likewise a state saved before the geometry columns: the geometry at the saved step, as the nose columns are
         state["row"].update({k: v for k, v in run.body.geometry_stats().items() if k not in state["row"]})
@@ -1332,7 +1378,7 @@ def cmd_resume(args, parser):
                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
                       ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback"), ("leeward_test", "--leeward-test"),
-                      ("geometry_stop", "--geometry-stop"), ("rheology", "--rheology"),
+                      ("geometry_stop", "--geometry-stop"), ("windward_loads", "--windward-loads"), ("rheology", "--rheology"),
                       ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band"), ("dispersion", "--dispersion")):
         if flag in changed:
             setattr(saved, key, changed[flag])
@@ -1340,7 +1386,7 @@ def cmd_resume(args, parser):
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
           "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, geometry stop {}, "
-          "rheology {}, spray gates {}, slip band {}, dispersion {}, save state at {}; files {}".format(
+          "windward loads {}, rheology {}, spray gates {}, slip band {}, dispersion {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
@@ -1352,6 +1398,7 @@ def cmd_resume(args, parser):
               run.body.size_feedback if skins else "n/a",
               run.body.leeward_test if skins else "n/a",
               ("on" if run.body.geometry_stop else "off") if skins else "n/a",
+              run.body.windward_loads if skins else "n/a",
               run.body.settings.rheology if skins else "n/a",
               run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
               ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
@@ -1375,11 +1422,13 @@ def cmd_resume(args, parser):
         thermal_info["hand_down"] = "off"
     if skins and run.body.sideways_pairing != "depth":
         thermal_info["sideways_heat"] = run.body.sideways_pairing
-    if skins and run.body.size_feedback == "current":
-        thermal_info["size_feedback"] = "current"
-    if skins and run.body.leeward_test == "centroid":
-        thermal_info["leeward_test"] = "centroid"
+    if skins and run.body.windward_loads == "normals":      # the earlier rule's options, which the sphere ignores
+        if run.body.size_feedback == "current":
+            thermal_info["size_feedback"] = "current"
+        if run.body.leeward_test == "centroid":
+            thermal_info["leeward_test"] = "centroid"
     if skins:
+        thermal_info["windward_loads"] = run.body.windward_loads
         thermal_info["geometry_stop"] = "on" if run.body.geometry_stop else "off"
         thermal_info["rheology"] = run.body.settings.rheology      # always, whether saved, given here or the old state's bridge
         thermal_info["internal_solid_fraction"] = viscosity_laws.INTERNAL_SOLID_FRACTION      # as `run` records it
