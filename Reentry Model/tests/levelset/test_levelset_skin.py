@@ -20,10 +20,21 @@ def column(mat, thick, T, kappa=(0.0, 0.0), settings=None, area=AREA):
 
 def test_settings_defaults_and_presets():
     s = SkinSettings()
-    assert (s.cell, s.fine_zone, s.growth, s.stub, s.substep, s.swell) == (10e-6, 0.4e-3, 1.10, 0.8e-3, 0.010, True)
+    assert (s.cell, s.fine_zone, s.growth, s.stub, s.substep, s.swell, s.depth) == \
+        (10e-6, 0.4e-3, 1.10, 0.8e-3, 0.010, True, 1.2e-3)
     assert SKIN_PRESETS == {"production": 10e-6, "dev": 20e-6}
+    for cell in SKIN_PRESETS.values():                       # every preset passes the depth checks
+        assert SkinSettings(cell=cell).depth == 1.2e-3
     with pytest.raises(ValueError):
         SkinSettings(growth=0.9)
+    with pytest.raises(ValueError, match="fine zone"):
+        SkinSettings(depth=0.3e-3)                          # a fine zone deeper than the skin
+    with pytest.raises(ValueError):
+        SkinSettings(depth=0.0, fine_zone=0.0)
+    with pytest.raises(ValueError, match="two fine cells"):
+        SkinSettings(cell=0.25e-3)                          # fewer than two fine cells in the fine zone
+    with pytest.raises(ValueError, match="two fine cells"):
+        SkinSettings(cell=0.25e-3, fine_zone=0.6e-3, stub=0.4e-3)   # the stub's own check stays until Task 5
 
 
 def test_cells_grade_ten_percent_below_the_fine_zone():
@@ -174,7 +185,7 @@ def test_steady_ablation_recedes_at_the_energy_limited_speed_with_the_exponentia
     # gradient (0.6 K per micrometre) costs under 2 % of the profile's span over half a 20 um cell
     mat = LinearMeltMaterial(T_s=907.0, T_l=908.0, rho_l=2800.0, k=97.0)
     q, T0, dt, L = 1e8, 300.0, 0.5e-3, 5e-3
-    sk = layered(mat, [(L, T0)], settings=SkinSettings(cell=20e-6, fine_zone=L, swell=False), cell=20e-6)
+    sk = layered(mat, [(L, T0)], settings=SkinSettings(cell=20e-6, fine_zone=L, depth=L, swell=False), cell=20e-6)
     m_min = sk.totals()[0].copy()
     dh = float(mat.enthalpy(mat.T_feed) - mat.enthalpy(T0))
     v_ref = q / (mat.rho * dh)
@@ -652,3 +663,348 @@ def test_append_bottom_adds_whole_cells_and_refuses_a_gap():
     assert np.all(sk.U == 0.0)
     with pytest.raises(ValueError, match="zero"):
         sk.append_bottom([0], [[1e-9, 0.0, 2e-9]], [[1e-6, 0.0, 2e-6]])
+
+
+# -- one skin depth: measured cross-sections, the base exchange and combining by depth (plan 03b Task 3) ---------------
+DEPTH = 1.2e-3                               # m, the skin depth H (SkinSettings.depth)
+LEVELS = np.linspace(0.0, DEPTH, 25)         # the division's levels (division.DIVISION_LEVELS = 24 bands)
+PINCH = LEVELS[16]                           # m, 0.8 mm: where a pinching column's cross-section closes
+
+
+def profile_volume(area, z, levels=LEVELS):
+    """The test's oracle: the volume [m3] under the cross-section `area` (B+1,), linear between `levels`, from the top
+    down to the depth z [m] (at most H): the trapezoid rule on the levels above z and z itself, exact for a
+    piecewise-linear integrand."""
+    z = min(float(z), float(levels[-1]))
+    pts = np.union1d(levels[levels < z], [z])
+    return float(np.trapezoid(np.interp(pts, levels, area), pts))
+
+
+def profiled(mat, area, top=None, settings=None):
+    """Empty columns with the measured cross-sections `area` (n, B+1) at LEVELS; `top` the areas the top fluxes act on,
+    by default the profile's own top."""
+    area = np.atleast_2d(np.asarray(area, dtype=float))
+    top = area[:, 0].copy() if top is None else np.asarray(top, dtype=float)
+    sk = Skins(mat, top, np.zeros((len(area), 2)), settings or SkinSettings())
+    sk.set_profile(LEVELS, area)
+    return sk
+
+
+def stack(sk, cells):
+    """Every column's cells installed by depth: cells[i] = (the depths [m] of column i's cell boundaries, top first,
+    the cells' temperatures [K][, their velocities (k, 3) [m/s]]); each cell holds the metal its span of the column's
+    profile holds at its own density."""
+    K = max(len(c[0]) - 1 for c in cells)
+    m, H, U = np.zeros((sk.n, K)), np.zeros((sk.n, K)), np.zeros((sk.n, K, 3))
+    count = np.zeros(sk.n, dtype=np.int64)
+    for i, c in enumerate(cells):
+        V = np.array([profile_volume(sk.profile[i], z) for z in c[0]])
+        T = np.broadcast_to(np.asarray(c[1], dtype=float), (len(V) - 1,))
+        k = len(V) - 1
+        m[i, :k] = sk.density(T) * np.diff(V)
+        H[i, :k] = m[i, :k] * sk.props.enthalpy(T)
+        if len(c) > 2:
+            U[i, :k] = c[2]
+        count[i] = k
+    sk.install(m, H, count, U)
+
+
+def books(sk):
+    """Mass [kg], enthalpy [J] and momentum [kg m/s] summed over every column."""
+    M, E, P = sk.totals()
+    return M.sum(), E.sum(), P.sum(axis=0)
+
+
+def test_a_measured_profile_holds_a_spherical_shell():
+    """A column under a 25 mm sphere's cross-section A0 ((R - z)/R)^2, given at the division's levels: its volume is the
+    shell's to the trapezoid rule's error (h^2 / 6 R^2 = 7e-7 at 50 um levels); filled with that volume, its cells end
+    at H and each spans the depths over which the profile holds it. The top fluxes' area stays the one given (ruling
+    T1-g) and the curvature is ignored."""
+    R, mat = 25e-3, ConstMaterial()
+    area = AREA * ((R - LEVELS) / R) ** 2
+    sk = profiled(mat, area, top=1.05 * AREA)
+    assert sk.area[0] == 1.05 * AREA                         # set_profile leaves the top fluxes' area alone
+    V = sk.column_volume()[0]
+    assert V == pytest.approx(AREA * (R ** 3 - (R - DEPTH) ** 3) / (3 * R ** 2), rel=1e-6)
+    assert V == pytest.approx(profile_volume(area, DEPTH), rel=1e-14)
+    z = np.array([[0.0, 0.31e-3, 0.6e-3, DEPTH, 1.5e-3]])
+    A = sk.cross_section(z)[0]
+    np.testing.assert_allclose(A[:4], np.interp(z[0, :4], LEVELS, area), rtol=1e-14)
+    assert A[4] == 0.0                                       # nothing beyond H
+    sk.fill(mat.rho * V, 500.0)
+    sk.regrid()
+    n = sk.count[0]
+    assert sk.thickness()[0] == pytest.approx(DEPTH, rel=1e-12)
+    assert sk.cells_volume()[0] == pytest.approx(V, rel=1e-14)
+    z_bot = np.cumsum(sk.dz()[0, :n])
+    np.testing.assert_allclose([profile_volume(area, zb) for zb in z_bot], np.cumsum(sk.m[0, :n]) / mat.rho, rtol=1e-12)
+    dz, t = sk.dz()[0, :n], sk.targets()[0, :n]
+    assert np.all((dz >= 0.5 * t) & (dz <= 1.5 * t))
+    assert sk.base_area()[0] == pytest.approx(area[-1], rel=1e-14)       # a full column's base is the profile's A(H)
+    for nudge in (1.0 + 1e-15, 1.0 - 1e-15):                 # whichever side of its volume round-off leaves the cells
+        sk.m[0, :n] *= nudge
+        sk.H[0, :n] *= nudge
+        assert sk.base_area()[0] == pytest.approx(area[-1], rel=1e-14)
+    sk.kappa[:] = 1.0 / 2e-3                                 # a curvature that would close the column at 2 mm: ignored
+    assert sk.thickness()[0] == pytest.approx(DEPTH, rel=1e-12)
+
+
+def test_a_column_that_pinches_fills_exactly_to_its_pinch():
+    """A column whose cross-section falls linearly to zero at 0.8 mm (beside a convex edge, it meets the column across
+    the edge there): zero below the pinch and beyond H; 0.3 mm of metal at its top, filled at its base by the exchange
+    to its volume, ends at the pinch to 1e-12 m, holding its volume to 1e-12, and the regrid settles there, where the
+    cross-section closes."""
+    mat = LinearMeltMaterial()
+    area = AREA * np.clip(1.0 - LEVELS / PINCH, 0.0, None)
+    sk = profiled(mat, area)
+    V = sk.column_volume()[0]
+    assert V == pytest.approx(0.5 * AREA * PINCH, rel=1e-14)
+    A = sk.cross_section(np.array([[0.4e-3, 0.79e-3, PINCH, 0.9e-3, DEPTH, 1.5e-3]]))[0]
+    assert A[0] == pytest.approx(0.5 * AREA, rel=1e-12) and A[1] > 0.0 and np.all(A[2:] == 0.0)
+    sk.fill(mat.rho * profile_volume(area, 0.3e-3), 700.0)
+    assert sk.thickness()[0] == pytest.approx(0.3e-3, rel=1e-12)
+    sk.exchange_base([0], V - sk.cells_volume()[0], 650.0)
+    sk.regrid()
+    assert abs(sk.thickness()[0] - PINCH) <= 1e-12
+    assert sk.cells_volume()[0] == pytest.approx(V, rel=1e-12)
+    n = sk.count[0]
+    dz, t = sk.dz()[0, :n], sk.targets()[0, :n]
+    assert np.all((dz >= 0.5 * t) & (dz <= 1.5 * t))
+    assert sk.base_area()[0] == 0.0                          # it has no base
+
+
+def test_conduction_books_close_on_a_measured_profile():
+    """Two columns with measured profiles -- a jagged narrowing one (level-to-level jumps of up to 30 %, as the
+    division's edge columns have, ruling T1-h) and one that pinches -- and top areas other than the profiles' tops:
+    the heat books close over a trial pass, the top fluxes act on the top areas, the base heat goes through the
+    profile's base (none where the column pinches, whose bottom is insulated). At steady state the heat q A_top passes
+    through every interface over the profile's cross-section there."""
+    mat = LinearMeltMaterial(rho_l=2800.0)
+    jag = AREA * (1.0 - 0.5 * LEVELS / DEPTH) * np.random.default_rng(5).uniform(0.7, 1.3, len(LEVELS))
+    pinch = AREA * np.clip(1.0 - LEVELS / PINCH, 0.0, None)
+    sk = profiled(mat, np.vstack([jag, pinch]), top=np.array([1.1, 0.9]) * AREA)
+    sk.fill(mat.rho * sk.column_volume(), np.array([880.0, 700.0]))
+    sk.regrid()
+    q, T_amb, eps, T_b, dt = np.array([3e6, 1e6]), 300.0, 0.8, np.array([850.0, 690.0]), 0.010
+    E_base = np.zeros(2)
+    r = np.arange(2)
+    for _ in range(3):
+        H0 = sk.totals()[1]
+        book = sk.conduct(dt, q, T_amb, eps, T_b, trial=True)
+        H1 = sk.totals()[1]
+        scale = np.abs(book.E_top) + np.abs(H1 - H0)
+        assert np.all(np.abs(book.E_top - book.E_rad - book.E_base + book.E_side - (H1 - H0)) <= 1e-12 * scale)
+        assert book.E_top == pytest.approx(q * sk.area * dt, rel=1e-15)
+        T = sk.T()
+        assert book.E_rad == pytest.approx(eps * SIGMA_SB * sk.area * (T[:, 0] ** 4 - T_amb ** 4) * dt, rel=1e-12)
+        last, dz = sk.count - 1, sk.dz(T)
+        A_b = sk.base_area()
+        assert A_b[0] == pytest.approx(jag[-1], rel=1e-9) and A_b[1] == 0.0
+        k_last = mat.k(T[r, last])
+        assert book.E_base[0] == pytest.approx(A_b[0] * k_last[0] / (0.5 * dz[0, last[0]]) * (T[0, last[0]] - T_b[0])
+                                               * dt, rel=1e-6)
+        assert abs(book.E_base[1]) <= 1e-6 * book.E_top[1]    # only the iteration's residue: the bottom is insulated
+        E_base += book.E_base
+        sk.regrid()
+    a, b = sk.base_law(3 * dt)
+    assert np.all(b <= 0.0) and b[1] == 0.0
+    assert a + b * T_b == pytest.approx(E_base / (3 * dt), rel=1e-12)
+    # steady: one step of 1e6 s; constant k, so each interface carries q A_top through A(z_i) k dT / (dz_i/2 + dz_j/2)
+    const = ConstMaterial()
+    st = profiled(const, jag, top=1.1 * AREA, settings=SkinSettings(swell=False))
+    st.fill(const.rho * st.column_volume(), 600.0)
+    st.regrid()
+    st.conduct(1e6, 1e6, 0.0, 0.0, 600.0)
+    n = st.count[0]
+    T, dz = st.T()[0, :n], st.dz()[0, :n]
+    A_i = st.cross_section(np.cumsum(dz)[None, :-1])[0]
+    flux = A_i * const._k * (T[:-1] - T[1:]) / (0.5 * dz[:-1] + 0.5 * dz[1:])
+    np.testing.assert_allclose(flux, 1e6 * 1.1 * AREA, rtol=1e-6)
+
+
+def test_the_base_exchange_is_exact():
+    """Draw and return at the base. A return takes the bottom volume whatever its phase -- here a molten bottom cell
+    (above the liquidus, swollen) whole and half the cell above it -- and gives its mass, enthalpy and momentum; a draw
+    adds a new cell at rest below the bottom of the volume asked for, at the solid's density and the drawn temperature.
+    What the exchange reports is what crossed the base into each column (signed), so the columns' books change by it
+    exactly (1e-12)."""
+    from reentry_model.levelset.skin import BaseExchange
+    mat = LinearMeltMaterial()
+    area = AREA * (1.0 - 0.3 * LEVELS / DEPTH)
+    sk = profiled(mat, np.vstack([area, area, area]))
+    rng = np.random.default_rng(11)
+    edges = np.linspace(0.0, 0.9e-3, 37)
+    T0 = np.r_[np.full(34, 700.0), 890.0, 950.0]                 # a mushy cell, then a molten one at the bottom
+    stack(sk, [(edges, T0, rng.normal(0.0, 0.1, (36, 3))), (edges, 700.0, rng.normal(0.0, 0.1, (36, 3))),
+               (edges, 700.0)])
+    assert sk.T()[0, 35] > mat.T_liquidus
+    M0, E0, P0 = sk.totals()
+    m0, H0, U0 = sk.m.copy(), sk.H.copy(), sk.U.copy()
+    vol = sk.m / sk.density(sk.T())
+    dV = np.array([-(vol[0, 35] + 0.5 * vol[0, 34]), 0.1e-3 * area[-1], 0.0])
+    ex = sk.exchange_base([0, 1, 2], dV, T_draw=np.array([np.nan, 800.0, np.nan]))
+    assert isinstance(ex, BaseExchange)
+    assert np.array_equal(ex.cells, [-1, 1, 0])
+    M1, E1, P1 = sk.totals()
+    assert np.all(np.abs(M1 - M0 - ex.mass) <= 1e-12 * M0)
+    assert np.all(np.abs(E1 - E0 - ex.H) <= 1e-12 * np.abs(E0))
+    assert np.abs(P1 - P0 - ex.P).max() <= 1e-12 * np.abs(m0[..., None] * U0).sum()
+    # the return: the molten bottom cell whole, half the one above at its own enthalpy and velocity
+    assert -ex.mass[0] == pytest.approx(m0[0, 35] + 0.5 * m0[0, 34], rel=1e-12)
+    assert -ex.H[0] == pytest.approx(H0[0, 35] + 0.5 * H0[0, 34], rel=1e-12)
+    np.testing.assert_allclose(-ex.P[0], m0[0, 35] * U0[0, 35] + 0.5 * m0[0, 34] * U0[0, 34], rtol=1e-12)
+    assert sk.count[0] == 35 and sk.m[0, 34] == pytest.approx(0.5 * m0[0, 34], rel=1e-12)
+    assert sk.T()[0, 34] == pytest.approx(T0[34], abs=1e-9) and np.array_equal(sk.U[0, 34], U0[0, 34])
+    assert sk.cells_volume()[0] == pytest.approx(vol[0].sum() + dV[0], rel=1e-12)
+    # the draw: a new bottom cell at rest, rho_s dV at 800 K
+    assert ex.mass[1] == pytest.approx(mat.rho * dV[1], rel=1e-15) and np.all(ex.P[1] == 0.0)
+    assert ex.H[1] == pytest.approx(ex.mass[1] * float(sk.props.enthalpy(800.0)), rel=1e-15)
+    assert sk.count[1] == 37 and sk.T()[1, 36] == pytest.approx(800.0, abs=1e-9) and np.all(sk.U[1, 36] == 0.0)
+    assert sk.cells_volume()[1] == pytest.approx(vol[1].sum() + dV[1], rel=1e-12)
+    assert np.array_equal(sk.m[2, :36], m0[2]) and sk.count[2] == 36 and ex.mass[2] == 0.0
+    # a return of a whole column empties it; more than a column holds, or a draw with no temperature, is refused
+    ex = sk.exchange_base([2], -sk.cells_volume()[2])
+    assert sk.count[2] == 0 and ex.cells[0] == -36 and -ex.mass[0] == pytest.approx(m0[2].sum(), rel=1e-14)
+    with pytest.raises(ValueError):
+        sk.exchange_base([0], -1.01 * sk.cells_volume()[0])
+    with pytest.raises(ValueError, match="T_draw"):
+        sk.exchange_base([0], 1e-12)
+
+
+def test_combining_by_depth_keeps_each_depth_s_metal():
+    """A pinching column (to 0.8 mm) given to a flat one, both hot (900 K) in their top 0.3 mm over cold (600 K) metal,
+    each cell moving: by depth, each of the keeper's cells takes the gone column's metal at its own depths, so the
+    keeper's 15 cells above 0.3 mm hold only hot metal and the cells below only cold, its cell boundaries do not move
+    (its profile is the sum of the two), and mass, enthalpy and momentum add exactly. By mass (today's rule, the
+    default), the gone column's hot metal is spread down to 61 % of the keeper's mass."""
+    mat = ConstMaterial()
+    flat = np.full(len(LEVELS), AREA)
+    pinch = AREA * np.clip(1.0 - LEVELS / PINCH, 0.0, None)
+    rng = np.random.default_rng(13)
+
+    def pair():
+        sk = profiled(mat, np.vstack([flat, pinch]))
+        ek, eg = np.linspace(0.0, DEPTH, 61), np.linspace(0.0, PINCH, 33)
+        stack(sk, [(ek, np.where(ek[:-1] < 0.3e-3 - 1e-12, 900.0, 600.0), rng.normal(0.0, 0.1, (60, 3))),
+                   (eg, np.where(eg[:-1] < 0.3e-3 - 1e-12, 900.0, 600.0), rng.normal(0.0, 0.1, (32, 3)))])
+        return sk
+
+    sk = pair()
+    M0, E0, P0 = books(sk)
+    dz0 = sk.dz()[0, :60].copy()
+    scale = np.abs(sk.m[..., None] * sk.U).sum()
+    sk.combine([0], [1], by="depth")
+    M1, E1, P1 = books(sk)
+    assert M1 == pytest.approx(M0, rel=1e-14) and E1 == pytest.approx(E0, rel=1e-14)
+    assert np.abs(P1 - P0).max() <= 1e-14 * scale
+    assert sk.count[0] == 60 and sk.count[1] == 0
+    np.testing.assert_allclose(sk.profile[0], flat + pinch, rtol=1e-15)
+    assert np.all(sk.profile[1] == 0.0) and sk.area[1] == 0.0
+    np.testing.assert_allclose(sk.dz()[0, :60], dz0, rtol=1e-12)        # the keeper's boundaries do not move
+    T = sk.T()[0, :60]
+    np.testing.assert_allclose(T[:15], 900.0, atol=1e-9)                 # the hot top stays above the cold bottom
+    np.testing.assert_allclose(T[15:], 600.0, atol=1e-9)
+    by_mass = pair()
+    by_mass.combine([0], [1])
+    T = by_mass.T()[0, :by_mass.count[0]]
+    deep = np.cumsum(by_mass.dz()[0, :by_mass.count[0]]) - by_mass.dz()[0, :by_mass.count[0]] > 0.31e-3
+    assert T[deep].max() > 650.0                                         # by mass the hot metal goes deeper
+
+
+def test_taking_metal_between_two_depths_is_exact():
+    """`take_between` removes the metal between two depths of a narrowing column, splitting the two cells the depths
+    cut: what it takes is the profile's volume between them at the cells' density, mass, enthalpy and momentum are
+    exact, the cells above keep their metal and the cells below move up. Two depths inside one cell take a share of
+    it."""
+    mat = ConstMaterial()
+    area = AREA * (1.0 - 0.4 * LEVELS / DEPTH)
+    sk = profiled(mat, np.vstack([area, area]))
+    rng = np.random.default_rng(17)
+    edges = np.linspace(0.0, DEPTH, 61)
+    U = rng.normal(0.0, 0.1, (60, 3))
+    stack(sk, [(edges, rng.uniform(500.0, 900.0, 60), U), (edges, 700.0, U)])
+    M0, E0, P0 = sk.totals()
+    m0, H0, U0 = sk.m.copy(), sk.H.copy(), sk.U.copy()
+    z_top, z_bot = 0.333e-3, 0.871e-3                       # inside cells 16 and 43 (20 um cells)
+    m, H, P = sk.take_between([0], z_top, z_bot)
+    assert m[0] == pytest.approx(mat.rho * (profile_volume(area, z_bot) - profile_volume(area, z_top)), rel=1e-12)
+    M1, E1, P1 = sk.totals()
+    assert M1[0] + m[0] == pytest.approx(M0[0], rel=1e-14) and E1[0] + H[0] == pytest.approx(E0[0], rel=1e-14)
+    assert np.abs(P1[0] + P[0] - P0[0]).max() <= 1e-14 * np.abs(m0[0, :, None] * U0[0]).sum()
+    assert np.array_equal(sk.m[0, :16], m0[0, :16]) and np.array_equal(sk.H[0, :16], H0[0, :16])
+    assert sk.m[0, 16] == pytest.approx(mat.rho * (profile_volume(area, z_top) - profile_volume(area, edges[16])),
+                                        rel=1e-10)
+    assert sk.count[0] == 60 - 26                           # cells 17 to 42 wholly between the depths
+    assert sk.m[0, 17] == pytest.approx(mat.rho * (profile_volume(area, edges[44]) - profile_volume(area, z_bot)),
+                                        rel=1e-10)
+    assert np.array_equal(sk.m[0, 18:34], m0[0, 44:60]) and np.array_equal(sk.U[0, 18:34], U0[0, 44:60])
+    assert np.array_equal(sk.m[1], m0[1])
+    # two depths inside one cell take its share between them; the cell stays, at its own enthalpy and velocity
+    m, H, P = sk.take_between([1], 0.402e-3, 0.407e-3)
+    assert sk.count[1] == 60 and m[0] == pytest.approx(mat.rho * (profile_volume(area, 0.407e-3)
+                                                                  - profile_volume(area, 0.402e-3)), rel=1e-10)
+    assert sk.m[1, 20] + m[0] == pytest.approx(m0[1, 20], rel=1e-14) and np.array_equal(sk.U[1, 20], U0[1, 20])
+
+
+def test_profiled_columns_divide_cut_and_combine_with_their_profiles():
+    """Ruling T3-a: a column divided, cut or combined takes its share of the profile as it does of the top area and
+    the cells (halved, the fraction, the sum), so every column holds exactly its volume afterwards and the cells keep
+    their depths; a removed column's profile row goes with it."""
+    mat = ConstMaterial()
+    jag = AREA * (1.0 - 0.5 * LEVELS / DEPTH) * np.random.default_rng(19).uniform(0.7, 1.3, len(LEVELS))
+    pinch = AREA * np.clip(1.0 - LEVELS / PINCH, 0.0, None)
+    flat = np.full(len(LEVELS), AREA)
+    sk = profiled(mat, np.vstack([jag, pinch, flat]), top=np.array([1.1, 0.9, 1.0]) * AREA)
+    sk.fill(mat.rho * sk.column_volume(), np.array([600.0, 700.0, 800.0]))
+    sk.regrid()
+    p0, V0, dz0 = sk.profile.copy(), sk.column_volume(), sk.dz()
+    new = sk.divide([0])
+    assert list(new) == [3]
+    np.testing.assert_array_equal(sk.profile[0], 0.5 * p0[0])
+    np.testing.assert_array_equal(sk.profile[3], 0.5 * p0[0])
+    np.testing.assert_allclose(sk.column_volume()[[0, 3]], 0.5 * V0[0], rtol=1e-15)
+    np.testing.assert_allclose(sk.dz()[3], dz0[0], rtol=1e-12, atol=0.0)
+    pieces = sk.cut([1, 1], [0.3, 0.2])
+    np.testing.assert_allclose(sk.profile[pieces], [0.3 * p0[1], 0.2 * p0[1]], rtol=1e-15)
+    np.testing.assert_allclose(sk.profile[1], 0.5 * p0[1], rtol=1e-14)
+    for row in (1, *pieces):
+        np.testing.assert_allclose(sk.dz()[row, :sk.count[row]], dz0[1, :sk.count[1]], rtol=1e-10, atol=0.0)
+    sk.combine([2], [pieces[0]])
+    np.testing.assert_allclose(sk.profile[2], flat + 0.3 * p0[1], rtol=1e-15)
+    np.testing.assert_allclose(sk.cells_volume(), sk.column_volume(), rtol=1e-12)    # every column exactly full
+    sk.remove([pieces[0]])
+    assert sk.profile.shape == (sk.n, len(LEVELS)) and sk.n == 5
+    np.testing.assert_allclose(sk.cells_volume(), sk.column_volume(), rtol=1e-12)
+
+
+def test_an_overfull_column_continues_below_its_end():
+    """Between a gain at its top and the next fill a column may hold more than its volume (here 5 % more). Its cells
+    then reach below its end at `cell_section`'s cross-section -- a column with a base at its base's, A(H), continued,
+    one that pinches at its mean cross-section -- so every cell keeps a positive area, while the column itself
+    (`cross_section`) still ends there and a column that pinches still has no base. The heat books close, and a
+    return of the excess at the base leaves both exactly full, ending at H and at the pinch."""
+    mat = ConstMaterial()
+    narrow = AREA * (1.0 - 0.5 * LEVELS / DEPTH)
+    pinch = AREA * np.clip(1.0 - LEVELS / PINCH, 0.0, None)
+    sk = profiled(mat, np.vstack([narrow, pinch]))
+    V = sk.column_volume()
+    extra = 0.05 * V
+    sk.fill(mat.rho * (V + extra), 600.0)
+    sk.regrid()
+    A_ext = np.array([narrow[-1], V[1] / PINCH])
+    np.testing.assert_allclose(sk.thickness(), np.array([DEPTH, PINCH]) + extra / A_ext, rtol=1e-12)
+    z = np.array([[1.3e-3], [1.0e-3]])
+    np.testing.assert_allclose(sk.cell_section(z)[:, 0], A_ext, rtol=1e-14)
+    assert np.all(sk.cross_section(z) == 0.0)
+    np.testing.assert_allclose(sk.base_area(), [narrow[-1], 0.0], rtol=1e-14)
+    n = sk.count
+    dz, t = sk.dz(), sk.targets()
+    assert all(np.all((dz[i, :n[i]] >= 0.5 * t[i, :n[i]]) & (dz[i, :n[i]] <= 1.5 * t[i, :n[i]])) for i in range(2))
+    H0 = sk.totals()[1]
+    book = sk.conduct(0.010, 2e6, 300.0, 0.8, 600.0)
+    scale = np.abs(book.E_top) + np.abs(sk.totals()[1] - H0)
+    assert np.all(np.abs(book.E_top - book.E_rad - book.E_base - (sk.totals()[1] - H0)) <= 1e-12 * scale)
+    assert abs(book.E_base[1]) <= 1e-6 * book.E_top[1]          # the pinching column's bottom stays insulated
+    sk.exchange_base([0, 1], -extra)
+    np.testing.assert_allclose(sk.cells_volume(), V, rtol=1e-12)
+    assert abs(sk.thickness()[0] - DEPTH) <= 1e-12 and abs(sk.thickness()[1] - PINCH) <= 1e-12

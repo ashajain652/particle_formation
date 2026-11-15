@@ -17,6 +17,26 @@ for each cell's bottom by a bracketed Newton iteration from the flat value. A fl
 thickness m / (rho A0) directly. A column whose volume would reach beyond 1/k of a positive curvature (a skin deeper than
 its radius of curvature) has no positive cross-section there: `dz` raises ValueError rather than give negative areas.
 
+The measured cross-section (design section 21.5, plan 03b Task 3). Every skin is one skin depth H deep
+(`SkinSettings.depth`, 1.2 mm), a column of the layer between the gas surface and the skin base that the division
+(`division.divide`) measures. `set_profile(levels, area)` gives each column that measure, its volume per unit depth at
+the division's levels from 0 to H; from then on the curvature is ignored (Task 5 deletes it) and every place that takes
+a cell's or an interface's area takes it from the profile: `cross_section` interpolates it linearly between the levels
+and is zero below the last level with a nonzero area and beyond H (a column beside a convex edge pinches before H, where
+it meets the column across the edge), so the volume from the top to depth z is piecewise quadratic, and `dz` inverts it
+for each cell's bottom; the fill, the conduction's interfaces and base, the base area and the layered flow's interfaces
+and floor follow. The top area `area` stays what the body gives: the area of the gas surface the column's marker owns,
+the one the top fluxes act on (the gas heat, radiation, the gas shear and the spraying), which differs from the
+profile's top by up to about 10 % at edge columns (the controller's ruling T1-g). A column's cells hold exactly its
+volume after each fill; between a gain at the top (runoff, swelling on melting) and the next fill they may hold more,
+and the cells below the column's end then take the end's cross-section continued, or where the column closes its mean
+cross-section (`cell_section`), so that every cell has a positive area. Cells within END_SLACK of their column's volume
+reach its end exactly (at a pinch the depth's sensitivity to the volume is infinite). The regrid splits a cell of a
+profiled column at its mid-depth rather than in halves of its mass, so that where the cross-section closes a split never
+leaves a cell small enough to be merged straight back. `exchange_base` draws metal from the volume below a column's
+bottom cell or returns its bottom volume, `take_between` takes the metal between two depths, and `combine(...,
+by="depth")` gives a column's metal to another at the same depths.
+
 Grading and regrid (the skyscrapers' option B' rule, matched by amendment, never imported). Each cell's target
 thickness is cell + (growth - 1) max(z_top - fine_zone, 0), z_top the depth of its top: 10 um (production) through the
 top 0.4 mm, then the continuous form of "each cell 10 % thicker than the one above". `regrid` merges a cell below
@@ -65,6 +85,10 @@ CUT_SLACK = 4.0 * np.finfo(float).eps   # fractions cut from a column summing to
 DEPTH_SLACK = 1e-12        # a cell whose top lies within this share of a depth counts as at that depth (`above`)
 FLOWING_SOLID_MAX = np.nextafter(rheology.RIGID_SOLID_FRACTION, 0.0)   # a flowing cell's solid fraction at most: guards
                            # the table's round-off at T_rigid, where the rheology turns infinite
+END_SLACK = 1e-12          # cells within this share of their column's volume reach its end; shares of a cell below it
+                           # (round-off where two depths nearly coincide) are none, and above one less it the whole
+                           # (plan 03b Task 3: the profile's depths, `exchange_base`, `take_between`, by-depth combine)
+LEVELS_RTOL = 1e-9         # a profile's deepest level must be the skins' depth to within this share (`set_profile`)
 
 
 @dataclass
@@ -75,12 +99,20 @@ class SkinSettings:
     stub: float = 0.8e-3           # m of rigid metal a full-depth skin keeps below psi (`--skin-stub`, design 20.6)
     substep: float = 0.010         # s, the skins' heat sub-step (skyscrapers' spec 7.1)
     swell: bool = True             # each cell at its own phase's mixture density; False holds every cell at the solid's
+    depth: float = 1.2e-3          # m, the skin depth H: every skin's column reaches this far below the gas surface
+                                   # (design 21.3: today's 0.4 mm fine zone plus 0.8 mm stub; recorded with every run)
 
     def __post_init__(self):
-        if not (self.cell > 0.0 and self.fine_zone > 0.0 and self.stub > 0.0 and self.substep > 0.0):
-            raise ValueError("skin cell, fine zone, stub and substep must be positive")
+        if not (self.cell > 0.0 and self.fine_zone > 0.0 and self.stub > 0.0 and self.substep > 0.0
+                and self.depth > 0.0):
+            raise ValueError("skin cell, fine zone, stub, substep and depth must be positive")
         if self.growth < 1.0:
             raise ValueError("skin growth must be at least 1")
+        if self.fine_zone > self.depth * (1.0 + 1e-12):
+            raise ValueError("a skin's fine zone must lie within its depth: fine_zone <= depth")
+        if 2.0 * self.cell > min(self.fine_zone, self.depth) * (1.0 + 1e-12):
+            raise ValueError("a skin needs at least two fine cells: cell <= min(fine_zone, depth) / 2")
+        # the stub's own check stays until plan 03b Task 5 deletes the stub (the controller's ruling T3-b)
         if 2.0 * self.cell > min(self.stub, self.fine_zone) * (1.0 + 1e-12):
             raise ValueError("a skin needs at least two fine cells: cell <= min(stub, fine_zone) / 2")
 
@@ -170,6 +202,19 @@ class MomentumBook:
     wall_response: np.ndarray = None
 
 
+@dataclass(frozen=True)
+class BaseExchange:
+    """What `Skins.exchange_base` moved across the base into each column it was given (plan 03b Task 3), in the order
+    of its rows: the mass [kg], enthalpy above T_REF [J] and momentum [kg m/s] (N, 3), positive for a draw from the
+    volume and negative for a return to it, so that each column's totals change by exactly these and the volume's by
+    minus them; and `cells` (N,) int, the change in each column's count of cells: +1 for a draw (one new cell), minus
+    the number of whole cells for a return (a cell it takes in part stays), 0 where nothing moved."""
+    mass: np.ndarray
+    H: np.ndarray
+    P: np.ndarray
+    cells: np.ndarray
+
+
 def _tridiagonal(lower, diag, upper, rhs):
     """Rows of tridiagonal systems (n, K) solved by the Thomas algorithm: row j reads
     lower[:, j] x[:, j-1] + diag[:, j] x[:, j] + upper[:, j] x[:, j+1] = rhs[:, j] (lower[:, 0], upper[:, -1] unused)."""
@@ -197,8 +242,13 @@ def _profile_points(T_b, g, s0, s1, cap):
 
 
 class Skins:
-    """n columns of cells (module docstring). `material` gives every property; `area` (n,) the top areas [m2];
-    `kappa` (n, 2) phi's principal curvatures [1/m], positive convex. The columns start empty (`fill` or `install`)."""
+    """n columns of cells (module docstring). `material` gives every property; `area` (n,) the top areas [m2], the
+    area the top fluxes act on; `kappa` (n, 2) phi's principal curvatures [1/m], positive convex, the cross-section's
+    until a measured profile is set (`set_profile`). The columns start empty (`fill` or `install`)."""
+
+    profile_levels = None      # (B + 1,) m, the measured profile's levels from 0 to H, None until `set_profile`; class
+    profile = None             # (n, B + 1) m2 its cross-sections; defaults, so that a Skins built by __new__ (runoff's
+                               # landing blocks) or pickled before plan 03b Task 3 reads as having none
 
     def __init__(self, material, area, kappa, settings=None):
         self.material = material
@@ -242,9 +292,13 @@ class Skins:
 
     def fill(self, mass, T):
         """Every column filled with `mass` [kg] of metal at temperature T [K] (each per column or one for all), at rest,
-        in equal cells of about the fine size by the flat thickness."""
+        in equal cells of about the fine size by the flat thickness; with a measured profile, in cells of equal depth
+        about the fine size, each holding the metal its span holds (a span of no cross-section holds no cell)."""
         mass = np.broadcast_to(np.asarray(mass, dtype=float), (self.n,))
         T = np.broadcast_to(np.asarray(T, dtype=float), (self.n,))
+        if self.profile is not None:
+            self._fill_profile(mass, T)
+            return
         flat = mass / (self.density(T) * self.area)
         cells = np.maximum(np.rint(flat / self.settings.cell).astype(np.int64), 1)
         K = int(cells.max()) if self.n else 1
@@ -295,17 +349,27 @@ class Skins:
         return 1.0 / ((1.0 - f) / self.rho_s + f / self.rho_l)
 
     def cross_section(self, z):
-        """The cross-section [m2] at depths z [m] below each column's top, z (n, ...)."""
+        """The cross-section [m2] at depths z [m] below each column's top, z (n, ...): the curved law, or the measured
+        profile once set, linear between its levels, zero below its last nonzero level and beyond H."""
         z = np.asarray(z, dtype=float)
+        if self.profile is not None:
+            return self._section(z)
         shape = (self.n,) + (1,) * (z.ndim - 1)
         k1, k2 = self.kappa[:, 0].reshape(shape), self.kappa[:, 1].reshape(shape)
         return self.area.reshape(shape) * (1.0 - k1 * z) * (1.0 - k2 * z)
 
     def dz(self, T=None):
         """Cell thicknesses [m] (n, K), 0 beyond each count: each cell's span holds its volume m/rho(T) under the
-        column's cross-section (module docstring). ValueError for a skin deeper than its radius of curvature."""
+        column's cross-section (module docstring). ValueError for a skin deeper than its radius of curvature. With a
+        measured profile, the inverse of its piecewise-quadratic volume (`cell_section` below the column's end)."""
         valid = self.valid
         T = self.T() if T is None else T
+        if self.profile is not None:
+            vol = np.zeros(self.m.shape)
+            vol[valid] = self.m[valid] / self.density(T[valid])
+            z_bot = self._depth_of(np.cumsum(vol, axis=1))
+            z_top = np.concatenate([np.zeros((self.n, 1)), z_bot[:, :-1]], axis=1)
+            return np.where(valid, z_bot - z_top, 0.0)
         flat = np.zeros(self.m.shape)
         flat[valid] = self.m[valid] / (self.density(T[valid]) * np.broadcast_to(self.area[:, None], self.m.shape)[valid])
         curved = np.any(self.kappa != 0.0, axis=1)
@@ -351,9 +415,267 @@ class Skins:
         between = centre[r, a] + frac * (centre[r, b] - centre[r, a])
         return np.where(run == 0, 0.0, np.where(run >= self.count, dz.sum(axis=1), between))
 
+    # -- the measured cross-section (plan 03b Task 3) ---------------------------------------------------------------
+    def set_profile(self, levels, area):
+        """Every column's cross-section from now on the measured profile `area` (n, B + 1) [m2], each column's volume
+        per unit depth at the depths `levels` (B + 1,) [m], rising from 0 to the skins' depth H (the division's
+        `levels` and `area`, plan 03b Task 1), linear between them (module docstring). The curvature is then ignored,
+        and the top area `area` the top fluxes act on is left as it is (the controller's ruling T1-g). The rows follow
+        the columns through `divide`, `cut`, `combine` and `remove`."""
+        levels = np.array(levels, dtype=float).reshape(-1)
+        area = np.array(area, dtype=float)
+        if len(levels) < 2 or levels[0] != 0.0 or np.any(np.diff(levels) <= 0.0):
+            raise ValueError("a profile's levels must rise strictly from 0")
+        if abs(levels[-1] - self.settings.depth) > LEVELS_RTOL * self.settings.depth:
+            raise ValueError("a profile's deepest level ({:.6g} m) must be the skins' depth ({:.6g} m)".format(
+                levels[-1], self.settings.depth))
+        if area.shape != (self.n, len(levels)) or not np.all(np.isfinite(area) & (area >= 0.0)):
+            raise ValueError("a profile needs one finite, non-negative cross-section per column and level, (n, B + 1)")
+        self.profile_levels, self.profile = levels, area
+
+    def column_volume(self):
+        """Each column's volume [m3] (n,): the trapezoid integral of its measured profile (the division's own); without
+        one, its top area times the volume per unit area of the curved law down to H (or to where it closes)."""
+        if self.profile is not None:
+            return self._ends()[2]
+        k1, k2 = self.kappa[:, 0], self.kappa[:, 1]
+        kmax = np.maximum(k1, k2)
+        z = np.minimum(self.settings.depth, np.divide(1.0, kmax, out=np.full(self.n, np.inf), where=kmax > 0.0))
+        return self.area * _volume(z, k1 + k2, k1 * k2)
+
+    def cells_volume(self, T=None):
+        """The volume [m3] (n,) each column's cells fill, the sum of m / rho(T) over its cells (T (n, K) their
+        temperatures if already known)."""
+        valid = self.valid
+        T = self.T() if T is None else T
+        vol = np.zeros(self.m.shape)
+        vol[valid] = self.m[valid] / self.density(T[valid])
+        return vol.sum(axis=1)
+
+    def cell_section(self, z):
+        """The cross-section [m2] the cells take at depths z [m] (n, ...): `cross_section` within each column, and below
+        the column's end -- where only an overfull column's cells reach, between a gain at its top and the next fill --
+        the end's cross-section continued, or the column's mean cross-section where the column closes (a pinch), or its
+        top area where it has no profile at all (module docstring); for the cells' thicknesses and interfaces, not the
+        base (`base_area`). Without a profile, `cross_section` itself."""
+        z = np.asarray(z, dtype=float)
+        return self._section(z, extend=True) if self.profile is not None else self.cross_section(z)
+
+    def _rows(self, rows):
+        return np.arange(self.n) if rows is None else np.asarray(rows, dtype=np.int64).reshape(-1)
+
+    def _ends(self, rows=None):
+        """For the columns `rows` (all by default), from the profile: the volumes W (r, B + 1) [m3] from the top to each
+        level, each column's end z_end [m] (H, or the level after its last nonzero cross-section; 0 for none), its
+        volume V [m3], its cross-section at the end A_end and the one below it, A_ext [m2] (`cell_section`)."""
+        rows = self._rows(rows)
+        P, lv = self.profile[rows], self.profile_levels
+        B = len(lv) - 1
+        W = np.zeros(P.shape)
+        W[:, 1:] = np.cumsum(0.5 * (P[:, :-1] + P[:, 1:]) * np.diff(lv), axis=1)
+        nonzero = P > 0.0
+        last = np.where(nonzero.any(axis=1), B - np.argmax(nonzero[:, ::-1], axis=1), -1)
+        end = np.clip(last + 1, 0, B)
+        z_end, V = lv[end], W[:, -1]
+        A_end = P[np.arange(len(rows)), end]
+        mean = np.divide(V, z_end, out=np.zeros_like(V), where=z_end > 0.0)
+        A_ext = np.where(A_end > 0.0, A_end, np.where(z_end > 0.0, mean, self.area[rows]))
+        return W, z_end, V, A_end, A_ext
+
+    def _section(self, z, rows=None, extend=False):
+        """The profile's cross-section [m2] at depths z [m] (r, ...) of the columns `rows`; with `extend`, the cells'
+        (`cell_section`)."""
+        rows = self._rows(rows)
+        flat = z.reshape(len(rows), int(np.prod(z.shape[1:])))
+        P, lv = self.profile[rows], self.profile_levels
+        k = np.clip(np.searchsorted(lv, flat, side="right") - 1, 0, len(lv) - 2)
+        s = np.clip((flat - lv[k]) / (lv[k + 1] - lv[k]), 0.0, 1.0)
+        out = (1.0 - s) * np.take_along_axis(P, k, axis=1) + s * np.take_along_axis(P, k + 1, axis=1)
+        out = np.where(flat > lv[-1], 0.0, out)
+        if extend:
+            _, z_end, _, _, A_ext = self._ends(rows)
+            out = np.where(flat > z_end[:, None], A_ext[:, None], out)
+        return out.reshape(z.shape)
+
+    def _volume_at(self, z, rows=None):
+        """The volume [m3] from the top of each of the columns `rows` down to the depths z [m] (r, ...), under the
+        cells' cross-section (`cell_section`; without a profile the curved law, to where it closes); 0 above the
+        top."""
+        rows = self._rows(rows)
+        z = np.asarray(z, dtype=float)
+        flat = z.reshape(len(rows), int(np.prod(z.shape[1:])))
+        if self.profile is None:
+            k1, k2 = self.kappa[rows, 0][:, None], self.kappa[rows, 1][:, None]
+            kmax = np.maximum(k1, k2)
+            z_close = np.divide(1.0, kmax, out=np.full(kmax.shape, np.inf), where=kmax > 0.0)
+            zc = np.clip(flat, 0.0, z_close)
+            return (self.area[rows][:, None] * _volume(zc, k1 + k2, k1 * k2)).reshape(z.shape)
+        W, z_end, V, _, A_ext = self._ends(rows)
+        P, lv = self.profile[rows], self.profile_levels
+        k = np.clip(np.searchsorted(lv, flat, side="right") - 1, 0, len(lv) - 2)
+        h = np.diff(lv)[k]
+        t = np.clip(flat - lv[k], 0.0, h)
+        Ak, Ak1 = np.take_along_axis(P, k, axis=1), np.take_along_axis(P, k + 1, axis=1)
+        inside = np.take_along_axis(W, k, axis=1) + t * (Ak + 0.5 * (Ak1 - Ak) / h * t)
+        beyond = V[:, None] + A_ext[:, None] * (flat - z_end[:, None])
+        return np.where(flat > z_end[:, None], beyond, inside).reshape(z.shape)
+
+    def _depth_of(self, v, rows=None):
+        """The depths [m] (r, ...) holding the volumes v [m3] (r, ...) from the top of each of the columns `rows` under
+        the profile: in the band of levels holding v, the root of the quadratic W_k + A_k t + (A_k+1 - A_k) t^2 / 2h, in
+        the form 2 r / (A_k + sqrt(A_k^2 + 2 s r)) that stays exact where the cross-section closes; at the column's end
+        for v within END_SLACK of its volume, and below it at `cell_section`'s cross-section beyond."""
+        rows = self._rows(rows)
+        flat = np.asarray(v, dtype=float).reshape(len(rows), int(np.prod(np.shape(v)[1:])))
+        W, z_end, V, _, A_ext = self._ends(rows)
+        P, lv = self.profile[rows], self.profile_levels
+        k = np.zeros(flat.shape, dtype=np.int64)
+        for level in range(1, len(lv) - 1):                    # the band: the levels whose volume v reaches
+            k += flat >= W[:, level, None]
+        h = np.diff(lv)[k]
+        Ak, Ak1 = np.take_along_axis(P, k, axis=1), np.take_along_axis(P, k + 1, axis=1)
+        r = np.maximum(flat - np.take_along_axis(W, k, axis=1), 0.0)
+        den = Ak + np.sqrt(np.maximum(Ak * Ak + 2.0 * (Ak1 - Ak) / h * r, 0.0))
+        z = lv[k] + np.minimum(np.divide(2.0 * r, den, out=np.zeros_like(r), where=den > 0.0), h)
+        excess = np.maximum(flat - V[:, None], 0.0)
+        A = np.broadcast_to(A_ext[:, None], flat.shape)
+        below = np.divide(excess, A, out=np.where(excess > 0.0, np.inf, 0.0), where=A > 0.0)
+        full = flat >= V[:, None] * (1.0 - END_SLACK)
+        return np.where(full, z_end[:, None] + below, z).reshape(np.shape(v))
+
+    def _base_section(self, T, rows=None):
+        """The cross-section [m2] at the bottom of each of the columns `rows` under the profile, from its cells' volume
+        at the temperatures T (n, K): the profile's at the column's end, A(H), where they hold its volume to END_SLACK
+        or more (none for a column that pinches before H: it has no base, design 21.5, even while overfull); the
+        profile's at their depth where they hold less (A(0) for an empty column). Judged by volume, not by the summed
+        thicknesses, which round-off leaves either side of H."""
+        rows = self._rows(rows)
+        valid = self.valid[rows]
+        Tr = T[rows]
+        vol = np.zeros(valid.shape)
+        vol[valid] = self.m[rows][valid] / self.density(Tr[valid])
+        v = vol.sum(axis=1)
+        _, _, V, A_end, _ = self._ends(rows)
+        A = self._section(self._depth_of(v[:, None], rows), rows)[:, 0]
+        return np.where(v >= V * (1.0 - END_SLACK), A_end, A)
+
+    def _fill_profile(self, mass, T):
+        """`fill` under the profile: the depth holding mass / rho(T) cut into equal spans of about the fine size, each
+        cell the mass its span holds (the shares of the volume, so they sum to `mass`); cells of no mass are dropped."""
+        depth = self._depth_of((mass / self.density(T))[:, None])[:, 0]
+        cells = np.maximum(np.rint(depth / self.settings.cell).astype(np.int64), 1)
+        K = int(cells.max()) if self.n else 1
+        edges = depth[:, None] * np.minimum(np.arange(K + 1)[None, :], cells[:, None]) / cells[:, None]
+        V = self._volume_at(edges)
+        share = np.divide(np.maximum(np.diff(V, axis=1), 0.0), V[:, -1:], out=np.zeros((self.n, K)),
+                          where=V[:, -1:] > 0.0)
+        m = mass[:, None] * share
+        order = np.argsort(m <= 0.0, axis=1, kind="stable")          # the cells with metal first, in their order
+        m = np.take_along_axis(m, order, axis=1)
+        self.install(m, m * self.props.enthalpy(T)[:, None], (m > 0.0).sum(axis=1))
+
+    # -- the base exchange and the metal between two depths (plan 03b Task 3) ----------------------------------------
+    def exchange_base(self, rows, dV, T_draw=None):
+        """Metal crosses the base of each column rows[j] (distinct), between it and the volume beneath (design 21.3:
+        every skin keeps its column full by drawing at its base and returning there). dV[j] > 0 [m3] draws that volume
+        of the volume's metal, at the solid's density rho_s (the volume's one density, design 21.6) and at T_draw[j]
+        [K], as a new cell at rest below the bottom cell. dV[j] < 0 returns the bottom -dV[j] of the column's volume
+        (each cell's m / rho(T)) whatever its phase: the whole cells it covers, from the bottom up, and the share left
+        of the one cell above them, which keeps the rest at its own specific enthalpy and velocity. T_draw (one or per
+        row) is needed only where a column draws. Returns a BaseExchange: what crossed into each column, signed
+        (negative for a return), and the change in its count of cells. The caller regrids."""
+        rows = np.asarray(rows, dtype=np.int64).reshape(-1)
+        dV = np.broadcast_to(np.asarray(dV, dtype=float), rows.shape)
+        if len(np.unique(rows)) != len(rows) or not np.all(np.isfinite(dV)):
+            raise ValueError("a base exchange needs distinct columns and finite volumes")
+        self._no_trial("exchange metal at their bases")
+        draw, back = np.flatnonzero(dV > 0.0), np.flatnonzero(dV < 0.0)
+        if len(draw):
+            if T_draw is None:
+                raise ValueError("a draw at a skin's base needs the drawn metal's temperature T_draw")
+            T_d = np.broadcast_to(np.asarray(T_draw, dtype=float), rows.shape)[draw]
+            if not np.all(np.isfinite(T_d)):
+                raise ValueError("a draw at a skin's base needs a finite T_draw")
+        N = len(rows)
+        mass, H, P, cells = np.zeros(N), np.zeros(N), np.zeros((N, 3)), np.zeros(N, dtype=np.int64)
+        if len(back):
+            r, want = rows[back], -dV[back]
+            T, valid = self.T()[r], self.valid[r]
+            vol = np.zeros(valid.shape)
+            vol[valid] = self.m[r][valid] / self.density(T[valid])
+            if np.any(want > vol.sum(axis=1) * (1.0 + END_SLACK)):
+                raise ValueError("a return at a skin's base can take at most the volume its cells hold")
+            below = np.cumsum(vol[:, ::-1], axis=1)[:, ::-1]                  # each cell's volume and all beneath it
+            whole = valid & (below <= want[:, None] * (1.0 + END_SLACK))
+            n_whole = whole.sum(axis=1)
+            take = whole.astype(float)
+            j = self.count[r] - 1 - n_whole                                    # the cell above the whole ones
+            part = np.flatnonzero(j >= 0)
+            rest = want[part] - (vol[part] * whole[part]).sum(axis=1)
+            f = np.clip(rest / vol[part, j[part]], 0.0, 1.0)
+            take[part, j[part]] = np.where(f > END_SLACK, f, 0.0)
+            m_out = self.m[r] * take
+            mass[back], H[back] = -m_out.sum(axis=1), -(self.H[r] * take).sum(axis=1)
+            P[back] = -(m_out[..., None] * self.U[r]).sum(axis=1)
+            kept = 1.0 - take[part, j[part]]
+            self.m[r[part], j[part]] *= kept
+            self.H[r[part], j[part]] *= kept
+            self._compact(r, whole)
+            cells[back] = -n_whole
+        if len(draw):
+            m_d = self.rho_s * dV[draw]
+            H_d = m_d * self.props.enthalpy(T_d)
+            self.append_bottom(rows[draw], m_d[:, None], H_d[:, None])
+            mass[draw], H[draw], cells[draw] = m_d, H_d, 1
+        self._trim()
+        return BaseExchange(mass, H, P, cells)
+
+    def take_between(self, rows, z_top, z_bottom):
+        """Remove the metal lying between the depths z_top and z_bottom [m] (one or per row, z_top <= z_bottom) below
+        the tops of the columns rows (distinct): each cell's share of its volume between them, by the volume its span
+        holds under the column's cross-section (`cell_section`). Wholly covered cells leave, the cells the depths cut
+        keep the rest at their own specific enthalpy and velocity, and the cells beneath move up. Returns per row the
+        (mass [kg], enthalpy [J], momentum [kg m/s] (., 3)) taken; the caller regrids."""
+        rows = np.asarray(rows, dtype=np.int64).reshape(-1)
+        z_top = np.broadcast_to(np.asarray(z_top, dtype=float), rows.shape)
+        z_bottom = np.broadcast_to(np.asarray(z_bottom, dtype=float), rows.shape)
+        if len(np.unique(rows)) != len(rows) or not np.all(np.isfinite(z_top) & (z_bottom >= z_top)):
+            raise ValueError("take_between needs distinct columns and finite depths z_top <= z_bottom")
+        self._no_trial("take metal between depths")
+        T, valid = self.T()[rows], self.valid[rows]
+        vol = np.zeros(valid.shape)
+        vol[valid] = self.m[rows][valid] / self.density(T[valid])
+        v1 = np.cumsum(vol, axis=1)
+        Va = self._volume_at(np.maximum(z_top, 0.0)[:, None], rows)
+        Vb = self._volume_at(np.maximum(z_bottom, 0.0)[:, None], rows)
+        overlap = np.clip(np.minimum(v1, Vb) - np.maximum(v1 - vol, Va), 0.0, vol)
+        f = np.divide(overlap, vol, out=np.zeros_like(vol), where=vol > 0.0)
+        f = np.where(f >= 1.0 - END_SLACK, 1.0, np.where(f > END_SLACK, f, 0.0))
+        m_out = self.m[rows] * f
+        out = m_out.sum(axis=1), (self.H[rows] * f).sum(axis=1), (m_out[..., None] * self.U[rows]).sum(axis=1)
+        self.m[rows] = self.m[rows] * (1.0 - f)
+        self.H[rows] = self.H[rows] * (1.0 - f)
+        self._compact(rows, valid & (f == 1.0))
+        self._trim()
+        return out
+
+    def _compact(self, rows, drop):
+        """Remove the cells `drop` (len(rows), K) from the columns `rows` (distinct); the cells beneath move up, in
+        their order. No trial pass may be open."""
+        if not drop.any():
+            return
+        order = np.argsort(drop, axis=1, kind="stable")                    # the cells kept first, in their order
+        count = self.count[rows] - drop.sum(axis=1)
+        keep = np.arange(drop.shape[1])[None, :] < count[:, None]
+        self.m[rows] = np.where(keep, np.take_along_axis(self.m[rows], order, axis=1), 0.0)
+        self.H[rows] = np.where(keep, np.take_along_axis(self.H[rows], order, axis=1), 0.0)
+        self.U[rows] = np.where(keep[..., None], np.take_along_axis(self.U[rows], order[..., None], axis=1), 0.0)
+        self.count[rows] = count
+
     # -- regrid -----------------------------------------------------------------------------------------------------
     def regrid(self):
-        """Merge cells below MERGE_BELOW of their target, else split those above SPLIT_ABOVE, until none qualifies."""
+        """Merge cells below MERGE_BELOW of their target, else split those above SPLIT_ABOVE, until none qualifies.
+        Under a measured profile a cell splits at its mid-depth (module docstring)."""
         for _ in range(REGRID_PASSES):
             valid = self.valid
             dz = self.dz()
@@ -363,7 +685,8 @@ class Skins:
             if small.any():
                 self._merge(np.flatnonzero(small.any(axis=1)), small)
             elif big.any():
-                self._split(np.flatnonzero(big.any(axis=1)), big)
+                rows = np.flatnonzero(big.any(axis=1))
+                self._split(rows, big, None if self.profile is None else self._upper_halves(rows, dz))
             else:
                 return
         raise RuntimeError("the skin cells did not settle in {} merge-and-split passes".format(REGRID_PASSES))
@@ -398,8 +721,17 @@ class Skins:
         self.U[rows], self.count[rows] = U.reshape(nr, K, 3), start.sum(axis=1)
         self._trim()
 
-    def _split(self, rows, big):
-        """Every big cell in `rows` becomes two halves of its mass and enthalpy, both at its velocity."""
+    def _upper_halves(self, rows, dz):
+        """Each cell's share (len(rows), K) of its volume above its mid-depth, under the profile, from the thicknesses
+        dz (n, K); one half for a cell of no volume."""
+        d = dz[rows]
+        z0 = np.cumsum(d, axis=1) - d
+        V0, Vm, V1 = (self._volume_at(z, rows) for z in (z0, z0 + 0.5 * d, z0 + d))
+        return np.divide(Vm - V0, V1 - V0, out=np.full(d.shape, 0.5), where=V1 > V0)
+
+    def _split(self, rows, big, upper=None):
+        """Every big cell in `rows` becomes two, both at its velocity: halves of its mass and enthalpy, or with `upper`
+        (len(rows), K) that share of each for the upper one and the rest for the lower (a profile's mid-depth split)."""
         valid = self.valid[rows]
         reps = np.where(valid, 1 + big[rows], 0)
         nr, K = reps.shape
@@ -409,18 +741,23 @@ class Skins:
         dest = np.cumsum(reps, axis=1) - reps
         rr = np.broadcast_to(np.arange(nr)[:, None], (nr, K))
         share = 1.0 / np.maximum(reps, 1)
+        if upper is None:
+            shares = (share, share)
+        else:
+            shares = (np.where(reps == 2, upper, 1.0), np.where(reps == 2, 1.0 - upper, 1.0))
         m, H, U = np.zeros((nr, K2)), np.zeros((nr, K2)), np.zeros((nr, K2, 3))
-        m0, H0, U0 = self.m[rows, :K] * share, self.H[rows, :K] * share, self.U[rows, :K]
+        U0 = self.U[rows, :K]
         trial = self.dH is not None
         if trial:
-            dH, dH0 = np.zeros((nr, K2)), self.dH[rows, :K] * share
+            dH = np.zeros((nr, K2))
         for half in (0, 1):
             sel = valid & (half < reps)
-            m[rr[sel], dest[sel] + half] = m0[sel]
-            H[rr[sel], dest[sel] + half] = H0[sel]
+            f = shares[half]
+            m[rr[sel], dest[sel] + half] = (self.m[rows, :K] * f)[sel]
+            H[rr[sel], dest[sel] + half] = (self.H[rows, :K] * f)[sel]
             U[rr[sel], dest[sel] + half] = U0[sel]
             if trial:
-                dH[rr[sel], dest[sel] + half] = dH0[sel]
+                dH[rr[sel], dest[sel] + half] = (self.dH[rows, :K] * f)[sel]
         if trial:
             self.dH[rows] = dH
         self.m[rows], self.H[rows], self.U[rows], self.count[rows] = m, H, U, count
@@ -521,8 +858,9 @@ class Skins:
 
     def divide(self, rows):
         """Each column in `rows` (distinct) becomes two with the same profile: every cell's mass and enthalpy halved
-        (exactly, a power of two), the velocities kept, the top area halved, the curvatures kept. The new columns are
-        appended; returns their indices, in the order of `rows`."""
+        (exactly, a power of two), the velocities kept, the top area halved, the curvatures kept, the measured
+        cross-sections halved (ruling T3-a). The new columns are appended; returns their indices, in the order of
+        `rows`."""
         rows = np.asarray(rows, dtype=np.int64).reshape(-1)
         if len(np.unique(rows)) != len(rows):
             raise ValueError("divide needs distinct columns")
@@ -530,6 +868,9 @@ class Skins:
         self.m[rows] *= 0.5
         self.H[rows] *= 0.5
         self.area[rows] *= 0.5
+        if self.profile is not None:
+            self.profile[rows] *= 0.5
+            self.profile = np.concatenate([self.profile, self.profile[rows]])
         new = self.n + np.arange(len(rows))
         self.m = np.concatenate([self.m, self.m[rows]])
         self.H = np.concatenate([self.H, self.H[rows]])
@@ -543,10 +884,11 @@ class Skins:
     def cut(self, rows, fractions):
         """Fractions of columns (stage 3 Task 9b, the step end's re-partition): for each k a new column holding
         fractions[k] > 0 of column rows[k] with its profile -- every cell's mass and enthalpy times the fraction, its
-        velocity kept -- and that fraction of its top area, its curvatures kept. A row may be cut several times; each
-        source keeps the rest, one less the sum of its fractions, of every cell and of its area. A source whose
-        fractions sum to one (to within CUT_SLACK) is emptied and its fractions are scaled to sum to one. Mass, enthalpy
-        and momentum add to round-off. The new columns are appended; returns their indices, in the order of `rows`."""
+        velocity kept -- and that fraction of its top area and of its measured cross-sections (ruling T3-a), its
+        curvatures kept. A row may be cut several times; each source keeps the rest, one less the sum of its fractions,
+        of every cell, of its area and of its cross-sections. A source whose fractions sum to one (to within CUT_SLACK)
+        is emptied and its fractions are scaled to sum to one. Mass, enthalpy and momentum add to round-off. The new
+        columns are appended; returns their indices, in the order of `rows`."""
         rows = np.asarray(rows, dtype=np.int64).reshape(-1)
         f = np.asarray(fractions, dtype=float).reshape(-1)
         if len(f) != len(rows) or not np.all(np.isfinite(f) & (f > 0.0)):
@@ -561,10 +903,16 @@ class Skins:
         new = self.n + np.arange(len(rows))
         m, H, U = self.m[rows] * f[:, None], self.H[rows] * f[:, None], self.U[rows]
         count, area, kappa = self.count[rows], self.area[rows] * f, self.kappa[rows]
+        profiled = self.profile is not None
+        if profiled:
+            profile = self.profile[rows] * f[:, None]
         src = np.flatnonzero(total > 0.0)
         self.m[src] *= rest[src, None]
         self.H[src] *= rest[src, None]
         self.area[src] *= rest[src]
+        if profiled:
+            self.profile[src] *= rest[src, None]
+            self.profile = np.concatenate([self.profile, profile])
         empty = src[whole[src]]
         self.U[empty], self.count[empty] = 0.0, 0
         self.m = np.concatenate([self.m, m])
@@ -576,21 +924,59 @@ class Skins:
         self.momentum_out = np.concatenate([self.momentum_out, np.zeros((len(rows), 3))])
         return new
 
-    def combine(self, keep, gone):
+    def combine(self, keep, gone, by="mass"):
         """The hand-over rule (design 9.2): column gone[k] is mixed into column keep[k] layer by layer at the same
         relative depth, the depth measured by the mass above as a fraction of the column's mass. The merged column's
         cell boundaries are the union of both columns' boundaries in that fraction; each merged cell takes from each
         column the share of the cell spanning it, mass, enthalpy and momentum in proportion (that cell's specific
         enthalpy and velocity), so the books add to round-off. Cells left below 1e-9 of the column's largest by nearly
         coinciding boundaries join a neighbour (`_merge`), exactly. The top areas add, the curvatures are averaged by
-        area, and column gone[k] is left empty with no area (remove it with `remove`). Pairs must be distinct and
-        disjoint; the caller regrids."""
+        area, the measured cross-sections add (ruling T3-a), and column gone[k] is left empty with no area (remove it
+        with `remove`). Pairs must be distinct and disjoint; the caller regrids.
+
+        by="depth" (plan 03b Task 3, design 21.5: metal stays where it is, only its owner changes) is a conservative
+        remap on depth instead: each of the keeper's cells takes the gone column's metal lying at its own depths (the
+        share of each gone cell's volume between the keeper cell's top and bottom, from the gone column's own
+        cross-section), and the gone metal deeper than the keeper's bottom joins it as new cells below, the gone cells'
+        parts in their order. The keeper's cell boundaries are kept: with both columns exactly full and their profiles
+        summed, every cell spans the depths it spanned. Shares below END_SLACK of a cell are dropped and the rest scaled
+        to sum to one, so mass, enthalpy and momentum add to round-off."""
         keep = np.asarray(keep, dtype=np.int64).reshape(-1)
         gone = np.asarray(gone, dtype=np.int64).reshape(-1)
         both = np.concatenate([keep, gone])
         if len(keep) != len(gone) or len(np.unique(both)) != len(both):
             raise ValueError("combine needs distinct, disjoint pairs of columns")
+        if by not in ("mass", "depth"):
+            raise ValueError("combine is by 'mass' or by 'depth', not {!r}".format(by))
         self._no_trial("combine")
+        merged = self._by_depth(keep, gone) if by == "depth" else self._by_mass(keep, gone)
+        self._width(max([len(t[0]) for t in merged] + [1]))
+        for a, b, (m, H, P) in zip(keep, gone, merged):
+            k = len(m)
+            self.m[a], self.H[a], self.U[a] = 0.0, 0.0, 0.0
+            self.m[a, :k], self.H[a, :k] = m, H
+            self.U[a, :k] = np.divide(P, m[:, None], out=np.zeros_like(P), where=m[:, None] > 0.0)
+            self.count[a] = k
+            self.m[b], self.H[b], self.U[b], self.count[b] = 0.0, 0.0, 0.0, 0
+            A = self.area[a] + self.area[b]
+            if A > 0.0:
+                self.kappa[a] = (self.area[a] * self.kappa[a] + self.area[b] * self.kappa[b]) / A
+            self.area[a], self.area[b] = A, 0.0
+            if self.profile is not None:
+                self.profile[a] += self.profile[b]
+                self.profile[b] = 0.0
+            self.momentum_out[a] += self.momentum_out[b]
+            self.momentum_out[b] = 0.0
+        tiny = np.zeros(self.m.shape, bool)
+        sub = self.m[keep]
+        tiny[keep] = (self.valid[keep] & (sub < 1e-9 * sub.max(axis=1, keepdims=True))
+                      & (self.count[keep] >= 2)[:, None])
+        if tiny.any():
+            self._merge(np.flatnonzero(tiny.any(axis=1)), tiny)
+        self._trim()
+
+    def _by_mass(self, keep, gone):
+        """`combine`'s merged cells by relative depth in mass, (m, H, P) per pair, before any column changes."""
         merged = []
         for a, b in zip(keep, gone):
             cols = [(self.m[c, :self.count[c]], self.H[c, :self.count[c]], self.U[c, :self.count[c]])
@@ -610,27 +996,40 @@ class Skins:
                 H += Hc[c] * w
                 P += (mc[c] * w)[:, None] * Uc[c]
             merged.append((m, H, P))
-        self._width(max([len(t[0]) for t in merged] + [1]))
-        for a, b, (m, H, P) in zip(keep, gone, merged):
-            k = len(m)
-            self.m[a], self.H[a], self.U[a] = 0.0, 0.0, 0.0
-            self.m[a, :k], self.H[a, :k] = m, H
-            self.U[a, :k] = np.divide(P, m[:, None], out=np.zeros_like(P), where=m[:, None] > 0.0)
-            self.count[a] = k
-            self.m[b], self.H[b], self.U[b], self.count[b] = 0.0, 0.0, 0.0, 0
-            A = self.area[a] + self.area[b]
-            if A > 0.0:
-                self.kappa[a] = (self.area[a] * self.kappa[a] + self.area[b] * self.kappa[b]) / A
-            self.area[a], self.area[b] = A, 0.0
-            self.momentum_out[a] += self.momentum_out[b]
-            self.momentum_out[b] = 0.0
-        tiny = np.zeros(self.m.shape, bool)
-        sub = self.m[keep]
-        tiny[keep] = (self.valid[keep] & (sub < 1e-9 * sub.max(axis=1, keepdims=True))
-                      & (self.count[keep] >= 2)[:, None])
-        if tiny.any():
-            self._merge(np.flatnonzero(tiny.any(axis=1)), tiny)
-        self._trim()
+        return merged
+
+    def _by_depth(self, keep, gone):
+        """`combine(..., by="depth")`'s merged cells, (m, H, P) per pair, before any column changes."""
+        T = self.T()
+        dz = self.dz(T)
+        valid = self.valid
+        vol = np.zeros(self.m.shape)
+        vol[valid] = self.m[valid] / self.density(T[valid])
+        merged = []
+        for a, b in zip(keep, gone):
+            ka, kb = self.count[a], self.count[b]
+            m, H = self.m[a, :ka].copy(), self.H[a, :ka].copy()
+            P = m[:, None] * self.U[a, :ka]
+            if kb == 0:
+                merged.append((m, H, P))
+                continue
+            za = np.concatenate([[0.0], np.cumsum(dz[a, :ka])])           # the keeper's boundaries
+            Va = self._volume_at(za[None, :], [b])[0]                      # as volumes from the gone column's top
+            vb = np.concatenate([[0.0], np.cumsum(vol[b, :kb])])
+            lo = np.maximum(vb[:-1, None], Va[None, :-1])
+            hi = np.minimum(vb[1:, None], Va[None, 1:])
+            share = np.column_stack([np.maximum(hi - lo, 0.0), np.maximum(vb[1:] - np.maximum(vb[:-1], Va[-1]), 0.0)])
+            share /= vol[b, :kb, None]
+            share[share < END_SLACK] = 0.0
+            share /= share.sum(axis=1, keepdims=True)                      # gone cell c's share in each keeper cell,
+            mg, Hg, Ug = self.m[b, :kb, None] * share, self.H[b, :kb, None] * share, self.U[b, :kb]    # and beyond
+            m += mg[:, :ka].sum(axis=0)
+            H += Hg[:, :ka].sum(axis=0)
+            P += np.einsum("cj,ck->jk", mg[:, :ka], Ug)
+            deeper = np.flatnonzero(mg[:, ka] > 0.0)                       # the gone metal below the keeper's bottom
+            merged.append((np.concatenate([m, mg[deeper, ka]]), np.concatenate([H, Hg[deeper, ka]]),
+                           np.concatenate([P, mg[deeper, ka, None] * Ug[deeper]])))
+        return merged
 
     def remove(self, rows):
         """The columns `rows` (distinct) leave; the others keep their order. Returns per removed column, in the order
@@ -645,6 +1044,8 @@ class Skins:
         keep[rows] = False
         self.m, self.H, self.U, self.count = self.m[keep], self.H[keep], self.U[keep], self.count[keep]
         self.area, self.kappa, self.momentum_out = self.area[keep], self.kappa[keep], self.momentum_out[keep]
+        if self.profile is not None:
+            self.profile = self.profile[keep]
         self._trim()
         return out
 
@@ -695,6 +1096,8 @@ class Skins:
         the same area out of it (the shared Stefan-Boltzmann constant), conduction between cells through harmonic
         conductances A(z_i) / (dz_i / 2k_i + dz_j / 2k_j) with the cross-section at the interface's depth z_i, and the
         base held at T_b [K] through the bottom half-cell, A(z_bottom) k / (dz / 2) (T_b None: an adiabatic base).
+        Under a measured profile A(z_i) is the cells' cross-section (`cell_section`) and A(z_bottom) the base's
+        (`base_area`: none for a column that pinches, so its bottom is insulated); the top fluxes stay on A0 = `area`.
         The cells' thicknesses (and so the interface depths) are those at the sub-step's start. Newton in the
         temperature with a backtracking line search per column on the residual's norm, every property from the table
         (`PropertyTable.conduction`), the Jacobian with the slopes of its h and k across each cell's grid interval, so
@@ -726,8 +1129,13 @@ class Skins:
         dz = np.where(valid, np.maximum(self.dz(T_old), DZ_FLOOR), 1.0)
         z_bot = np.cumsum(np.where(valid, dz, 0.0), axis=1)
         link = valid[:, 1:]
-        A_i = np.where(link, self.cross_section(z_bot[:, :-1]), 1.0)          # at each interface's depth
-        A_b = self.cross_section(z_bot[rows, last][:, None])[:, 0] if base else np.zeros(n)
+        A_i = np.where(link, self.cell_section(z_bot[:, :-1]), 1.0)           # at each interface's depth
+        if not base:
+            A_b = np.zeros(n)
+        elif self.profile is not None:
+            A_b = self._base_section(T_old)
+        else:
+            A_b = self.cross_section(z_bot[rows, last][:, None])[:, 0]
         bottom = has & base
         m, E_old = self.m, self.H
 
@@ -738,7 +1146,7 @@ class Skins:
             G = np.where(link, A_i / (r[:, :-1] + r[:, 1:]), 0.0)
             dT = T[:, :-1] - T[:, 1:]
             F = G * dT                                                          # down through each interface
-            dG = G * G / A_i * 0.5                                              # dG/dk_j = dG * dz_j / k_j^2
+            dG = np.divide(G * G, A_i, out=np.zeros_like(G), where=A_i > 0.0) * 0.5   # dG/dk_j = dG * dz_j / k_j^2
             dFl = G + dT * dG * dz[:, :-1] * kp[:, :-1] / k[:, :-1] ** 2
             dFr = -G + dT * dG * dz[:, 1:] * kp[:, 1:] / k[:, 1:] ** 2
             Tl, kl, kpl, dzl = T[rows, last], k[rows, last], kp[rows, last], dz[rows, last]
@@ -816,7 +1224,11 @@ class Skins:
         return mass, H
 
     def base_area(self):
-        """The cross-section [m2] (n,) at each column's bottom, A(z_bottom); A0 for an empty column."""
+        """The cross-section [m2] (n,) at each column's bottom, A(z_bottom); A0 for an empty column. Under a measured
+        profile, from the cells' volume (`_base_section`): the profile's base for a full column, none where it
+        pinches."""
+        if self.profile is not None:
+            return self._base_section(self.T())
         return self.cross_section(self.thickness()[:, None])[:, 0]
 
     def minimum_mass(self):
@@ -984,11 +1396,13 @@ class Skins:
             m_i (u_i' - u_i) / dt = A(z_i) D_i (u'_(i+1) - u'_i) + A(z_(i-1)) D_(i-1) (u'_(i-1) - u'_i)
                                     + push V_i + tau A_top [i the top cell],
 
-        A(z) the column's cross-section at each interface's depth (Task 2's curved law, the thicknesses at the step's
-        start), D = 1 / (dz_i / 2 eta_i + dz_j / 2 eta_j) the drag per unit area between two cells' centres (the two
-        half-cells in series), V_i = m_i / rho_i the cell's volume, `push` [N/m3, (n, 3) or (3,)] the force per unit
-        volume, the same on every layer of a column (built by Task 6), and `tau` [Pa, (n, 3) or (3,)] the gas shear on
-        the top cell over the top area A_top = A(0). The anchored cells (`anchored`) are held at rest: a moving cell
+        A(z) the column's cross-section at each interface's depth (Task 2's curved law, or the measured profile's
+        `cell_section`, the thicknesses at the step's start), D = 1 / (dz_i / 2 eta_i + dz_j / 2 eta_j) the drag per
+        unit area between two cells' centres (the two half-cells in series), V_i = m_i / rho_i the cell's volume, `push`
+        [N/m3, (n, 3) or (3,)] the force per unit volume, the same on every layer of a column (built by Task 6), and
+        `tau` [Pa, (n, 3) or (3,)] the gas shear on the top cell over the top area A_top = A(0) = `area`, a top flux
+        even under a profile (ruling T1-g); under a profile the floor's A(z_bottom) is `base_area`'s, none where the
+        column pinches. The anchored cells (`anchored`) are held at rest: a moving cell
         drags on them, and a flowing bottom cell on the rigid volume beneath the base, over its own half-thickness
         alone, A(z_bottom) eta / (dz / 2) (no slip at the rigid front). A crust (`crust`) floats: its contiguous cells are
         one unknown with their summed mass, momentum and forces, dragged at its faces through a half-cell of
@@ -1039,9 +1453,13 @@ class Skins:
         crust = moving & ~flowing
         dz = np.where(valid, np.maximum(self.dz(T_all)[r], DZ_FLOOR), 0.0)       # the thicknesses at the start
         z_bot = np.cumsum(dz, axis=1)
-        k1, k2, A_top = self.kappa[r, 0, None], self.kappa[r, 1, None], self.area[r]
-        A_z = A_top[:, None] * (1.0 - k1 * z_bot) * (1.0 - k2 * z_bot)   # the cross-section at each cell's bottom
-        A_i, A_b = A_z[:, :-1], A_z[rows, last]                          # at each interface's depth, at the base
+        A_top = self.area[r]                                             # the gas shear's area, a top flux (T1-g)
+        if self.profile is None:
+            k1, k2 = self.kappa[r, 0, None], self.kappa[r, 1, None]
+            A_z = A_top[:, None] * (1.0 - k1 * z_bot) * (1.0 - k2 * z_bot)   # the cross-section at each cell's bottom
+            A_i, A_b = A_z[:, :-1], A_z[rows, last]                      # at each interface's depth, at the base
+        else:                                                            # the measured profile's (plan 03b Task 3)
+            A_i, A_b = self._section(z_bot[:, :-1], r, extend=True), self._base_section(T_all, r)
         V = np.where(valid, m / np.where(valid, self.density(T), 1.0), 0.0)
         force = np.where(moving[..., None], push[:, None, :] * V[..., None], 0.0)
         top_moves = moving[:, 0]
