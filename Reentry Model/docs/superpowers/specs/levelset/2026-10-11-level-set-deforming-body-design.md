@@ -887,7 +887,12 @@ body the test still changes nothing: a patch facing the flow casts a ray that re
 mass-centroid plane that faces away from the flow, which the amended candidates include where that plane lies behind the
 body's widest section, casts a ray into the body's own front and is shadowed by the body itself, so it is leeward as the
 angle law made it (the skyscrapers' test sphere with its tops moved 5 mm forward of its centroid's plane has 5 such
-corners). The test differs only on overhangs, pockets and detached pieces, where the skyscrapers' mass-centroid test
+corners). That holds on the classic loads only. On the interim gas loads' provider, the skyscrapers' default since their
+merge of 2026-11-15, the skyscrapers' merged rule reads such a self-shadowed patch at 180 degrees, in the separated wake
+(no heating, no shear below the shear switch), where the angle law read it at its own angle just past 90 degrees with the
+provider's lee heating and shear: the 5 corners above face 95.2 to 95.8 degrees from the flow (`docs/model_assumptions.md`
+15.2). So on the provider the test also changes the loads of a convex body's rear patches between its widest section and
+the centroid's plane; otherwise the test differs only on overhangs, pockets and detached pieces, where the skyscrapers' mass-centroid test
 (Task 5j) cannot see. Separated flow behind a ridge is not computed; §17 item 3's CFD
 hook stays the remedy. Cost: a few dozen lookups per ray (*estimated*).
 

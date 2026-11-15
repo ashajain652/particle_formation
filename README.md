@@ -338,7 +338,8 @@ pressure and no shear or heating on the lee), named `_loads-classic`, and reprod
 at their defaults, under `heating_unused`) and refuses either one given other than at its default, and
 `--bridging-heat sesam-table` (exit 2, naming `--gas-loads classic`). `resume` keeps the loads the state was saved with
 (a state saved before the option resumes on `classic`). On the 65 km smoke flights the default added about 1 s to every
-macro step (skins 4.98 s against 3.92 s, element model 1.22 s against 0.29 s) and lowered the stagnation heating by
+macro step (skins 4.98 s against 3.92 s, measured on main under the earlier windward rule, now `--windward-loads normals`;
+element model 1.22 s against 0.29 s) and lowered the stagnation heating by
 about 2 %; on the element flight it raised the total convective heat by 16 % (6.2 % of it now lands behind 90 degrees),
 the peak shear 4.3 times and the shoulder shear 6.1 times. The equations, rulings, measurements and the accuracy against
 Holman and Boyd's DSMC are in `Reentry Model/docs/model_assumptions.md` section 14.

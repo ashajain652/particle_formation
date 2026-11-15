@@ -1501,7 +1501,10 @@ Each item below was measured once, on the flights named; none is a sweep.
     from 88 to 92 degrees) 130 Pa against 21 Pa (6.1 times); on the lee 95 Pa at 100 degrees, 44 Pa at 120 and 4.8 Pa
     at 150, against zero. The pressure gradient at the shoulder is -30 kPa/m against -16 kPa/m.
   - On the skins, the metal released by 0.125 s fell from 1.33 g to 0.024 g, and the deepest liquid on the surface at
-    0.125 s from 0.081 mm to zero; the element flight releases nothing on either loads.
+    0.125 s from 0.081 mm to zero; the element flight releases nothing on either loads. These skin figures were measured
+    on main, under the earlier windward rule, now `--windward-loads normals`; on the sphere rule, the skins' default since
+    the merge of 2026-11-15, the same flight released 0.0326 g against 0.0228 g under `normals` on the merged tree (15.5,
+    one run each).
 - The two mechanism tests' flights (ruling R17, measured on 2026-11-14 on each test's own flight):
   - 71 km, 893 K melting skins, one 0.1 s step: the nose holds no liquid at 0.1 s on the interim loads (0.030 mm on the
     classic loads), so the continuum step's "melting" latch is not reached; the stagnation flux is 2.893 against
@@ -1666,8 +1669,13 @@ of the shape set their own loads. The rule now is (Asha, 2026-11-13):
    from the fitted centre.
 5. **The angle.** An exposed corner's load angle is the angle between the flight direction and the ray from the fitted
    centre through the corner; past 90 degrees it is leeward through the angle itself.
-6. **Leeward corners.** Sheltered corners and corners behind the plane take no heating, no shear and no spraying, as corners
-   behind the plane did before.
+6. **Leeward corners.** On the classic loads (`--gas-loads classic`) sheltered corners and corners behind the plane take
+   no heating, no shear and no spraying, as corners behind the plane did before. On the interim gas loads' provider
+   (section 14; the default since the merge of 2026-11-15, 15.5) a corner the ray test shelters, and a corner behind the
+   plane whose own normal faces the flow, reads 180 degrees, the separated wake: the base pressure and its gradient, no
+   heating, and no shear below the shear switch at Kn_body 0.05 (almost none above it, 14.5). A corner behind the plane
+   whose normal faces away takes the provider's lee loads at its own angle, as an exposed corner past 90 degrees does at
+   its ray angle. On either loads no corner past 90 degrees sprays.
 7. **Who reads it.** Every consumer reads it through `load_angles` and `nose_radius`, whose interfaces are unchanged.
 
 The shelter ray is cast against the tops, the interpolated surface through the corners, and not against the fitted sphere
@@ -1705,9 +1713,23 @@ the tops' widest section (their equator), the candidates include corners on the 
 the flow, and their rays up the flow cross the body's own front, so they are sheltered: the body shelters its own rear
 corners. **(verified)** With the tops of the undeformed test sphere moved 5 mm forward along the flight direction (the
 centroid's plane does not move with them), 5 corners are sheltered and every one of them faces away from the flow
-(`test_moved_tops_move_the_sphere_s_centre_and_scaled_tops_scale_its_radius`; Task 2 report). Such corners are leeward
-under the earlier rule too, since their normals face away, so on a convex body this changes the count, not the loads those
-corners take.
+(`test_moved_tops_move_the_sphere_s_centre_and_scaled_tops_scale_its_radius`; Task 2 report). On the classic loads such
+corners are leeward under the earlier rule too, since their normals face away, so on a convex body this changes the count,
+not the loads those corners take. On the interim gas loads' provider, the default since the merge of 2026-11-15, it changes
+their loads. The earlier rule (`normals`) reads each at its own normal's angle, just past 90 degrees, where the provider
+gives lee heating and shear; the sphere rule reads it at 180 degrees, in the separated wake, with no heating and no shear
+below the shear switch (15.1 item 6, 15.5). **(verified, one run)** On the same moved tops the 5 sheltered corners face
+95.2 to 95.8 degrees from the flow; on the provider `normals` reads them at those angles and `sphere` at 180 degrees (a
+check script of the merge's review, 2026-11-15, re-run by the merge's implementer; the forward-moved shape of
+`test_under_the_sphere_rule_on_the_provider_sheltered_corners_read_the_wake_and_corners_facing_away_their_angle` asserts
+the 180 degrees). So on the default loads a body whose centroid's plane lies behind its widest section has a band just
+behind the widest section, between it and the plane, that takes no lee heating or shear, while the corners behind the
+plane keep theirs; the band's width moves with the centroid. **(inferred, not measured)** From the counts in 15.4, 167 of
+the 100 mm body's 568 sheltered corners and 199 of the 50 mm body's 233 face away from the flow (568 minus the 401 that
+were windward under `normals`, and 233 minus 34; a sheltered corner lies ahead of the plane, so one that was not windward
+under `normals` faces away). Whether they are the body's own rear corners or the back slopes of crests was not measured.
+**(assumed)** That the body's own rear corners, and not only the back slopes behind raised features, belong in the wake on
+the provider is the merge's ruling, taken on Asha's behalf (15.5); she has not confirmed this case.
 
 **(assumed)** The shadow is a straight line: a ray up the flow that meets metal shelters the corner, and the corner then takes
 the leeward loads. This is a Newtonian shadow. It leaves out the heating from gas that reattaches behind a step or a rim, so
@@ -1892,13 +1914,21 @@ The resume test of `tests/test_reentry_model_restart.py`
 `test_the_windward_loads_are_sphere_by_default_reach_the_body_and_mark_only_normals_in_the_name` (the default, the body's
 rule and the run name), `test_the_windward_loads_option_is_refused_where_it_cannot_apply` (the refusals) and
 `test_a_skin_run_records_its_windward_loads_and_the_sphere_columns` (the JSON and the history's columns).
-**(verified)** A body with sheltered corners flies under the default rule:
+**(verified, on the classic loads)** A body with sheltered corners flies under the default rule:
 `test_a_ringed_body_flies_a_macro_step_with_its_sheltered_corners_unloaded_and_its_books_closed` in
-`tests/test_reentry_model_skinbody.py` advances the ringed test sphere one macro step with the flow and a spray model on, at
+`tests/test_reentry_model_skinbody.py` advances the ringed test sphere one macro step on the classic loads (a surface flow
+with no provider and a cosine heating, as before the merge) with the flow and a spray model on, at
 a modest heating chosen to stay clear of the coarse mesh's rear margin (15.7). Its mass, energy and momentum books close,
 the corners sheltered at the step's start take no heat flux, pressure gradient or gas shear in any part of the step, and the
 ring's crest corners whose own normals face away from the flow are heated (the counts are in the final fix wave's report,
-`final-fix-report.md` with the task reports; one run).
+`final-fix-report.md` with the task reports; one run). On the provider a sheltered corner takes the base pressure's
+gradient at 180 degrees, so the "no pressure gradient" part of that result is the classic loads' only.
+**(verified, one run, on the provider)**
+`test_under_the_sphere_rule_on_the_provider_sheltered_corners_take_no_heat_or_shear_and_exposed_ones_past_90_the_lee_loads`
+evaluates the ringed sphere's surface flow and similarity heating once on a provider, through `flow_forcing` and
+`CoupledRun.loads_at`: its 105 ray-sheltered corners (55 facing the flow, 50 facing away) take no heat flux and no shear
+and the provider's base pressure, and its 38 exposed corners past 90 degrees by their ray angle (at most 91.9 degrees)
+take the provider's lee heating and shear and are not windward. It does not advance the body.
 
 ### 15.6 The element model is unchanged
 

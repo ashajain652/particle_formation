@@ -3432,12 +3432,15 @@ def test_under_the_sphere_rule_on_the_provider_sheltered_corners_read_the_wake_a
     merge, bit for bit, and a body with no sheltered angle of its own (one saved before the interim gas loads) is classic.
     Two shapes: the raised ring (its sheltered band faces the flow) with a corner facing the flow put behind the plane, and
     the tops moved 5 mm forward (its sheltered corners, just behind the old equator, face away from the flow). The fit, the
-    exposed and sheltered corners and the windward ones are the same on either loads."""
+    exposed and sheltered corners and the windward ones are the same on either loads. A third body at a sheltered angle of
+    2.5 rad reads that angle wherever the provider's reads pi, and the provider's angles elsewhere, so the corners read the
+    body's `sheltered_angle`, not pi itself."""
     for shape in ("ring", "forward"):
         c = make(coarse_sphere_mesh)                                         # the classic loads: the class's angle
         w = make(coarse_sphere_mesh, sheltered_angle=np.pi)                  # the provider's
+        x = make(coarse_sphere_mesh, sheltered_angle=2.5)                    # any other angle in (90, 180] degrees
         assert c.sheltered_angle == skinbody.SHELTER_CLASSIC and w.sheltered_angle == skinbody.SHELTER_WAKE == np.pi
-        for b in (c, w):
+        for b in (c, w, x):
             if shape == "ring":
                 ringed(b)
                 k = put_behind(b)                                            # theta 0.5 rad, behind the plane
@@ -3456,6 +3459,8 @@ def test_under_the_sphere_rule_on_the_provider_sheltered_corners_read_the_wake_a
         np.testing.assert_array_equal(eff[away], w.theta[away])              # behind and facing away: the lee loads
         assert (eff[facing] == np.pi).all()                                  # behind and facing the flow: the wake
         np.testing.assert_array_equal(w.windward_corners(), c.windward_corners())
+        wake = sf.sheltered | facing
+        np.testing.assert_array_equal(x.load_angles(), np.where(wake, 2.5, eff))
         if shape == "ring":
             assert facing[k] and eff[k] == np.pi and c.load_angles()[k] == 0.5 * np.pi + 1e-6
             band = sf.sheltered & (w.theta <= 0.5 * np.pi)
@@ -3519,6 +3524,41 @@ def test_under_the_sphere_rule_the_provider_reads_the_sphere_rule_s_radius(coars
     q = coupled.CoupledRun.loads_at(ran, 0.0, np.zeros(6))[1]
     assert radii == [sf.used, sf.used]                                   # the surface flow's ask, then the heating's
     assert q.q_stag > 0.0 and np.isfinite(f.dp_ds).all()
+
+
+def test_under_the_sphere_rule_on_the_provider_sheltered_corners_take_no_heat_or_shear_and_exposed_ones_past_90_the_lee_loads(
+        coarse_sphere_mesh):
+    """The sphere rule on the provider's loads through the routines a macro step calls (`flow_forcing` and
+    `CoupledRun.loads_at` with `SimilarityHeating`), as `test_under_the_provider_a_sheltered_corner_reads_the_wake_...`
+    checks the centroid test's corner under `normals`: on the raised ring (`ringed`) the corners the ray test shelters,
+    facing the flow or away from it, get no heating and no shear and the provider's pressure at pi, the rear of the
+    separated wake; the exposed corners whose ray angle from the fitted centre passes 90 degrees get the provider's lee
+    heating and shear at that angle and are not windward (the gas state of the 100 mm flight at 93 s, Kn_body 0.0027, a
+    body at 890 K). Measured 2026-11-15 on the 4 mm sphere: 105 sheltered corners (55 facing the flow, 50 facing away) and
+    38 exposed corners past 90 degrees, at most 91.9 degrees."""
+    pytest.importorskip("cantera")
+    from types import SimpleNamespace
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import surface_flow
+    from reentry_model.shared.gas_loads import GasLoads
+    state = aero_state_at(93.0)
+    provider = GasLoads()
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, sheltered_angle=np.pi,
+             surface_flow=surface_flow.SurfaceFlow(gas_loads=provider))
+    ringed(b)
+    sf, eff = b.sphere_fit, b.load_angles()
+    sheltered, past = sf.sheltered, sf.exposed & (eff > 0.5 * np.pi)
+    assert b.windward_loads == "sphere" and not sf.concave
+    assert (sheltered & (b.theta <= 0.5 * np.pi)).any() and (sheltered & (b.theta > 0.5 * np.pi)).any() and past.sum() > 10
+    f = b.flow_forcing(state)
+    ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: state), body=b,
+                          heating=heating.SimilarityHeating(provider))
+    q = coupled.CoupledRun.loads_at(ran, 0.0, np.zeros(6))[1].q_conv
+    L = provider.meridian(state, b.nose_radius(), float(b.surface_temperature()[np.argmin(eff)]))
+    assert (q[sheltered] == 0.0).all() and (f.tau[sheltered] == 0.0).all()
+    np.testing.assert_allclose(f.result.p_w[sheltered], L.at(np.pi, "p_w"), rtol=1e-12)
+    assert (q[past] > 0.0).all() and (f.tau[past] > 0.0).all() and not b.windward_corners()[past].any()
+    np.testing.assert_allclose(f.result.p_w[past], L.at(eff[past], "p_w"), rtol=1e-12)
 
 
 def test_the_history_has_the_sphere_columns_only_under_sphere(coarse_sphere_mesh):
