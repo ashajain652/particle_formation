@@ -168,6 +168,58 @@ class PhysicsHeating:
         return HeatingResult(q_stag * shape * per_patch_hot_wall, float(q_stag), float(q_c), float(q_fm), float(w))
 
 
+class SimilarityHeating:
+    """Convective heating with the continuum flux and its angular shape taken from the shared gas-loads provider
+    (duck-typed on four methods, all of which `evaluate` calls: `meridian(state, radius, T_wall)`, `wall_enthalpy(T)`,
+    `held_loads(state)` and `total_enthalpy(state)`, so a replacement provider, such as a coupled CFD solution, must
+    supply all four) instead of Fay-Riddell and Lees, so the
+    heating reaches round the shoulder and onto the lee until the boundary layer separates:
+        q = q_stag [(1 - w) q_sim(theta)/q_sim(0) + w max(cos theta, 0)] (H_e - h_w(T_patch))/(H_e - h_w(T_stag)),
+    q_stag = Matting bridge of q_c = q_sim(0) and q_fm = accommodation rho V (H_e - h_w), w = 1 - q_stag/q_c.
+    The provider is solved at the stagnation patch's wall temperature; `T_mean` is ignored.
+
+    No solve is made when no part of the wall can be heated. The total enthalpy of the gas reaching the body (the
+    freestream enthalpy plus half the speed squared) does not change across the shock, so the trajectory alone fixes it
+    (`gas_loads.total_enthalpy`), and the enthalpy of gas at the stagnation wall's temperature is a table lookup. At the
+    stagnation point the edge speed is zero, so a wall at or above the total enthalpy receives no heat; elsewhere the gas
+    recovers less than the total enthalpy (recovery factor about the square root of the Prandtl number), so it receives
+    none either. The model already returned zero heating in exactly this case, after paying for the solve; the skip makes
+    the same decision before it, from the same two numbers, so no recorded value changes on a call. A skipped call holds
+    nothing, though: where nothing else reads the provider during continuum steps (an explicit --dt-continuum with
+    --removal instant, on either surface model; not a default), steps that a solved call would have served a held
+    zero-heating solution for the rest of its window are checked at every step instead, so heating resumes at the first
+    step at which the wall can be heated, up to one --dt earlier. Like the model, it neglects the
+    convective cooling of a wall hotter than the gas. Inside a hold window the held solution is used and the check is not
+    made, so the result there is the one the held solution gave before."""
+
+    name = "physics"
+
+    def __init__(self, gas_loads, bridging="matting", matting_n=1.0, accommodation=0.8):
+        if bridging != "matting":
+            raise ValueError("SimilarityHeating supports only matting bridging, got {!r}".format(bridging))
+        self.gas_loads, self.bridging, self.matting_n, self.accommodation = gas_loads, bridging, matting_n, accommodation
+
+    def evaluate(self, state, theta, T_wall, radius, T_mean=None):
+        theta, T_wall = np.asarray(theta, dtype=float), np.asarray(T_wall, dtype=float)
+        rho, V = state.freestream.rho, state.V
+        if rho <= 0.0 or V <= 0.0:
+            return HeatingResult(np.zeros(theta.size), 0.0, 0.0, 0.0, 1.0)
+        T_stag = float(T_wall[int(np.argmin(theta))])
+        if self.gas_loads.held_loads(state) is None:
+            if self.gas_loads.total_enthalpy(state) - float(self.gas_loads.wall_enthalpy(T_stag)) <= 0.0:
+                return HeatingResult(np.zeros(theta.size), 0.0, float("nan"), 0.0, 1.0)
+        L = self.gas_loads.meridian(state, radius, T_stag)
+        q_c = L.q_c0
+        q_fm = self.accommodation * rho * V * (L.H_e - L.h_w)
+        if q_c <= 0.0 or L.H_e - L.h_w <= 0.0:
+            return HeatingResult(np.zeros(theta.size), 0.0, float(q_c), float(max(q_fm, 0.0)), 1.0)
+        q_stag = matting_bridge(q_fm, q_c, self.matting_n)
+        w = 1.0 - q_stag / q_c
+        shape = (1.0 - w) * L.at(theta, "q_c") / q_c + w * cosine_shape(theta)
+        hot = np.maximum(0.0, (L.H_e - self.gas_loads.wall_enthalpy(T_wall)) / (L.H_e - L.h_w))
+        return HeatingResult(q_stag * shape * hot, float(q_stag), float(q_c), float(q_fm), float(w))
+
+
 class TabulatedHeating:
     """Reserved (spec 6.3): q_stag and q(theta)/q_stag interpolated from an offline CFD/DSMC table over (V, rho, T_w).
     Only the interface exists; constructing it raises NotImplementedError."""
@@ -185,5 +237,8 @@ def heating_by_name(name, **options):
     if name == "sesam":
         return SesamEquivalentHeating(**options)
     if name == "physics":
+        if options.get("gas_loads") is not None:
+            return SimilarityHeating(**options)
+        options.pop("gas_loads", None)
         return PhysicsHeating(**options)
     raise ValueError("heating must be one of {}, got {!r}".format(HEATING_NAMES, name))

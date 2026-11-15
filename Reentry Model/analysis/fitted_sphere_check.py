@@ -12,8 +12,10 @@ Added in the final review's fix wave (2026-11-13), so that the documents' compar
   stagnation point along the sphere, as `SkinBody.load_meridian` builds it) projected onto the corner's base tangent plane;
   its length there before `load_meridian` makes it a unit vector again (1 where the base is tangent to the fitted sphere,
   0 where the meridian is normal to the base), the shortest lengths and how many fall below 0.5, over the exposed corners
-  whose meridian is defined, and over those whose ray angle is below 90 degrees (the only ones the push acts on: the
-  surface flow gives no pressure gradient or shear beyond 90 degrees);
+  whose meridian is defined, and over those whose ray angle is below 90 degrees (the only ones the push acts on under the
+  classic loads, on which the saved states flew: their surface flow gives no pressure gradient or shear beyond 90 degrees;
+  on the interim gas loads' provider, the default since the merge of 2026-11-15, the lee loads act beyond 90 degrees too,
+  model_assumptions section 15.5);
 - the earlier rule on the same body, `windward_loads = "normals"` with the `--size-feedback` and `--leeward-test` that a
   `run --windward-loads normals` resolves by default (through `cli`'s own parser and helpers): its 30-degree cap fit, bound and
   radius used, and the ratio of the two rules' radii, which sets the stagnation heating (one over the square root of the

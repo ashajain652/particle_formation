@@ -124,6 +124,7 @@ def test_thermal_run_writes_columns_plots_and_json(tmp_path):
     s = doc["settings"]
     assert s["thermal"] == "fem" and s["heating"] == "sesam" and s["n_nodes"] > 2000 and s["macro_step_s"] == 0.5 and s["frames_every"] == 10
     assert s["material"] == "AA7075_nomelt" and s["emissivity"] == 0.4 and s["thermal_solver"] == "skfem"
+    assert s["gas_loads"] == "similarity" and "heating_unused" not in s        # every thermal run records its loads (Task 7)
     assert doc["results"]["n_macro_steps"] == 40 and abs(doc["results"]["energy_balance_residual"]) < 1e-6
     assert "thermal_metrics" in doc["comparison"] and doc["comparison"]["thermal_metrics"]["Q_conv"]["max"] < 0.3
     for plot in compare.PLOT_NAMES + compare.THERMAL_PLOT_NAMES:
@@ -140,6 +141,14 @@ def test_thermal_none_is_step_one(tmp_path):
     assert rc == 0
     rows = list(csv.DictReader(open(tmp_path / "plain.csv")))
     assert "convective_heat_W" not in rows[0] and json.load(open(tmp_path / "plain.json"))["settings"]["thermal"] == "none"
+    # --gas-loads is accepted and ignored without a thermal model, which reads no surface loads (interim gas loads, ruling R16):
+    # the same flight, no mark in the name, no key in the settings
+    rc = cli.main(BASE + ["--atmosphere", "us76", "--t-max", "10", "--cadence", "5", "--outdir", str(tmp_path / "classic"),
+                          "--gas-loads", "classic", "--quiet"])
+    assert rc == 0
+    name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none")
+    assert list(csv.DictReader(open(tmp_path / "classic" / (name + ".csv")))) == rows
+    assert "gas_loads" not in json.load(open(tmp_path / "classic" / (name + ".json")))["settings"]
     with pytest.raises(SystemExit) as exc:                                                    # parser.error: needs --thermal fem
         cli.main(BASE + ["--atmosphere", "us76", "--animate", "--outdir", str(tmp_path), "--quiet"])
     assert exc.value.code == 2
@@ -172,6 +181,8 @@ def test_thermal_run_physics_mode(tmp_path):
     s = doc["settings"]
     assert s["heating"] == "physics" and s["stagnation"] == "fay-riddell" and s["bridging_heat"] == "matting"
     assert s["catalycity"] == 1.0 and s["accommodation"] == 0.8 and s["matting_n"] == 1.0
+    # the similarity heating, the default since the interim gas loads (Task 7), reads neither --stagnation nor --catalycity
+    assert s["gas_loads"] == "similarity" and s["heating_unused"] == ["stagnation", "catalycity"]
     assert doc["provenance"]["cantera"]
     rows = list(csv.DictReader(open(tmp_path / "fem_physics.csv")))
     assert len(rows) == 11
@@ -763,12 +774,15 @@ def test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knuds
     the body Knudsen number is 0.011 and the Knudsen switch does not fire, of a body at 893 K under physics heating, with
     the skins' default flow (dev preset, one flow sub-step a skin sub-step) and a 0.1 s first step: the nose holds liquid
     at its end, so the step latches there to 12.5 ms, and the results say it was the melting, at the step's flight time,
-    Knudsen number and altitude."""
+    Knudsen number and altitude. The flight names the classic gas loads, on which its values were set (interim gas loads,
+    Task 7): on the similarity loads, the default since, the stagnation flux at 0.1 s is 2.893 MW/m2 against 2.943, the
+    hottest top 906.49 K against 908.54 K, and the nose holds no liquid by then, so the latch, the mechanism tested here,
+    would not be reached (measured 2026-11-14)."""
     pytest.importorskip("cantera")
     import glob
     argv = MELT + ["--heating", "physics", "--altitude", "71", "--velocity", "7.24", "--temperature", "893", "--dt", "0.1",
                    "--t-max", "0.1125", "--surface-model", "skin", "--skin-preset", "dev", "--fine-size", "2",
-                   "--skin-flow-cycles", "1", "--outdir", str(tmp_path)]
+                   "--skin-flow-cycles", "1", "--gas-loads", "classic", "--outdir", str(tmp_path)]
     assert cli.main(argv) == 0
     (path,) = glob.glob(str(tmp_path / "*.json"))
     r = json.load(open(path))["results"]
@@ -1352,9 +1366,168 @@ def test_the_switch_back_is_named_and_every_skin_run_records_its_dispersion(tmp_
             assert records.files == spray.record_columns(width)
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# The interim gas loads (docs/superpowers/plans/2026-11-13-interim-gas-loads.md, Task 7): --gas-loads similarity|classic
+
+PHYSICS = BASE + ["--atmosphere", "us76", "--thermal", "fem", "--heating", "physics", "--h-surface", "4", "--h-core", "20",
+                  "--quiet"]
+
+
+def test_the_gas_loads_are_similarity_by_default_and_classic_is_named(tmp_path, capsys):
+    """--gas-loads is `similarity` by default (cli.DEFAULT_GAS_LOADS); `classic` ends a thermal run's name in _loads-classic,
+    after the skins' marks and the spray rules' and before the seed's, and `similarity` leaves every name as it was; a run
+    without a thermal model, which reads no surface loads, is not marked (ruling R16). A value that is neither exits 2, and
+    so does `resume --gas-loads`: a resumed state keeps the loads it was saved with."""
+    p = cli.build_parser()
+    assert cli.GAS_LOADS == ("similarity", "classic") and cli.DEFAULT_GAS_LOADS == "similarity"
+    assert p.parse_args(THERMAL).gas_loads == "similarity"
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none"
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    assert name(THERMAL) == name(THERMAL + ["--gas-loads", "similarity"]) == base + "_fem-sesam_surface-elements"
+    assert name(THERMAL + ["--gas-loads", "classic"]) == base + "_fem-sesam_surface-elements_loads-classic"
+    assert name(PHYSICS + ["--gas-loads", "classic"]) == base + "_fem-physics_surface-elements_loads-classic"
+    melt = THERMAL + ["--melt", "on"]
+    assert (name(melt + ["--leeward-test", "facing", "--dispersion", "table", "--spray-gates", "before", "--seed", "7",
+                         "--gas-loads", "classic"])
+            == base + "_fem-sesam_melt-girin_leeward-facing_dispersion-table_gates-before_loads-classic_seed-7")
+    assert name(BASE) == name(BASE + ["--gas-loads", "classic"]) == base
+    assert (cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", gas_loads="classic")
+            == base + "_fem-physics_loads-classic")
+    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics") == base + "_fem-physics"
+    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", gas_loads="classic") == base
+    with pytest.raises(SystemExit) as exc:
+        cli.main(THERMAL + ["--gas-loads", "bogus", "--t-max", "1", "--outdir", str(tmp_path)])
+    assert exc.value.code == 2 and "invalid choice: 'bogus'" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", "x.state.pkl", "--outdir", "o", "--name", "n", "--gas-loads", "classic"])
+    assert exc.value.code == 2 and "unrecognized arguments: --gas-loads" in capsys.readouterr().err
+
+
+def test_the_similarity_heating_refuses_the_sesam_table_bridging(tmp_path, monkeypatch, capsys):
+    """--bridging-heat sesam-table with --heating physics on the similarity loads exits 2 and names --gas-loads classic: the
+    similarity heating bridges by Matting's law only (ruling R16). With --gas-loads classic, or with --heating sesam, which
+    does not read it, it is accepted (the objects are not built: the call that would build them is reached)."""
+    def stop(*a, **k):
+        raise _Built()
+    monkeypatch.setattr(cli, "build_thermal", stop)
+    run = PHYSICS + ["--bridging-heat", "sesam-table", "--t-max", "1", "--outdir", str(tmp_path)]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(run)
+    assert exc.value.code == 2 and "--bridging-heat sesam-table needs --gas-loads classic" in capsys.readouterr().err
+    for argv in (run + ["--gas-loads", "classic"], run + ["--heating", "sesam"]):
+        with pytest.raises(_Built):
+            cli.main(argv)
+
+
+def test_the_similarity_heating_refuses_a_stagnation_or_catalycity_it_would_not_read(tmp_path, monkeypatch, capsys):
+    """An explicit --stagnation or --catalycity other than its default, with --heating physics on the similarity loads,
+    exits 2 and names --gas-loads classic: the similarity heating takes its stagnation flux from the provider and has no
+    wall catalycity, so the option would be silently ignored (ruling R20). With --gas-loads classic or --heating sesam any
+    value is accepted (the objects are not built: the call that would build them is reached). Given at its default value
+    it is accepted, and the objects built record it as given, under "heating_unused" (nothing is flown: `CoupledRun` stops
+    the run once the objects are built)."""
+    from reentry_model import heating
+    real, got = cli.build_thermal, []
+
+    def stop(*a, **k):
+        raise _Built()
+
+    def build(*a, **k):
+        got.append(real(*a, **k))
+        return got[-1]
+    monkeypatch.setattr(cli, "build_thermal", stop)
+    assert (cli.DEFAULT_STAGNATION, cli.DEFAULT_CATALYCITY) == ("fay-riddell", 1.0)
+    run = PHYSICS + ["--t-max", "1", "--outdir", str(tmp_path)]
+    for given, said in ((["--stagnation", "dkr"], "--stagnation dkr needs --gas-loads classic"),
+                        (["--stagnation", "sutton-graves"], "--stagnation sutton-graves needs --gas-loads classic"),
+                        (["--catalycity", "0"], "--catalycity 0 needs --gas-loads classic"),
+                        (["--catalycity", "0.5"], "--catalycity 0.5 needs --gas-loads classic")):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(run + given)
+        assert exc.value.code == 2 and said in capsys.readouterr().err, given
+        for argv in (run + given + ["--gas-loads", "classic"], run + given + ["--heating", "sesam"]):
+            with pytest.raises(_Built):
+                cli.main(argv)
+    monkeypatch.setattr(cli, "build_thermal", build)
+    monkeypatch.setattr(coupled, "CoupledRun", stop)
+    for given in (["--stagnation", "fay-riddell"], ["--catalycity", "1"], ["--stagnation", "fay-riddell", "--catalycity", "1.0"]):
+        with pytest.raises(_Built):
+            cli.main(run + given)
+        _, heat, info = got[-1]
+        assert type(heat) is heating.SimilarityHeating and info["heating_unused"] == ["stagnation", "catalycity"], given
+        assert (info["stagnation"], info["catalycity"]) == ("fay-riddell", 1.0)
+
+
+def test_build_thermal_gives_the_surface_flow_and_the_heating_one_provider_and_classic_builds_what_it_built(tmp_path,
+                                                                                                         monkeypatch):
+    """`build_thermal` on the similarity loads (the default) builds one `GasLoads(gamma_pm=--gamma-pm)` and gives it to the
+    surface flow it builds -- the skins', the element model's -- and, with --heating physics, to a `SimilarityHeating` with
+    --matting-n and --accommodation; the skin body gets `sheltered_angle` pi (ruling R15); the settings record `gas_loads`
+    and, for the similarity heating, the two options it does not read (ruling R16). The provider holds its solution for one
+    --dt of flight (`hold_s`, plan 2026-11-14 Task 2), recorded as `gas_loads_hold_s`. `classic` builds what it built before:
+    `PhysicsHeating` with --stagnation and --catalycity, a `SurfaceFlow` with no provider on the instance and a skin body with
+    no sheltered angle of its own, so the objects pickle as before. --heating sesam keeps SESAM's heating while its surface
+    flow reads the provider. Nothing is flown: `CoupledRun` stops the run once the objects are built."""
+    from reentry_model import heating
+    from reentry_model.shared.gas_loads import GasLoads
+    got = []
+    real = cli.build_thermal
+
+    def build(*a, **k):
+        got.append(real(*a, **k))
+        return got[-1]
+
+    def stop(*a, **k):
+        raise _Built()
+    monkeypatch.setattr(cli, "build_thermal", build)
+    monkeypatch.setattr(coupled, "CoupledRun", stop)
+
+    def built(argv):
+        with pytest.raises(_Built):
+            cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
+        return got[-1]
+    melt = PHYSICS + ["--melt", "on", "--fine-band", "0", "--skin-preset", "dev"]
+    body, heat, info = built(melt + ["--gamma-pm", "1.3", "--matting-n", "1.5", "--accommodation", "0.7", "--dt", "0.25"])
+    assert type(heat) is heating.SimilarityHeating and type(body.surface_flow.gas_loads) is GasLoads
+    assert heat.gas_loads.hold_s == 0.25 and info["gas_loads_hold_s"] == 0.25                       # --dt
+    assert body.surface_flow.gas_loads is heat.gas_loads and heat.gas_loads.gamma_pm == 1.3 == body.surface_flow.gamma_pm
+    assert (heat.matting_n, heat.accommodation, heat.bridging) == (1.5, 0.7, "matting") and body.sheltered_angle == np.pi
+    assert info["gas_loads"] == "similarity" and info["heating_unused"] == ["stagnation", "catalycity"]
+    assert info["stagnation"] == "fay-riddell" and info["catalycity"] == 1.0          # kept as given (ruling R16)
+    body, heat, info = built(melt + ["--gas-loads", "classic"])
+    assert type(heat) is heating.PhysicsHeating and body.surface_flow.gas_loads is None
+    assert "gas_loads" not in vars(body.surface_flow) and "sheltered_angle" not in vars(body)
+    assert info["gas_loads"] == "classic" and "heating_unused" not in info and "gas_loads_hold_s" not in info
+    body, heat, info = built(melt + ["--heating", "sesam"])
+    assert type(heat) is heating.SesamEquivalentHeating and type(body.surface_flow.gas_loads) is GasLoads
+    assert body.sheltered_angle == np.pi and info["gas_loads"] == "similarity" and "heating_unused" not in info
+    assert body.surface_flow.gas_loads.hold_s == 0.5 == info["gas_loads_hold_s"]                     # the default --dt
+    elements = PHYSICS + ["--melt", "on", "--surface-model", "elements", "--prism-layers", "0"]
+    body, heat, info = built(elements)
+    assert type(heat) is heating.SimilarityHeating and body.flow.gas_loads is heat.gas_loads
+    body, heat, info = built(elements + ["--gas-loads", "classic"])
+    assert type(heat) is heating.PhysicsHeating and body.flow.gas_loads is None and "gas_loads" not in vars(body.flow)
+    body, heat, info = built(PHYSICS)                                   # the element model that does not melt
+    assert type(heat) is heating.SimilarityHeating and info["gas_loads"] == "similarity"
+    body, heat, info = built(PHYSICS + ["--gas-loads", "classic", "--stagnation", "dkr", "--catalycity", "0.5"])
+    assert type(heat) is heating.PhysicsHeating and (heat.stagnation, heat.catalycity) == ("dkr", 0.5)
+    assert info["gas_loads"] == "classic"
+
+
+def test_the_similarity_heating_without_cantera_exits_2_before_the_flight(tmp_path, monkeypatch, capsys):
+    """The provider builds its frozen air (Cantera) at its first solve, not when it is made; that solve comes with the
+    heating of the flight's first row, before the first step, so a missing Cantera still exits 2 with nothing written, as
+    `PhysicsHeating`, which builds its equilibrium air when it is made, does on the classic loads (the exit codes)."""
+    import sys
+    monkeypatch.setitem(sys.modules, "cantera", None)               # import cantera now raises ModuleNotFoundError
+    rc = cli.main(PHYSICS + ["--t-max", "1", "--outdir", str(tmp_path), "--name", "nocantera"])
+    assert rc == 2 and "missing optional library 'cantera'" in capsys.readouterr().err
+    assert not (tmp_path / "nocantera.json").exists()
+
+
 # --- the --architecture flag (Task 6 of the combined refactor) ---
 
-BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--dispersion', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--rheology', '--leeward-test', '--geometry-stop', '--windward-loads', '--particles', '--no-particles']
+BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--gas-loads', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--dispersion', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--rheology', '--leeward-test', '--geometry-stop', '--windward-loads', '--particles', '--no-particles']
 
 
 def _run_parser():

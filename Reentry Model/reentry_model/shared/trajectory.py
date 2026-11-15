@@ -60,6 +60,7 @@ class AeroState:
     cd: float
     a_drag: np.ndarray
     q_dyn: float
+    t: float = None                  # s, the flight time of the state (`Simulator.aero_state` fills it)
 
 
 @dataclass
@@ -116,7 +117,7 @@ class Simulator:
             a_drag = -0.5 * fs.rho * V * v_rel * cd * area / m if m > 0.0 else np.zeros(3)      # a consumed body (Step 3) has no drag
         else:
             kn, cd, a_drag = math.inf, self.tables.cd_free_molecular(ma), np.zeros(3)
-        return AeroState(h, lat, lon, fs, v_rel, V, kn, ma, cd, a_drag, 0.5 * fs.rho * V * V)
+        return AeroState(h, lat, lon, fs, v_rel, V, kn, ma, cd, a_drag, 0.5 * fs.rho * V * V, t)
 
     def rhs(self, t, y):
         r, v = y[:3], y[3:]

@@ -881,7 +881,7 @@ longer leeward for that reason alone, so the top of a crest that nothing shelter
 sphere fitted by least squares to the windward patches, at the angle of the ray from the sphere's centre through each patch
 (past 90 degrees the patch is leeward through the angle), with the flat-face cap on the radius (1.67 times the windward
 transverse radius, kept by Asha). The shadow ray is the one above, so the two architectures share one windward rule; the
-skyscrapers' version is built on branch `fitted-sphere-loads` (not yet merged into main), and the level set builds this in
+skyscrapers' version is built on branch `fitted-sphere-loads` (merged with the interim gas loads on 2026-11-15; `docs/model_assumptions.md` section 15), and the level set builds this in
 its own stage 3 work. Before the amendment, patches facing away from the flow were leeward by the angle law. On a convex
 body the test still changes nothing: a patch facing the flow casts a ray that re-enters no metal, and a patch ahead of the
 mass-centroid plane that faces away from the flow, which the amended candidates include where that plane lies behind the

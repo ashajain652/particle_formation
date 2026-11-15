@@ -221,6 +221,17 @@ NOSE_COLUMNS = ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nos
 # (12-20 degrees off the flow, median), which the first test counted as windward though they sit behind the body; the
 # centroid itself was 30 mm behind the original centre by 187.0 s, the metal having run to the back.
 LEEWARD_TESTS = ("facing", "centroid")
+# The angle the loads read at a sheltered corner -- one whose normal faces the flow but which the `centroid` test puts behind
+# the plane through the mass centroid (`SkinBody.load_angles`). On the classic loads a microradian past 90 degrees, where
+# they are zero, as since Task 5j; on the interim gas loads' provider pi, the rear of the separated wake: its base
+# pressure, no shear and no heating, where an angle just past 90 degrees would carry shoulder-level loads (decision 2a, Asha
+# 2026-11-12; ruling R15 of the interim gas loads, 2026-11-14: only the sheltered corners move, a corner facing away keeps
+# its true angle and the provider's lee loads). The class default is the classic one, so a state saved before the interim
+# gas loads resumes as it flew; `cli.build_thermal` gives a run on the provider SHELTER_WAKE. Under `windward_loads` `sphere`
+# the corners the ray test shelters (`SphereFit.sheltered`) read it too, whichever way they face (the merge with the interim
+# gas loads, 2026-11-15; model_assumptions section 15).
+SHELTER_CLASSIC = 0.5 * np.pi + 1e-6
+SHELTER_WAKE = np.pi
 # the history's two leeward columns (`SkinBody.nose_stats`), with either setting: the centroid's position along the flight
 # direction relative to the 3D mesh's mean point [mm, positive forward], and the corners that face the flow but lie behind the
 # plane through it
@@ -793,7 +804,10 @@ class SkinBody(ThermalBody):
     flies as it was; `WINDWARD_LOADS`): under `sphere` the windward loads read one sphere fitted to the exposed tops
     (`sphere_fit`), each exposed corner at the angle of the ray from its centre, sheltered corners and corners behind the
     centroid's plane leeward (the fitted-sphere loads design, Asha 2026-11-13); `leeward_test` and `size_feedback` are read
-    only under `normals`, which is the rule above, unchanged."""
+    only under `normals`, which is the rule above, unchanged.
+    `sheltered_angle` [rad, within (90, 180] degrees, or None for the class's `SHELTER_CLASSIC`]: the angle every consumer of
+    `load_angles` reads at a corner the `centroid` test shelters, and under `windward_loads` `sphere` also at one the ray test
+    shelters; `SHELTER_WAKE`, pi, for the loads of the interim gas loads' provider (decision 2a, ruling R15)."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
@@ -802,6 +816,7 @@ class SkinBody(ThermalBody):
     size_feedback = "initial"            # the nose radius's source (Task 5g): the states saved before it flew on the mesh's radius
     _nose_raw = None                     # the fit of the tops, made at the first read after `_refresh_geometry`; old states have none
     leeward_test = "facing"              # which corners are windward (Task 5j): the states saved before it flew on `theta` alone
+    sheltered_angle = SHELTER_CLASSIC    # where a sheltered corner's loads are read: the states saved before the provider, classic
     _leeward_raw = None                  # (the centroid, the corners ahead of its plane) of the surface, made at the first read
     geometry_stop = True                 # the run ends at a geometry breach (open item 4): the states saved before it fly on with it on
     windward_loads = "normals"           # the loads' rule (fitted-sphere loads, 2026-11-13): the states saved before it fly on `normals`
@@ -816,7 +831,12 @@ class SkinBody(ThermalBody):
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
                  spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth",
-                 size_feedback="current", leeward_test="facing", geometry_stop=True, windward_loads="sphere"):
+                 size_feedback="current", leeward_test="facing", geometry_stop=True, windward_loads="sphere",
+                 sheltered_angle=None):
+        if sheltered_angle is not None:                  # None: the class's classic angle, stored on no instance
+            if not 0.5 * np.pi < sheltered_angle <= np.pi:
+                raise ValueError("sheltered_angle must be None or an angle within (pi/2, pi] rad, got {!r}".format(sheltered_angle))
+            self.sheltered_angle = float(sheltered_angle)
         self.geometry_stop = bool(geometry_stop)
         if windward_loads not in WINDWARD_LOADS:
             raise ValueError("windward_loads must be one of {}, got {!r}".format(WINDWARD_LOADS, windward_loads))
@@ -984,23 +1004,32 @@ class SkinBody(ThermalBody):
         Rayleigh-Taylor mode).
 
         Under `windward_loads` `sphere` (the fitted-sphere loads design, Asha 2026-11-13): an exposed corner (`sphere_fit`)
-        reads the angle between the direction of motion and the unit ray from the fitted centre through it, or its own
-        `theta` where there is no valid sphere; every other corner -- sheltered, or behind the centroid's plane -- reads the
-        larger of `theta` and 90 degrees plus a microradian, so it takes no heating, shear or spraying.
+        reads the angle between the direction of motion and the unit ray from the fitted centre through it, even past 90
+        degrees, or its own `theta` where there is no valid sphere. On the classic loads (`sheltered_angle` the class's
+        `SHELTER_CLASSIC`) every other corner -- sheltered, or behind the centroid's plane -- reads the larger of `theta` and
+        90 degrees plus a microradian, so it takes no heating, shear or spraying. On the provider's (`SHELTER_WAKE`; the
+        merge with the interim gas loads, 2026-11-15) a corner the ray test shelters reads `sheltered_angle` whichever way it
+        faces, in the separated wake, and a corner behind the centroid's plane reads its own `theta` where it faces away from
+        the flow (the provider's lee loads, ruling R15) and `sheltered_angle` where it faces the flow.
 
         Under `normals` (sub-plan 22 Task 5j; Asha, 2026-11-10: a corner behind the centroid's plane gets no shear, no spray
         and no Rayleigh-Taylor mode, whichever way its normal faces): `theta` itself under `facing`, bit for bit; under
-        `centroid` `theta` where `windward_corners` and the larger of `theta` and 90 degrees plus a microradian where not.
-        `theta` itself, the frames' geometry and the release angle do not change under either rule."""
+        `centroid` `theta` where `windward_corners` and, where not, on the classic loads the larger of `theta` and 90 degrees
+        plus a microradian, and on the provider's `theta` where the corner faces away from the flow and `sheltered_angle`
+        where it faces the flow -- a sheltered corner, read in the separated wake (decision 2a, ruling R15). `theta` itself,
+        the frames' geometry and the release angle do not change under either rule."""
         if self.windward_loads == "sphere":
             sf = self.sphere_fit
-            lee = np.maximum(self.theta, 0.5 * np.pi + 1e-6)
-            if sf.concave:
-                return np.where(sf.exposed, self.theta, lee)
-            return np.where(sf.exposed, self._ray_angles(sf.centre), lee)
+            exposed = self.theta if sf.concave else self._ray_angles(sf.centre)
+            if self.sheltered_angle == SHELTER_CLASSIC:  # the classic loads: the sphere rule as it was (bit for bit)
+                return np.where(sf.exposed, exposed, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
+            away = ~self._leeward()[1] & (self.theta > 0.5 * np.pi)       # behind the centroid's plane and facing away
+            return np.where(sf.exposed, exposed, np.where(away, self.theta, self.sheltered_angle))
         if self.leeward_test != "centroid":
             return self.theta
-        return np.where(self.windward_corners(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
+        if self.sheltered_angle == SHELTER_CLASSIC:      # the classic loads' rule, as it was (bit for bit)
+            return np.where(self.windward_corners(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
+        return np.where(self.windward_corners() | (self.theta > 0.5 * np.pi), self.theta, self.sheltered_angle)
 
     def load_meridian(self):
         """The unit vectors (n, 3) along which the gas pressure gradient and the gas shear push the melt, each in its base's
