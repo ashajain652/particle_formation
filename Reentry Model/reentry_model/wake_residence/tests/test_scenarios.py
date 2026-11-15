@@ -35,7 +35,7 @@ def test_far_wake_case_runs_and_writes(twin, tmp_path):
     csv_path, json_path = write_case(c, tmp_path)
     s = json.load(open(json_path))
     assert s["affix_zone"] == "far_wake" and s["t_fz"] > 0
-    assert s["reason"] in ("ok", "censored", "reached_parent") and s["residence_time"] >= 0
+    assert s["reason"] in ("ok", "censored", "near_wake_captured") and s["residence_time"] >= 0
     assert s["parent_sha256"] and "git_commit" in s and s["regime_at_release"] and s["follower_t_end"] > 0
     assert 45.0 < s["surface_match_phi_deg"] < 60.0 and s["shoulder_pressure_ratio"] > 5.0      # the surface pressure
     assert s["surface_npm_no_match"] is False and s["surface_below_p_inf"] is False
@@ -43,6 +43,17 @@ def test_far_wake_case_runs_and_writes(twin, tmp_path):
     gap = np.linalg.norm([h[0]["follower_x"] - h[0]["parent_x"], h[0]["follower_y"] - h[0]["parent_y"],
                           h[0]["follower_z"] - h[0]["parent_z"]])
     assert gap == pytest.approx(2 * 2 * math.sqrt(6.215 / math.pi), rel=1e-6)
+
+def test_far_wake_follower_that_catches_the_parent_is_captured_in_the_near_wake(twin):
+    # A 100 mm AA7075 sphere at 60 km has a ballistic coefficient about 7 times the hollow parent's (the 2026-10-31
+    # sweep's ballistic_coefficient.csv), so released two parent diameters behind it closes the gap and reaches the
+    # parent's base plane in about 0.37 s. It never left the wake (Register et al. 2020 would call it trapped behind the
+    # parent; Asha, 2026-11-14): it is reported as captured, the residence time is a lower bound (censored), and the
+    # engine's own label stays in residence_reason.
+    s = sphere_in_spacecraft_plume(100, 60, 120.0, twin=twin).summary
+    assert s["release_kind"] == "far_wake" and s["residence_reason"] == "reached_parent"
+    assert s["reason"] == "near_wake_captured" and s["censored"] is True
+    assert 0.0 < s["residence_time"] < 1.0
 
 def test_follower_regime_thresholds():
     from reentry_model.wake_residence.scenarios import follower_regime, AFFIX_STATUS
