@@ -1121,32 +1121,45 @@ measurement behind it; Asha's decisions are dated as in the design.
   a non-positive value (possible only from Daniels and Schwartzentruber's lee pressure) never reaches Cantera; their
   lowest lee pressure in a scan from 1e-12 to 1.26 kg/m3 is 7.4e-15 times the freestream pressure, so the clamp changes
   no result (`tests/test_reentry_model_gas_loads.py::test_a_non_positive_joined_pressure_is_floored_before_cantera`).
-- **Known limitation, pending a decision: the pressure steps down at 90 degrees below about Mach 4** (final review,
-  2026-11-14). Up to 90 degrees the windward law never lets the pressure fall below the freestream pressure (the floor
-  of `surface_flow.wall_pressure`); past 90 degrees the Prandtl-Meyer expansion restarts from the same reservoir with no
-  such floor (`gas_loads.joined_pressure`). At low Mach number the expansion has already fallen to the freestream
-  pressure before 90 degrees, so the floored windward value and the restarted lee value disagree. The design's "no step
-  at 90 degrees" (A4) therefore holds only above about Mach 4: the uncapped expansion reaches the freestream pressure
-  exactly at 90 degrees at Mach 3.39, the same to within 0.004 at four freestream states from 0.001 to 0.4 kg/m3 and
-  200 to 270 K. Measured once, with scratch scripts that call `joined_pressure` and `GasLoads.meridian` on 2-degree
-  bins at a 30 km freestream (density 0.0184 kg/m3, 226.5 K, nose radius 50 mm), 2026-11-14:
-  - Pressure. The pressure over the freestream pressure is 1.000 at 88 and 90 degrees and then, at 92 degrees, 0.874 at
-    Mach 3, 0.778 at Mach 2 and 0.677 at Mach 1.5, a fall of 13 to 32 % within one bin. From Mach 3.5 up the fall is
-    smooth: neighbouring bins differ by the same factor, about 0.90, on either side of 90 degrees (for example 1.496,
-    1.347 and 1.210 at 88, 90 and 92 degrees at Mach 4).
-  - Shear. At Mach 2 (wall at 400 K) the shear is 9.9 Pa at 88 degrees, 39.9 Pa at 90 and 42.4 Pa at 92, a fourfold
-    rise within one bin. At Mach 3 (wall at 1200 K) it dips to 11.1 Pa at 88 degrees between 44.1 Pa at 86 and 54.2 Pa
-    at 90, because the floored, flat stretch of pressure drives the pressure-gradient parameter beta to zero.
-  - Pressure gradient along the surface, which pushes the film. At Mach 2 it is 0 at 88 degrees, -77 kPa/m at 90 and
-    -93 kPa/m at 92; at a subsonic state (Mach 0.67: 0.4 kg/m3, 223 K, wall at 900 K) it is -13 kPa/m at 88 degrees and
-    about -720 kPa/m at 90 and 92.
-  - When a flight meets it. On the committed SESAM trajectories of the Step 2 references (US76, no wind, sampled every
-    second) the 100 mm sphere from 77.5 km is first below Mach 4 at 181.55 s (below Mach 3.39 from 185.55 s) and lands
-    at 366.23 s; the 50 mm sphere from 115 km is first below Mach 4 at 296.55 s (300.55 s) and lands at 559.25 s. The
-    melting skin flights so far ran to about 180 to 187 s (the final review's figure), so a 100 mm melting flight that
-    goes on past about 181 s, or any flight to the ground, meets it. The two Step 2 flights to the ground on these loads
-    (14.7) flew through it; its effect on their heat totals was not measured.
-  Whether and how to remove the step changes the pressure law, and is Asha's decision (14.9).
+- **Pressure below Mach 5 (Asha, 2026-11-14, decision 1; replaces the known limitation recorded by the final review
+  of the same day).** The joined law above has a step at 90 degrees below about Mach 3.4: up to 90 degrees the windward
+  law never lets the pressure fall below the freestream pressure, while past 90 degrees the Prandtl-Meyer expansion
+  restarts from the same reservoir without that floor, and at low Mach number the two disagree where they meet. The
+  provider now chooses the law by the perfect-gas freestream Mach number M that Daniels and Schwartzentruber's
+  `condition` returns (`mach_inf`). At and below M = 3.5 the pressure is Daniels and Schwartzentruber's own, p_inf +
+  c_p q_inf (p_inf the freestream pressure, q_inf the freestream dynamic pressure, c_p their pressure coefficient),
+  rescaled so that at the stagnation point it equals the unreacted stagnation pressure: p_inf + c_p q_inf (p_stag -
+  p_inf) / (c_p(0) q_inf) (`gas_loads.anchored_ds_pressure`). The rescaling keeps the stagnation pressure the
+  same quantity at every Mach number, the unreacted one the edge enthalpy and the joined law are built from, instead of
+  their c_p at the stagnation point, which is only approximately that value. Between M = 3.5 and 5 the anchored pressure and
+  the joined pressure are blended with a weight on the anchored law that falls linearly in M from 1 to 0
+  (`gas_loads.ds_pressure_weight`); at and above M = 5 the joined law is used unchanged. The weight is stored on the
+  loads as `ds_pressure_weight`, and the meeting angle is not a number when it is 1. **(assumed)** The blend edges 3.5
+  and 5 and the linear shape are choices, not fitted values; 3.5 is just above the Mach 3.39 below which the step
+  appears. **(verified)** Pressure and shear at 30 km (density 0.0184 kg/m3, 226.5 K, nose radius 50 mm, wall 900 K, 2-degree
+  bins), before and after, from a scratch script run on this commit, 2026-11-14:
+  - Pressure over the freestream pressure at 80 to 94 degrees. At Mach 2 the old law gave 1.000 up to 88 degrees and
+    then 1.000, 0.778 and 0.729 at 90, 92 and 94 degrees; the new law gives 0.901, 0.835, 0.777 and 0.729 at 88, 90,
+    92 and 94 degrees, falling smoothly. At Mach 3 the old law gave 1.000 at 90 degrees and then 0.874 and 0.781; the
+    new law gives 1.122, 0.987, 0.874 and 0.781 at 88, 90, 92 and 94 degrees.
+  - Wall shear in pascals at 80, 84, 86, 88, 90, 92 and 94 degrees. Mach 2, old: 9.48, 9.22, 9.09, 8.95, 56.54, 61.57,
+    35.35; new: 49.96, 47.33, 45.64, 43.64, 41.32, 38.62, 35.48. Mach 3, old: 65.11, 60.63, 41.44, 11.60, 47.65, 62.18,
+    54.31; new: 82.20, 77.19, 73.99, 70.23, 65.82, 60.62, 54.45. The fourfold rise at 90 degrees at Mach 2 and the dip
+    to 11.6 pascals at 88 degrees at Mach 3 are gone; the new shear changes by about 2 to 4 pascals per bin.
+  - Stagnation-point similarity heat flux, the old and new values in kilowatts per square metre: Mach 4 (weight 0.67)
+    3.643 to 3.539, minus 2.9 %; Mach 4.25 (weight 0.5) 25.77 to 25.24, minus 2.0 %; Mach 6 unchanged at 322.1. At
+    Mach 2 and 3 the 900 K wall is hotter than the gas, so the flux is a loss (negative): minus 53.37 to minus 50.69
+    (a 5.0 % smaller magnitude) and minus 47.42 to minus 45.01 (5.1 %). The separation angle is unchanged at 106 degrees
+    at Mach 2, 3 and 4, 108 at 4.25 and 148 at Mach 6. All of this is one state at one altitude and one wall
+    temperature; other states were not measured. Pinned by `tests/test_reentry_model_gas_loads.py` (weight edges,
+    anchoring, no step at 90 degrees at Mach 2 and 3, the blend, continuity at both blend edges, and finite loads at
+    Mach 0.5 and 0.8).
+  - What is known of the low-Mach validation. Daniels and Schwartzentruber's abstract reports their continuum model
+    compared with CFD of air at subsonic, supersonic and hypersonic conditions, and the research note
+    (`research_notes/Film separation at a convex shoulder/hypersonic_shoulder_gas_flow.md`) records their shear
+    comparisons at Mach 0.37, 2, 3, 4, 7 and 10. The Mach numbers of their pressure comparisons have not been read from
+    the paper, so the pressure at low Mach number rests on their model being validated at the conditions of the shear
+    comparisons, **(assumed)**.
 - The film feels this pressure as a gradient on both sides: the gradient along the surface is taken on the provider's
   bins, so the fall past the shoulder now pushes the film rearward, where before the drop to freestream at the equator
   never acted on it.
@@ -1423,12 +1436,12 @@ Each item below was measured once, on the flights named; none is a sweep.
   chemistry and wall catalysis: energy held in dissociated atoms reaches the wall only if they recombine there, and
   DSMC walls are usually non-catalytic. To be settled with the post-shock chemistry criterion (equilibrium against
   unreacted).
-- Known limitation, pending Asha's decision (final review, 2026-11-14; ruling R19): below about Mach 4 the joined
-  pressure steps down between the 90- and 92-degree bins, by 13 to 32 % between Mach 3 and Mach 1.5 at 30 km, with a
-  fourfold shear jump and a pressure gradient of about -720 kPa/m at a subsonic state (14.1, with the measurements). The
-  design's "no step at 90 degrees" holds only above about Mach 4 (the step appears below Mach 3.39). On the Step 2
-  trajectories the 100 mm sphere is below Mach 4 from 181.55 s and the 50 mm sphere from 296.55 s. This branch
-  documents the step and does not change the pressure law; whether and how to remove it is Asha's choice.
+- The blend of the pressure laws between Mach 3.5 and 5 (14.1, Asha's decision 1 of 2026-11-14) is a choice, not a
+  fitted law: it removes the step at 90 degrees below about Mach 3.4, but nothing compares it with measurement between
+  Mach 3.5 and 5, and the stagnation heat flux moves by about 2 to 3 % across that range (14.1). The Step 2 trajectories
+  cross Mach 5 to 3.5 in about 8 s (the 100 mm sphere is below Mach 4 from 181.55 s and the 50 mm sphere from
+  296.55 s), so the blend acts for a short part of a flight and the Daniels and Schwartzentruber pressure acts for the
+  rest of it below Mach 3.5.
 - The lee pressure (14.1) and the zero heating behind separation (14.2) are known to differ from DSMC; the coupled CFD
   solution is meant to replace them behind the same provider (design A5).
 - The sheltered-corner rule is to be revisited with the fitted-sphere loading bug (14.5).

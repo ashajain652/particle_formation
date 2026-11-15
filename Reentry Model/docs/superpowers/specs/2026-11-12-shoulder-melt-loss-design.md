@@ -127,6 +127,11 @@ and Boyd describe; at exactly Kn 0.05 the similarity solution was the closer of 
 against Daniels and Schwartzentruber's factor of 2), so the best crossover lies between 0.05 and 0.25. The model's
 Newtonian-to-Prandtl-Meyer pressure blend puts a small bump in the similarity shear near 46 degrees.
 
+Amendment, 2026-11-14 (Asha, decision 1): the windward pressure of the paragraph above holds only at and above Mach 5.
+Below Mach 3.5 the pressure is Daniels and Schwartzentruber's own, anchored to the unreacted stagnation pressure, and
+between Mach 3.5 and 5 the two are blended linearly (model_assumptions 14.1); this removes the step at 90 degrees that
+the joined law has below about Mach 3.4.
+
 ### A4. Leeward loads
 
 ![Leeward pressure, shear and heating at Holman and Boyd's conditions](figures/2026-11-12-shoulder-melt-loss/leeward_loads_comparison.png)

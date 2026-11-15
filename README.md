@@ -319,13 +319,14 @@ A skin flight ends itself normally, with end reason `geometry`, exit code 0 and 
 `--gas-loads similarity|classic` chooses the surface gas loads of a `--thermal fem` run (the interim gas loads, built
 2026-11-13 from Part A of `Reentry Model/docs/superpowers/specs/2026-11-12-shoulder-melt-loss-design.md`). `similarity`,
 the default, is one provider (`reentry_model/shared/gas_loads.py`) solved once a macro step and read by the surface flow
-and, with `--heating physics`, by the heating: the wall pressure round the whole body (the model's windward law,
-continued past 90 degrees until it meets Daniels and Schwartzentruber's lee pressure), the shear and heat flux of a Lees
+and, with `--heating physics`, by the heating: the wall pressure round the whole body (at and above Mach 5 the model's windward law,
+continued past 90 degrees until it meets Daniels and Schwartzentruber's lee pressure; at and below Mach 3.5 their own
+pressure, anchored to the stagnation pressure; a linear blend between), the shear and heat flux of a Lees
 similarity boundary layer on chemically frozen post-shock air to the angle where it separates (152 degrees at Holman and
 Boyd's Kn 0.002, 0.01 and 0.05 states and 160 degrees at their Kn 0.25 state), with Daniels and Schwartzentruber's
 shear from a body Knudsen number of 0.05; the skins' corners that the centroid test shelters are read in the separated
 wake. It replaces a continuum shear that was five to six times below DSMC and the zero shear and heating behind 90
-degrees. Below about Mach 4 the joined pressure steps down at 90 degrees, a known limitation pending a decision
+degrees. The pressure step at 90 degrees that the joined law has below about Mach 3.4 is removed by the low-Mach pressure
 (section 14.1 of the assumptions). `classic` is the loads as they were (Fay-Riddell and Lees heating, freestream
 pressure and no shear or heating on the lee), named `_loads-classic`, and reproduces main bit for bit on the four
 `same_results.py` cases (step1, skins, element, nomelt), apart from `settings.gas_loads` and the absolute
