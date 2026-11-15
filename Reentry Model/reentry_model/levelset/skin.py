@@ -50,7 +50,9 @@ plan 03b Task 7d, round 2): a column filled in equal cells of the fine size puts
 merges that pair such cells put more on it deeper down, so that without the margin round-off of 1e-15 of the threshold
 decided whether those cells merged, and a column moved by 1e-12 of its volume between two regrids (as the division's
 closure moves it) regridded to other cells. With the margin, every cell a regrid keeps lies inside the band by at least
-REGRID_RTOL of its thresholds, and the skyscrapers' band [MERGE_BELOW, SPLIT_ABOVE] of the target still holds.
+REGRID_RTOL of its thresholds (but a column's only cell, which never merges, and a cell whose split `_splits_settle`
+refuses, as before the margin), so wherever the skyscrapers' band [MERGE_BELOW, SPLIT_ABOVE] of the target held, it
+still holds.
 
 Every physical property comes from the material passed in (the shared `reentry_model.shared.material.Material` or a
 test material with its interface), read through a `PropertyTable` of it built once per Skins (Task 4: h, cp_eff, k and
