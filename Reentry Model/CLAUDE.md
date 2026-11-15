@@ -44,10 +44,17 @@ Those two files are the contract with the thesis; keep them true when you change
 - `reentry_model/wake_column/` — the wake column, a sub-package with its own `analysis/` and `tests/`: the
   chemistry and condensation of the aluminium the droplets vaporise (see "The wake column" below). Its committed
   inputs are in `data/wake_column/`.
+- `reentry_model/wake_residence/` — the wake residence, a sub-package with its own `analysis/` and `tests/`: how long a
+  follower (a solid sphere or a molten droplet) released from the parent stays inside the parent's plume, with the
+  AFFIx release classifier of Register et al. (2020) and an engineering shock layer for rarefied followers. Design and
+  plan: `docs/superpowers/specs/2026-10-29-sphere-wake-residence-design.md` and `docs/superpowers/plans/` (same date).
+  Moved to main on 2026-11-14 from branch `wake-residence`, where it was named `parent_follower_separation_interactions`;
+  its outputs go to `output/wake_residence_output/` (`wake_residence.OUTPUT`). Not yet finished: the wake-gas decision,
+  the plan's Task 11 (its README, assumptions and CLAUDE.md sections) and the final review.
 - `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot; the Step 3 scripts (`melt_verification.py`, `melt_sensitivity.py`, `girin_reference.py`, `flow_wavelengths.py`, `skin_plate.py`, `skin_timing.py`, `ablation_1d.py`, `movemesh_recession.py`); `analysis/skyscrapers_port/`, the port's own tools (path map, checks, three-way resolver, `same_results.py`) with its README; and `analysis/flights/`, the launcher of long flights (`fly.py`, `launch.sh`, which keep a flight's history rows as they are made) with its README.
 - `tests/` — the package's tests (`conftest.py` puts this folder on `sys.path` and holds the session
-  mesh fixtures). `pytest.ini` also collects `reentry_model/droplet_reentry/tests/` and
-  `reentry_model/wake_column/tests/`.
+  mesh fixtures). `pytest.ini` also collects `reentry_model/droplet_reentry/tests/`,
+  `reentry_model/wake_column/tests/` and `reentry_model/wake_residence/tests/`.
 - `output/` — every run, mesh cache, plot and verification output; git-ignored.
 - `docs/` — `model_assumptions.md`, `milestones/`, and `superpowers/{specs,plans}`.
 - `prototype/` — the record of the working copies the Step 3 code was developed in; the code of record is now
@@ -78,7 +85,7 @@ FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -
 
 Each project is tested from inside its own folder; the three `tests/` folders each have a `helpers.py`,
 so they cannot share one pytest session. In `Reentry Model`, `pytest tests` runs the package's own tests; the
-default `pytest` (from `pytest.ini`) also collects the droplet and wake-column tests. After the near-liquidus viscosity
+default `pytest` (from `pytest.ini`) also collects the droplet, wake-column and wake-residence tests. After the near-liquidus viscosity
 was merged with main's kinked-profile dispersion (2026-11-13), the unit tier, `pytest tests -m "not drama and not
 reference" -n 4`, has 965 tests: 964 pass and 1 module is skipped (the FEniCSx module, which needs `dolfinx`). The whole
 tier ran once on the merged model code in 71 minutes across four processes, with other runs on the machine (950 passed;
