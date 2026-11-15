@@ -488,6 +488,32 @@ def test_a_column_the_fill_cannot_fill_stops_the_run_naming_it(monkeypatch):
         assert part in str(stop.value), part
 
 
+def test_a_fill_miss_below_the_layer_s_floor_does_not_stop_the_run(monkeypatch):
+    """The controller's ruling T7b-c: the fill's stop fires only where a column's miss is beyond FILL_RTOL of its own
+    volume and beyond FILL_RTOL of the whole layer's (the columns' volumes summed), a miss below that floor being
+    negligible to the books. In the off-grid shoulder's third step (plan 03b Task 7b, measured once) the stop fired after
+    127 parts on a column with no base of 3.408e-13 m3 whose cells missed it by 5.244e-25 m3 (1.539e-12 of it), some
+    1e6 times below FILL_RTOL of the layer. The test cube's baseless edge column with no neighbour (as in
+    `test_a_column_the_fill_cannot_fill_stops_the_run_naming_it`, which still raises for 0.05 mm taken) short by the
+    geometric mean of the two bounds: the fill leaves it so, records its miss, and does not stop."""
+    from reentry_model.levelset import stepend
+    body = cube_body()
+    sk = body.skins
+    _, row, _ = _baseless_edge(body, monkeypatch)
+    body._fill(skinbody._Tally(sk.n))
+    V = sk.column_volume()
+    own, floor = skinbody.FILL_RTOL * V[row], skinbody.FILL_RTOL * float(V.sum())
+    sk.take_between([row], 0.0, np.sqrt(own * floor) / float(sk.profile[row, 0]))
+    monkeypatch.setattr(stepend.StepEnd, "_neighbours", lambda self, r, base: None)
+    tally = skinbody._Tally(sk.n)
+    body._fill(tally)
+    miss = abs(float(V[row] - sk.cells_volume()[row]))
+    print("sub-floor miss: {:.3e} m3 against the column's bound {:.3e} and the layer's {:.3e} m3; recorded {:.3e} of "
+          "the column".format(miss, own, floor, tally.fill_miss))
+    assert own < miss < floor
+    assert tally.fill_miss == pytest.approx(miss / V[row], rel=1e-9)
+
+
 def test_a_piece_with_layer_and_no_column_stops_the_run(monkeypatch):
     """The controller's ruling T7-g (diagnosis D2): a division that finds a piece of phi with layer but no column (no
     marker on it, its closure factor infinite, as two of the shoulder's divisions did unseen before its stop) stops the

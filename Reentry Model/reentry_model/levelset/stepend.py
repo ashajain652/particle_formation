@@ -33,7 +33,8 @@ taken again under the same ownership before the next part (`skinbody.LevelSetSki
 
 Clear stops (plan 03b Task 7b, the controller's ruling T7-g): a division that finds a piece of phi with layer but no
 column, or a piece whose closure factor departs from one by more than DIVISION_GROSS, raises (`_divide`); so does a fill
-that leaves a column beyond FILL_RTOL of its volume after its rounds (`_fill`), naming it. Every completed step of every
+that leaves a column beyond FILL_RTOL of its volume after its rounds, and beyond FILL_RTOL of the whole layer's, a floor
+for very small columns (`_fill`; the controller's ruling T7b-c), naming it. Every completed step of every
 recorded case filled to 4e-16 of a column's volume at worst and closed within 4e-3, so neither fires on a good step.
 
 Filling the columns (`_fill`, planning ruling 3 step 7). After the division (`_divide`), every column whose cells'
@@ -477,7 +478,10 @@ class StepEnd:
         base temperature, its group's area mean of beta's patch temperatures (`_interface`, once; the controller's ruling
         T5-k); RuntimeError if a short one has no group, and RuntimeError naming the worst (its marker, position and
         piece, its cells' volume and its column's) where a column is still beyond FILL_RTOL of its volume after the
-        rounds (the controller's ruling T7-g: a column with no base and no neighbour was skipped silently). Counts in
+        rounds (the controller's ruling T7-g: a column with no base and no neighbour was skipped silently) and its miss
+        is also beyond FILL_RTOL of the whole layer's volume (the columns' summed; the controller's ruling T7b-c: the
+        off-grid shoulder stopped after 127 parts on a column of 3.4e-13 m3 missed by 5.2e-25 m3, 1.5e-12 of it and some
+        1e6 times below that floor, negligible to the books). Counts in
         `tally`: `drawn`, `handed` [kg] the base exchange each way, `to_volume` [kg m/s] the returned cells' momentum (the
         held volume takes it), `fill_miss` the largest miss left as a share of its column's volume, `baseless` the
         columns with no base. Returns the enthalpy [J] the skins took from the volume (negative where they returned
@@ -521,16 +525,17 @@ class StepEnd:
         miss = np.abs(V_col - held)
         share = np.divide(miss, V_col, out=np.where(miss > 0.0, np.inf, 0.0), where=V_col > 0.0)
         tally.fill_miss = max(tally.fill_miss, float(share.max(initial=0.0)))
-        left = miss > FILL_RTOL * V_col
+        left = (miss > FILL_RTOL * V_col) & (miss > FILL_RTOL * float(V_col.sum()))    # and beyond the layer's floor
         if left.any():
             r = int(np.argmax(np.where(left, share, -1.0)))
             m = int(self._row_marker()[r])
-            raise RuntimeError("the fill left {} column(s) beyond FILL_RTOL ({:.0e}) of their volume after {} rounds; the "
-                               "worst, marker {} at ({:.3f}, {:.3f}, {:.3f}) mm on piece {} ({}), its cells hold {:.6e} m3 "
-                               "against its column's {:.6e} m3, {:.3e} m3 apart ({:.3e} of its volume; the controller's "
-                               "ruling T7-g)".format(int(left.sum()), FILL_RTOL, FILL_ROUNDS, m, *(self.markers.x[m] * 1e3),
-                                                     int(self.division.piece[m]), "with a base" if base[r] else "no base",
-                                                     held[r], V_col[r], miss[r], share[r]))
+            raise RuntimeError("the fill left {} column(s) beyond FILL_RTOL ({:.0e}) of their volume and of the layer's "
+                               "after {} rounds; the worst, marker {} at ({:.3f}, {:.3f}, {:.3f}) mm on piece {} ({}), "
+                               "its cells hold {:.6e} m3 against its column's {:.6e} m3, {:.3e} m3 apart ({:.3e} of its "
+                               "volume; the controller's rulings T7-g and T7b-c)".format(
+                                   int(left.sum()), FILL_RTOL, FILL_ROUNDS, m, *(self.markers.x[m] * 1e3),
+                                   int(self.division.piece[m]), "with a base" if base[r] else "no base", held[r], V_col[r],
+                                   miss[r], share[r]))
         return taken
 
     def _layer(self, dC, tally, kind):
