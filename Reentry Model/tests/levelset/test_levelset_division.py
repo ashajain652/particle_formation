@@ -261,6 +261,97 @@ def test_metal_thinner_than_twice_the_depth_has_opposed_neighbours():
     assert not found[3.0e-3].any()
 
 
+WEDGE_FACE = 8e-3          # m: the wedge's and the square's faces, over 4H long, so that thickness is not the cause
+
+
+def test_a_wedge_sharper_than_sixty_degrees_has_opposed_neighbours_and_a_right_angle_has_none():
+    """Design 21.11's other case: an edge sharper than about 60 degrees. A prism through the mesh whose cross-section is
+    a wedge of 45 degrees, its two faces WEDGE_FACE long (its other two corners 67.5 degrees, whose normals do not
+    oppose), markers seeded as the body seeds them: columns of its two faces share boundaries whose normals oppose
+    (n_i . n_j = cos 135 degrees, -0.71), all of them beside the 45 degree edge. A square prism of the same face length,
+    every edge 90 degrees: none."""
+    half = np.radians(22.5)
+    apex = np.array([OFF, OFF])
+    wedge = [apex, apex + WEDGE_FACE * np.array([np.cos(half), np.sin(half)]),
+             apex + WEDGE_FACE * np.array([np.cos(half), -np.sin(half)])]
+    square = [OFF + np.array(c) * WEDGE_FACE for c in ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))]
+    upper, lower = np.array([-np.sin(half), np.cos(half), 0.0]), np.array([-np.sin(half), -np.cos(half), 0.0])
+    found = {}
+    for name, corners in (("wedge", wedge), ("square", square)):
+        c = np.array(corners)
+        base = BoxBase.around((c[:, 0].min() - BOX_H0, c[:, 1].min() - BOX_H0, -4e-3),
+                              (c[:, 0].max() + BOX_H0, c[:, 1].max() + BOX_H0, 4e-3), BOX_H0)
+        sdf = polygon_sdf(corners)
+        mesh = _layer_mesh(base, sdf)
+        phi = sdf(mesh.points)
+        mk = seeded(mesh, phi, DESIGN_SPACING, base.lo)
+        d = divide(mesh, phi, H, mk.x, mk.normal)
+        e = np.flatnonzero(d.opposed)
+        found[name] = (mk, d, e)
+        print("{}: {} markers, {} opposed pair(s), their markers {} mm from the 45 degree edge at most".format(
+            name, mk.n, len(e), np.round(np.linalg.norm(mk.x[np.r_[d.i[e], d.j[e]], :2] - apex, axis=1).max() * 1e3, 2)
+            if len(e) else "-"))
+    mk, d, e = found["wedge"]
+    assert len(e) > 0
+    a, b = mk.normal[d.i[e]], mk.normal[d.j[e]]
+    assert np.all(((a @ upper > 0.9) & (b @ lower > 0.9)) | ((a @ lower > 0.9) & (b @ upper > 0.9)))
+    assert np.linalg.norm(mk.x[np.r_[d.i[e], d.j[e]], :2] - apex, axis=1).max() <= 4.0 * H
+    assert len(found["square"][2]) == 0
+
+
+def _face_markers(lo, hi, spacing=DESIGN_SPACING):
+    """Markers on the six faces of the box from `lo` to `hi` [m], on each a grid `spacing` apart from half a spacing (+
+    GRID_OFF) inside its corner, each with its face's outward normal (no marker anywhere else). Returns (positions (n,
+    3), normals (n, 3))."""
+    x, nrm = [], []
+    for axis in range(3):
+        u, v = [k for k in range(3) if k != axis]
+        gu = np.arange(lo[u] + 0.5 * spacing, hi[u], spacing) + GRID_OFF
+        gv = np.arange(lo[v] + 0.5 * spacing, hi[v], spacing) + GRID_OFF
+        U, V = np.meshgrid(gu, gv, indexing="ij")
+        for side, at in ((-1.0, lo[axis]), (1.0, hi[axis])):
+            p = np.zeros((U.size, 3))
+            p[:, axis], p[:, u], p[:, v] = at, U.ravel(), V.ravel()
+            n = np.zeros(3)
+            n[axis] = side
+            x.append(p), nrm.append(np.tile(n, (len(p), 1)))
+    return np.concatenate(x), np.concatenate(nrm)
+
+
+VOID_CENTRE = np.array([-1.8e-3, 1.5e-3, 0.0])    # m, from the cube's centre: 2.6 mm or more of metal round the void
+VOID_RADIUS = 0.6e-3                               # m
+
+
+def test_columns_on_opposite_faces_of_thick_metal_are_not_opposed():
+    """Plan 03b Task 7c (ruling T7-k): the stage 3 box's spurious THIN_METAL pairs in small. A 10 mm cube with markers
+    on its six faces only holds a void VOID_RADIUS in radius, 2.6 mm or more from every face. The void's wall on the side
+    of the -x and +y faces faces back into the body: its normal (out of the metal, into the void) has +x and -y parts
+    beyond -OPPOSED_NORMALS, as the undersides of the box's rim slivers had, and no marker stands on it, as none stood on
+    them. The same-side rule forbids that wall to the -x and +y faces' markers and gives it to the nearest it allows, on
+    the +z and -z faces about 5 mm away; these tie on the cube's mid-plane, which crosses the wall, so their columns
+    share a boundary of positive length there although their faces are 10 mm apart through metal. The pair keeps its
+    boundary (the division's ownership is not this test's subject) but is not opposed: no metal there is thinner than
+    twice the skin depth, and no edge is sharper than 60 degrees."""
+    lo, hi = np.full(3, OFF - 5e-3), np.full(3, OFF + 5e-3)
+    cube = box_sdf(lo, hi)
+    centre = OFF + VOID_CENTRE
+    sdf = lambda p: np.maximum(cube(p), VOID_RADIUS - np.linalg.norm(p - centre, axis=1))
+    base = BoxBase.around(lo - BOX_H0, hi + BOX_H0, BOX_H0)
+    mesh = _layer_mesh(base, sdf)
+    phi = sdf(mesh.points)
+    x, nrm = _face_markers(lo, hi)
+    d = divide(mesh, phi, H, x, nrm)
+    across = np.einsum("ek,ek->e", nrm[d.i], nrm[d.j]) < OPPOSED_NORMALS
+    facing = np.flatnonzero(across & (d.length.max(axis=1) > 0.0))
+    print("void in a cube: {} markers; {} boundaries of positive length between opposed columns, the longest {:.3f} mm "
+          "(markers {:.2f} mm apart); {} opposed".format(
+              len(x), len(facing), d.length[facing].max() * 1e3 if len(facing) else 0.0,
+              np.linalg.norm(x[d.i[facing[0]]] - x[d.j[facing[0]]]) * 1e3 if len(facing) else 0.0, d.opposed.sum()))
+    assert len(facing) > 0                                    # the mechanism is reproduced
+    assert np.all(np.abs(nrm[d.i[facing], 2]) == 1.0)       # the +z and -z faces' columns
+    assert not d.opposed.any()
+
+
 def test_a_point_halfway_between_two_markers_is_owned_by_one():
     """Two markers 2 mm apart on a flat face, symmetric about a plane of the mesh's nodes, so that the corners of every
     triangle on that plane are exactly as near one marker as the other: each patch's owned areas, with and without the

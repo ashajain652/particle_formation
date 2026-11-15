@@ -65,12 +65,36 @@ dividing segment like any other, in the triangles beside the edge.
 
 Metal thinner than twice H (design section 21.11). Where two faces whose normals oppose lie closer than 2H, their
 columns meet face to face on the surface halfway between them. That surface is parallel to the level surfaces, so it has
-no length on any of them and the levels alone do not find it. So each node of the layer (-H <= phi < 0) is also given the
-marker owning its foot, node - phi g (the same-side rule judged with g itself, which is short where the normal is
+no length on any of them and the levels alone do not find it. So each node of the layer (-H <= phi < 0) is also given
+the marker owning its foot, node - phi g (the same-side rule judged with g itself, which is short where the normal is
 undefined, between the faces, and then allows every marker). Two columns whose normals oppose (n_i . n_j <
-`markers.OPPOSED_NORMALS`) and whose nodes an edge of the mesh joins share a boundary too: of zero length at every level
-where the levels found none, and marked `opposed`, for the caller to stop the step. It reports metal thinner than 2H as
-the P1 mesh resolves it, to within about one cell where the cells are coarser than beta's interior.
+`markers.OPPOSED_NORMALS`) and whose nodes an edge of the mesh joins share a boundary too, of zero length at every level
+where the levels found none. Such a pair, and no other, is marked `opposed`, for the caller to stop the step, where the
+metal between its two columns through the midpoint p of such an edge is thinner than 2H by two measures (plan 03b Task
+7c, ruling T7-k): along their normals (the distances from p along n_i and along n_j to phi's zero, summed;
+`_metal_along`) and between their markers' tangent planes ((x_i - p) . n_i + (x_j - p) . n_j). Between two flat faces
+both are the metal's thickness through p; at an edge sharper than 60 degrees, on the plane halfway between its faces,
+both are twice p's depth, at most 2H in the layer. It reports metal thinner than 2H as the P1 mesh resolves it, to
+within about one cell where the cells are coarser than beta's interior.
+
+Why two measures, at the node pass's edges alone (Task 7c's diagnosis, each case measured once on its stopped body).
+Before Task 7c every shared boundary whose markers' normals oppose was marked, the levels' too, and the stop fired where
+no metal is thin. On the stage 3 box's second step all four pairs came from the levels: slivers of metal 0.15 to 0.3 mm
+thick stood off the receded heated face's rim with no marker of their own, their undersides facing back into the body;
+the same-side rule forbade those to the face's markers, 1.2 to 1.5 mm away, and gave them to the nearest it allowed, on
+opposite side faces about 5 mm away, which tied on the box's mid-plane across them. Those markers' faces are 10 mm apart
+through solid metal (the tangent planes' measure, 10.0 mm), but along their normals, which run along the face there, the
+slivers hold only 0.24 mm of metal: that measure alone would have stopped the run. On the spraying test cube's second
+step, at a rounded lip whose normals turn by 120 to 124 degrees, the node pass's edges (1.2 mm long in 0.7 mm cells)
+jumped over the column between the lip's marker and the face's, and at the deepest levels the recovered gradient, 0.52
+to 0.61 long there, left the feet 0.8 to 1.1 mm short of phi, where markers all round the edge compete; by both measures
+the metal there is 2.49 mm or more. On an older state of that cube, level triangles facing back into the body 2.8 mm
+from both of a pair's markers read thin by both measures (2.0 and 1.1 mm), while the node pass's edges of the same pair
+did not (2.56 mm along the normals at least); and the tangent planes alone read one of those edges as thin (2.29 mm),
+2.64 mm of metal lying along the normals there. A fold of the same cube (a sheet about 1 mm thick under its bottom face)
+reads thin by both at its node-pass edge (1.05 mm along the normals, -0.75 mm between the planes: the two faces face
+each other across gas) and stops. The levels' boundaries keep their lengths for the runoff and the sideways heat
+whatever their markers' normals.
 
 The base's ownership (plan 03b Task 5's fix round 1, the controller's ruling T5-j). The base level, phi = -H, is the
 skin base beta's contour (`surfaces.skin_base` keeps phi + H's values at the nodes of the cells it cuts), so its patches
@@ -99,7 +123,7 @@ from .criteria import nodal_average
 from .cutcell import cell_gradients, inside_volumes, patches
 from .levelset import pieces
 from .markers import OPPOSED_NORMALS, OWN_SHARE, _nearest, ownership
-from .transfer import barycentric, locate
+from .transfer import barycentric, interpolate, locate
 
 DIVISION_LEVELS = 24       # level surfaces below phi down to H, less the one at phi itself (ruling 1; the controller's
                            # ruling T1-b: the fewest of 24, 48 and 96 that close the stage 3 box to DIVISION_TOL at
@@ -128,7 +152,8 @@ class Division:
     j: np.ndarray          # (E,) its second, i < j
     length: np.ndarray     # (E, B + 1) each boundary's length at each level [m]
     normal: np.ndarray     # (E, 3) unit, from i toward j along the surface
-    opposed: np.ndarray    # (E,) bool: the pair's normals oppose (design section 21.11)
+    opposed: np.ndarray    # (E,) bool: the pair's columns, their normals opposed, meet across metal thinner than 2H
+                           # (design section 21.11; module docstring)
     piece: np.ndarray      # (n,) each column's piece of metal (`levelset.pieces`), -1 where there is none
     factor: np.ndarray     # (P,) each piece's factor on its columns' areas (its closure measure)
     base_cell: np.ndarray = None    # (Q,) the cell of each patch of the base level phi = -H (beta's patches; docstring)
@@ -178,6 +203,39 @@ def _boundary_normals(x, normal, i, j):
     flat = np.linalg.norm(v, axis=1) < 1e-6
     v[flat] = d[flat]
     return unit(v)
+
+
+def _metal_along(mesh, phi, at, direction, s):
+    """The distance [m] (k,) from each of the points `at` (k, 3) along its unit `direction` (k, 3) to phi's first zero
+    (phi >= 0), phi sampled at the distances `s` (increasing from 0) and linear between them; 0 where a point is not in
+    the metal, inf where phi stays negative to s[-1]."""
+    v = interpolate(mesh, phi, (at[:, None, :] + s[None, :, None] * direction[:, None, :]).reshape(-1, 3))
+    v = v.reshape(len(at), len(s))
+    out = np.full(len(at), np.inf)
+    gas = v >= 0.0
+    k = np.argmax(gas, axis=1)
+    out[gas[:, 0]] = 0.0
+    rows = np.flatnonzero(gas.any(axis=1) & (k > 0))
+    k = k[rows]
+    v0, v1 = v[rows, k - 1], v[rows, k]
+    out[rows] = s[k - 1] + (s[k] - s[k - 1]) * v0 / (v0 - v1)
+    return out
+
+
+def _thin_between(mesh, phi, depth, x, normal, i, j, at, step):
+    """Whether the metal between the columns of markers i and j (k,) through the points `at` (k, 3) [m] is thinner than
+    twice `depth` (k,) bool: the depths of each point below the two markers' tangent planes, summed, and the metal along
+    their two normals from it (`_metal_along`, sampled `step` [m] apart), summed, both less than 2 depth (module
+    docstring)."""
+    reach = 2.0 * depth
+    near = np.einsum("ek,ek->e", x[i] - at, normal[i]) + np.einsum("ek,ek->e", x[j] - at, normal[j]) < reach
+    out = np.zeros(len(at), dtype=bool)
+    q = np.flatnonzero(near)
+    if len(q):
+        s = np.linspace(0.0, reach, int(np.ceil(reach / step)) + 1)
+        metal = _metal_along(mesh, phi, at[q], normal[i[q]], s) + _metal_along(mesh, phi, at[q], normal[j[q]], s)
+        out[q] = metal < reach
+    return out
 
 
 def _marker_pieces(mesh, x, label, top):
@@ -296,7 +354,7 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
         np.add.at(moment, (rows, kk), lower[:, None] * at)
         np.add.at(moment, (rows, kk + 1), upper[:, None] * at)
 
-    # the shared boundaries, at every level, and the pairs whose normals oppose that meet face to face (docstring)
+    # the shared boundaries, at every level, and the pairs whose normals oppose that meet across thin metal (docstring)
     lev, bi, bj, bl = (np.concatenate(v) for v in zip(*found)) if found else (np.zeros(0, dtype=np.int64),) * 4
     labelled = layer[label[layer] >= 0]
     node_piece = np.full(len(phi), -1, dtype=np.int64)          # each node's piece, from a layer cell holding it
@@ -312,14 +370,16 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
         mine = o < len(mq)
         owner[sel[mine]] = mq[o[mine]]
     T = mesh.tets[layer]
-    ci, cj = [], []
+    ends = []                                                  # the mesh edges joining nodes of opposed owners
     for a, b in _EDGES:
         oa, ob = owner[T[:, a]], owner[T[:, b]]
-        meet = (oa < n) & (ob < n) & (oa != ob)
-        oa, ob = oa[meet], ob[meet]
-        apart = np.einsum("ek,ek->e", normal[oa], normal[ob]) < OPPOSED_NORMALS
-        ci.append(np.minimum(oa, ob)[apart]), cj.append(np.maximum(oa, ob)[apart])
-    key = np.unique(np.concatenate([bi * n + bj] + [u * n + v for u, v in zip(ci, cj)]).astype(np.int64))
+        meet = np.flatnonzero((oa < n) & (ob < n) & (oa != ob))
+        apart = meet[np.einsum("ek,ek->e", normal[oa[meet]], normal[ob[meet]]) < OPPOSED_NORMALS]
+        ends.append(np.sort(T[apart][:, [a, b]], axis=1))
+    ends = np.unique(np.concatenate(ends), axis=0)             # each edge once
+    ci, cj = np.minimum(owner[ends[:, 0]], owner[ends[:, 1]]), np.maximum(owner[ends[:, 0]], owner[ends[:, 1]])
+    thin = _thin_between(mesh, phi, depth, x, normal, ci, cj, mesh.points[ends].mean(axis=1), dz)
+    key = np.unique(np.concatenate([bi * n + bj, ci * n + cj]).astype(np.int64))
     length = np.zeros((len(key), levels + 1))
     np.add.at(length, (np.searchsorted(key, bi * n + bj), lev.astype(np.int64)), bl)
     i, j = key // n, key % n
@@ -337,5 +397,4 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
     base_owner = sp.csr_matrix((cat(base_vals, float), (cat(base_rows, np.int64), cat(base_cols, np.int64))),
                                shape=(n, len(base_cell)))
     return Division(z, area, area @ w, i, j, length, _boundary_normals(x, normal, i, j),
-                    np.einsum("ek,ek->e", normal[i], normal[j]) < OPPOSED_NORMALS, piece, factor, base_cell,
-                    base_patch_area, base_owner, moment)
+                    np.isin(key, (ci * n + cj)[thin]), piece, factor, base_cell, base_patch_area, base_owner, moment)

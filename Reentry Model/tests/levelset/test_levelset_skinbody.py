@@ -7,6 +7,7 @@ markers on phi after the surface moves.
 The cube is the AA7075 Scheil alloy's (the shared Material). The test meshes are coarser than the design's defaults
 (fine 1.4 mm instead of 0.7 mm, a 0.7 mm curvature floor instead of 0.25 mm, a 2 mm fine margin instead of 4 mm) so that a
 macro step takes seconds; the skins are the development preset's (20 um cells)."""
+import pickle
 import time
 
 import numpy as np
@@ -1010,18 +1011,6 @@ CONTINUUM = dict(rho=1e-4, kn=1e-3)   # 7.5 km/s at a density of 1e-4 kg/m3 with
                                       # layer's branch, where Girin's closure gives a conjugate depth
 
 
-SPURIOUS_PAIRS = ("plan 03b Task 7b (rulings T7-f, T7b-a and T7-k), measured once: the runaway split is gone (the speck "
-                  "that stranded two columns stays out), and the second 0.05 s step runs its parts but stops at its end "
-                  "on stepend.THIN_METAL with 2 pairs of opposed columns (n_i . n_j -0.56 and -0.51) whose markers are "
-                  "2.90 and 3.24 mm apart with metal all the way between them (2.89 and 3.23 mm of it along the "
-                  "straight line, reaching 0.67 and 0.75 mm below phi): not metal thinner than twice the skin depth "
-                  "(2.4 mm), the spurious pairs of ruling T7-k, Task 7c's subject")
-
-
-class ThinMetalStop(RuntimeError):
-    """A step's THIN_METAL stop (`stepend.THIN_METAL`) and no other, for an expected failure to name."""
-
-
 @pytest.fixture(scope="module")
 def sprayed():
     """The cube with its edges rounded to ROUNDING (`rounded_cube`, the controller's ruling T6-d: the fixture tests the
@@ -1059,23 +1048,22 @@ def test_liquid_formed_on_the_face_sprays_and_the_books_close(sprayed):
     assert max(owed(body, book)) <= OWED_SHARE
 
 
-@pytest.mark.xfail(raises=ThinMetalStop, strict=True, reason=SPURIOUS_PAIRS)
 def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
     """Fix round 1 of Task 9 (ruling a), the smallest case found that reproduced the skyscrapers' runaway: the spraying
     step above and a second 0.05 s step at the same state. A part that meets its allowance only after splits, or never,
     carries the splits' shortness into the skyscrapers' estimate; here a step's hint is at most 1.25 times the parts it
     took: both steps stay within PART_BOUND parts, the second step's hint is at most the skyscrapers' for it, both hints
-    are 1.25 times their step's parts at most, and the books close. It fails (SPURIOUS_PAIRS): the second step stops on
-    THIN_METAL, which the test raises as ThinMetalStop (any other stop is a failure)."""
+    are 1.25 times their step's parts at most, and the books close. The test advances its own copy of the fixture's
+    body. (Until plan 03b Task 7c the second step stopped at its end on THIN_METAL, on two pairs of columns at a rounded
+    lip whose metal along their normals is 2.49 mm or more; measured once on Task 7c's fix, it takes 10 parts, its hint
+    13 against the skyscrapers' 67.)"""
     body, _, first, _, stop = sprayed
     assert stop is None, stop
     assert first.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * first.parts)))
-    try:
-        second = body.advance(0.05, state=gas_state(**CONTINUUM))
-    except RuntimeError as err:
-        if str(err).startswith(skinbody.THIN_METAL):
-            raise ThinMetalStop(str(err)) from err
-        raise
+    body = pickle.loads(pickle.dumps(body))   # its own copy (the gas's cantera Solution pickles but does not
+                                              # deep-copy), so that the fixture's body is left as the spraying
+                                              # test reads it, whatever the order the tests run in
+    second = body.advance(0.05, state=gas_state(**CONTINUUM))
     print("two flow-on steps: parts {} then {}; hints {} then {}; the skyscrapers' hints {} then {}".format(
         first.parts, second.parts, first.parts_next, second.parts_next, first.parts_skyscrapers,
         second.parts_skyscrapers))
