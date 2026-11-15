@@ -1,10 +1,16 @@
 """The interim gas-loads provider: pressure, wall shear and similarity heat flux round the whole body (0-180 degrees
 from the stagnation point) for the surface flow and the heating, solved once per macro step and shared.
 
-Pressure: the model's windward `surface_flow.wall_pressure` (modified Newtonian plus Prandtl-Meyer) to 90 degrees; past
+Pressure, by the perfect-gas free-stream Mach number M (`daniels_schwartzentruber.condition(...).mach_inf`): at and
+above M = 5 the model's windward `surface_flow.wall_pressure` (modified Newtonian plus Prandtl-Meyer) to 90 degrees; past
 90 degrees the same Prandtl-Meyer expansion continued without the free-stream floor, until it falls to Daniels and
-Schwartzentruber's (2026) lee pressure, then theirs. The expansion starts from the UNREACTED (chemically frozen)
-stagnation pressure. Shear and heat flux: Lees local similarity (`similarity.march`) on that pressure. Below the shear
+Schwartzentruber's (2026) lee pressure, then theirs (`joined_pressure`). That joined law has a step at 90 degrees below
+about Mach 3.4, where the Newtonian cosine-squared law and the Prandtl-Meyer expansion no longer agree. At and below
+M = 3.5 the pressure is Daniels and Schwartzentruber's own, p_inf + c_p q_inf, rescaled so that its stagnation value is
+the unreacted stagnation pressure (their c_p at the stagnation point is only approximately the frozen-gas value, and
+the rescaling keeps the stagnation pressure the same quantity at every Mach number); between M = 3.5 and 5 the two
+pressures are blended with a weight falling linearly in M from 1 to 0 (a choice, not a fitted law). The joined
+expansion starts from the UNREACTED (chemically frozen) stagnation pressure. Shear and heat flux: Lees local similarity (`similarity.march`) on that pressure. Below the shear
 switch Kn_body = 0.05 the continuum similarity shear is returned (the caller applies slip and blend); at and above it
 Daniels and Schwartzentruber's shear, already rarefied. Ported from analysis/gas_loads/reference/similarity_lee.py
 (`joined_pressure`) and similarity_heat.py (`main`). This module must not be imported by surface_flow."""
@@ -30,6 +36,31 @@ _CACHE_SIZE = 8
 # freestream, at 1e-12 kg/m3), so it changes no result. Cantera cannot expand to the floor either (the isentropic
 # temperature falls below zero), so a state that reaches it still fails its step, on Cantera's temperature instead.
 P_FLOOR = 1e-20
+# Daniels and Schwartzentruber's pressure is used alone at and below DS_PRESSURE_MACH_LOW and not at all at and above
+# DS_PRESSURE_MACH_HIGH (perfect-gas free-stream Mach number); linear weight in between.
+DS_PRESSURE_MACH_LOW = 3.5
+DS_PRESSURE_MACH_HIGH = 5.0
+
+
+def ds_pressure_weight(mach):
+    """Weight of the anchored Daniels and Schwartzentruber pressure: 1 at and below DS_PRESSURE_MACH_LOW, 0 at and
+    above DS_PRESSURE_MACH_HIGH, linear in Mach between."""
+    if mach <= DS_PRESSURE_MACH_LOW:
+        return 1.0
+    if mach >= DS_PRESSURE_MACH_HIGH:
+        return 0.0
+    return (DS_PRESSURE_MACH_HIGH - mach) / (DS_PRESSURE_MACH_HIGH - DS_PRESSURE_MACH_LOW)
+
+
+def anchored_ds_pressure(cp_ds, p_stag, p_inf, q_inf):
+    """Daniels and Schwartzentruber's pressure p_inf + c_p q_inf with c_p rescaled so the stagnation-point value is
+    p_stag: p_inf + c_p q_inf (p_stag - p_inf) / (c_p[0] q_inf). Raises ValueError if c_p at the stagnation point
+    (cp_ds[0]) is not positive."""
+    cp_ds = np.asarray(cp_ds, dtype=float)
+    if not cp_ds[0] > 0.0:
+        raise ValueError(f"Daniels and Schwartzentruber's stagnation-point pressure coefficient is {cp_ds[0]:.4g}; "
+                         "it must be positive to anchor the pressure")
+    return p_inf + cp_ds * q_inf * (p_stag - p_inf) / (cp_ds[0] * q_inf)
 
 
 def joined_pressure(theta_deg, p_stag, p_inf, q_inf, gamma_pm, p_ds):
@@ -68,6 +99,7 @@ class MeridianLoads:
     p_stag: float
     p_inf: float
     q_inf: float
+    ds_pressure_weight: float = 0.0   # weight of the anchored Daniels and Schwartzentruber pressure in p_w (0 to 1)
 
     def at(self, theta_rad, field):
         """Linear interpolation of `field` (an array attribute name) at polar angles theta_rad, clipped to [0, pi]."""
@@ -119,7 +151,7 @@ class GasLoads:
         if not (rho > 0.0 and V > 0.0):
             z = np.zeros(n)
             return MeridianLoads(th, np.full(n, p_inf), z.copy(), z.copy(), z.copy(), 0.0, 0.0, 0.0, T_wall,
-                                 state.kn, "similarity", float("nan"), float("nan"), p_inf, p_inf, 0.0)
+                                 state.kn, "similarity", float("nan"), float("nan"), p_inf, p_inf, 0.0, 0.0)
         self._build()
         air, props = self._air, self._props
         stag = air.stagnation(rho, T_inf, V)
@@ -127,7 +159,15 @@ class GasLoads:
         cond = ds.condition(rho, T_inf, V, 2.0 * radius, T_wall)
         cp_ds, cf_ds = ds.coefficients(np.radians(th), cond)
         p_ds = p_inf + cp_ds * q_inf
-        p_w, meet = joined_pressure(th, stag.p, p_inf, q_inf, self.gamma_pm, p_ds)
+        w = ds_pressure_weight(cond.mach_inf)
+        if w == 1.0:
+            p_w, meet = anchored_ds_pressure(cp_ds, stag.p, p_inf, q_inf), float("nan")
+        else:
+            joined, meet = joined_pressure(th, stag.p, p_inf, q_inf, self.gamma_pm, p_ds)
+            if w == 0.0:
+                p_w = joined
+            else:
+                p_w = w * anchored_ds_pressure(cp_ds, stag.p, p_inf, q_inf) + (1.0 - w) * joined
         p_w = np.maximum(p_w, P_FLOOR * p_inf)            # never a non-positive pressure into Cantera (P_FLOOR)
         u_e = np.array([math.sqrt(max(0.0, 2.0 * (H_e - air.expand(stag, float(p)).h))) for p in p_w])
         u_e[0] = 0.0
@@ -144,4 +184,4 @@ class GasLoads:
             tau, source = cf_ds * q_inf, "daniels-schwartzentruber"
         dp_ds = np.gradient(p_w, radius * np.radians(th))
         return MeridianLoads(th, p_w, dp_ds, tau, sol.q_c, float(sol.q_c[0]), H_e, props.h_of_T(T_wall), T_wall,
-                             state.kn, source, meet, sol.separation_deg, stag.p, p_inf, q_inf)
+                             state.kn, source, meet, sol.separation_deg, stag.p, p_inf, q_inf, w)

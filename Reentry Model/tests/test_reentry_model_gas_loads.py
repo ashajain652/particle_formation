@@ -139,18 +139,19 @@ def test_a_non_positive_joined_pressure_is_floored_before_cantera(monkeypatch):
     pressure instead: the test asks only what pressure reaches Cantera."""
     state = aero_state(0.0184, v=600.0, T=226.5)     # about 30 km, Mach about 2: separated by 106 degrees
     plain = gas_loads.GasLoads().meridian(state, 0.05, 400.0)
-    real_join, real_expand = gas_loads.joined_pressure, UnreactedAir.expand
+    real_join, real_expand = gas_loads.anchored_ds_pressure, UnreactedAir.expand
     p_inf, seen = state.freestream.p, []
 
     def join(*a, **k):
-        p, meet = real_join(*a, **k)
+        # at Mach 2 the pressure is the anchored Daniels and Schwartzentruber law, the one that can reach the floor
+        p = real_join(*a, **k)
         p[-2:] = (0.0, -5.0)                          # 178 and 180 degrees
-        return p, meet
+        return p
 
     def expand(self, stag, p):
         seen.append(p)
         return real_expand(self, stag, p if p > 1e-3 * p_inf else p_inf)
-    monkeypatch.setattr(gas_loads, "joined_pressure", join)
+    monkeypatch.setattr(gas_loads, "anchored_ds_pressure", join)
     monkeypatch.setattr(UnreactedAir, "expand", expand)
     loads = gas_loads.GasLoads().meridian(state, 0.05, 400.0)
     assert 0.0 < gas_loads.P_FLOOR <= 1e-20
@@ -205,3 +206,86 @@ def test_meridian_cost_near_separation_failure():
     dt = time.time() - t0
     print(f"Kn 0.01 meridian cost {dt:.2f} s")
     assert dt < 5.0
+
+
+# ---- Daniels and Schwartzentruber's pressure below Mach 5 (blend from Mach 3.5 to 5) ----
+from reentry_model.shared import daniels_schwartzentruber as _ds  # noqa: E402
+
+LOW_RHO, LOW_T, LOW_R, LOW_TW = 0.0184, 226.5, 0.05, 900.0
+
+
+def _low_state(mach):
+    v = mach * math.sqrt(1.4 * 287.05 * LOW_T)
+    return aero_state(LOW_RHO, v=v, T=LOW_T), v
+
+
+def _low_meridian(mach):
+    state, v = _low_state(mach)
+    return gas_loads.GasLoads().meridian(state, LOW_R, LOW_TW), v
+
+
+def _pieces(loads, v):
+    """anchored D&S pressure and joined pressure on the loads' bins, for the same state."""
+    q_inf = 0.5 * LOW_RHO * v**2
+    p_inf = LOW_RHO * R_AIR * LOW_T
+    cond = _ds.condition(LOW_RHO, LOW_T, v, 2 * LOW_R, LOW_TW)
+    cp, _ = _ds.coefficients(np.radians(loads.theta_deg), cond)
+    anchored = gas_loads.anchored_ds_pressure(cp, loads.p_stag, p_inf, q_inf)
+    joined, meet = gas_loads.joined_pressure(loads.theta_deg, loads.p_stag, p_inf, q_inf, surface_flow.GAMMA_PM,
+                                             p_inf + cp * q_inf)
+    return anchored, joined, meet
+
+
+def test_ds_pressure_weight_edges():
+    assert gas_loads.DS_PRESSURE_MACH_LOW == 3.5 and gas_loads.DS_PRESSURE_MACH_HIGH == 5.0
+    for m in (0.5, 3.5):
+        assert gas_loads.ds_pressure_weight(m) == 1.0
+    assert gas_loads.ds_pressure_weight(4.25) == pytest.approx(0.5, abs=1e-12)
+    for m in (5.0, 8.0):
+        assert gas_loads.ds_pressure_weight(m) == 0.0
+
+
+def test_low_mach_pressure_is_anchored_daniels_schwartzentruber():
+    for mach in (2.0, 3.0):
+        loads, v = _low_meridian(mach)
+        anchored, _, _ = _pieces(loads, v)
+        assert loads.ds_pressure_weight == 1.0
+        assert loads.p_w == pytest.approx(anchored, rel=1e-12)
+        assert loads.p_w[0] == pytest.approx(UnreactedAir().stagnation(LOW_RHO, LOW_T, v).p, rel=1e-12)
+        assert math.isnan(loads.meet_deg)
+
+
+def test_no_step_at_90_degrees_below_mach_4():
+    for mach in (2.0, 3.0):
+        loads, _ = _low_meridian(mach)
+        sel = (loads.theta_deg >= 80) & (loads.theta_deg <= 94)
+        for field in (loads.p_w, loads.tau):
+            ratio = field[sel][1:] / field[sel][:-1]
+            assert np.max(np.abs(np.diff(ratio))) < 0.05
+
+
+def test_blend_between_mach_3_5_and_5():
+    loads, v = _low_meridian(4.25)
+    anchored, joined, _ = _pieces(loads, v)
+    assert loads.ds_pressure_weight == pytest.approx(0.5, abs=1e-12)
+    assert loads.p_w == pytest.approx(0.5 * anchored + 0.5 * joined, rel=1e-12)
+    loads, v = _low_meridian(6.0)
+    _, joined, _ = _pieces(loads, v)
+    assert loads.ds_pressure_weight == 0.0
+    assert np.array_equal(loads.p_w, joined)
+
+
+def test_pressure_continuous_across_the_blend_edges():
+    for edge, eps in ((3.5, 1e-9), (5.0, -1e-9)):
+        a, _ = _low_meridian(edge)
+        b, _ = _low_meridian(edge + eps)
+        assert a.p_w == pytest.approx(b.p_w, rel=1e-6)
+
+
+def test_subsonic_states():
+    for mach in (0.5, 0.8):
+        loads, v = _low_meridian(mach)
+        for name in ("p_w", "dp_ds", "tau", "q_c"):
+            assert np.all(np.isfinite(getattr(loads, name))), name
+        assert math.isfinite(loads.separation_deg) and loads.separation_deg < 180.0
+        assert loads.p_w[0] == pytest.approx(UnreactedAir().stagnation(LOW_RHO, LOW_T, v).p, rel=1e-12)
