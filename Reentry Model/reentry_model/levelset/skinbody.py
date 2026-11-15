@@ -526,10 +526,12 @@ class LevelSetSkinBody(StepEnd):
     def __setstate__(self, state):
         """Unpickling: a body from before plan 03b Task 5 holds `mode_settings` (the retired modes', dropped) and has no
         division and no carry: `advance` then adopts it (`_adopt`). So too a body whose division predates its base level's
-        ownership (Task 5's fix round 1), which `_adopt` divides afresh."""
+        ownership (Task 5's fix round 1) or its columns' first moments (Task 6's ruling T6-b), which `_adopt` divides
+        afresh."""
         state = {k: v for k, v in state.items() if k != "mode_settings"}
         self.__dict__.update(state)
-        if "division" not in state or getattr(state["division"], "base_owner", None) is None:
+        if "division" not in state or getattr(state["division"], "base_owner", None) is None or \
+                getattr(state["division"], "moment", None) is None:
             self.division = None
         if "carry" not in state:
             self.carry = np.zeros(self.skins.n)

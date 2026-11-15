@@ -34,7 +34,8 @@ division of the layer (`division.divide`), which the ownership above gives at ev
 
 Topology. `split` divides a marker above twice the target area into two half a target spacing apart along the longest
 direction of the part of phi it owns (`axis`), each with the same profile and half the mass and area; `merge` joins
-markers closer than a third of the target spacing, their skins mixed by the hand-over rule (`Skins.combine`);
+markers closer than a third of the target spacing, their skins combined by depth (`Skins.combine(..., by="depth")`;
+design 21.5, the controller's ruling T6-c: metal keeps its depth when its owner changes);
 `trapped_markers` finds the markers with no zero contour of phi within half a cell, and `release` removes markers, each
 giving its skin to the nearest marker that stays and may own its part of phi (the same-side rule, and given the mesh and
 phi the same-piece rule; plan 03b Task 6), by depth (`Skins.combine(..., by="depth")`; plan 03b, planning ruling 6: the
@@ -656,8 +657,10 @@ class Markers:
     def merge(self, target_spacing):
         """Markers closer than MERGE_FRACTION of `target_spacing` [m] merge in pairs, the closest first, each marker in
         at most one pair per call: the pair's first keeps the area-weighted position, normal and curvatures and the
-        summed area; their skins are mixed by the hand-over rule (`Skins.combine`) and the second leaves. The caller
-        snaps and tessellates. Returns the number of merges."""
+        summed area; their skins are combined by depth (`Skins.combine(..., by="depth")`: the second's metal joins the
+        first's cells at the depths it held, design 21.5 and the controller's ruling T6-c; by the hand-over rule's
+        relative mass depth before) and the second leaves. The caller snaps and tessellates. Returns the number of
+        merges."""
         pairs = cKDTree(self.x).query_pairs(MERGE_FRACTION * target_spacing, output_type="ndarray")
         if not len(pairs):
             return 0
@@ -682,7 +685,7 @@ class Markers:
         self.x_tess[keep], self.normal_tess[keep] = self.x[keep], self.normal[keep]
         self.area[keep] = A
         if self.skins is not None:
-            self.skins.combine(self.skin_index[keep], self.skin_index[gone])
+            self.skins.combine(self.skin_index[keep], self.skin_index[gone], by="depth")
         self._remove(gone)
         self.merges += len(keep)
         return len(keep)

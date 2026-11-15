@@ -80,6 +80,14 @@ of the base each marker owns, each triangle's foot's shares of the triangle's ow
 marker owning its centroid), so that the group of beta beneath a skin is its own column's base, found once per division
 (`skinbody.LevelSetSkinBody._beta_owners` reads it).
 
+The columns' centroids (plan 03b Task 6, the controller's ruling T6-b, amending planning ruling 5). The sideways
+conductance between two columns' cells divides by the distance between the columns' centroids over the cells' shared
+depth span, so the division keeps each column's first moment at each level (`Division.moment`, `Division.centroid`): each
+level triangle's share at the triangle's centroid on the level surface (the share's own centroid lies within the
+triangle, a mesh cell across; plan 03b Task 6 measured what this leaves against sampled centroids), a thin cell's volume
+at the cell's centroid, and the piece's factor applied as to the areas. Linear between the levels as the areas are, the
+moment's integral over a depth span over the area's is the column's centroid there.
+
 Numbers here are numerical settings; no physics."""
 from dataclasses import dataclass
 
@@ -127,11 +135,21 @@ class Division:
     base_patch_area: np.ndarray = None  # (Q,) each such patch's area [m2]
     base_owner: object = None       # (n, Q) csr: the area [m2] of each such patch each marker owns, by the plain area
                                     # (module docstring: the base's ownership; not the piece's factor)
+    moment: np.ndarray = None       # (n, B + 1, 3) each column's first moment at each level [m3]: `area` times the
+                                    # centroid of its part of the level surface (module docstring; plan 03b Task 6, the
+                                    # controller's ruling T6-b), its piece's factor applied as to `area`
 
     @property
     def base(self):
         """Each column's base [m2], its volume per unit depth at H (n,)."""
         return self.area[:, -1]
+
+    @property
+    def centroid(self):
+        """Each column's centroid at each level [m] (n, B + 1, 3), the first moment over the cross-section; NaN at a
+        level where the column has none (beyond a pinch)."""
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(self.area[..., None] > 0.0, self.moment / self.area[..., None], np.nan)
 
     def cross_section(self, z):
         """Each column's cross-section, its volume per unit depth [m2], at depths z [m] below phi, z (n, ...) (or one
@@ -209,6 +227,7 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
     if size is None:
         size = OWN_SHARE * np.sqrt(top.area.sum() / max(n, 1))
     area = np.zeros((n, levels + 1))
+    moment = np.zeros((n, levels + 1, 3))                     # each column's first moment at each level (docstring)
     found = []
     base_rows, base_cols, base_vals = [], [], []               # the base level's ownership by the plain area
     base_cell, base_patch_area = np.zeros(0, dtype=np.int64), np.zeros(0)
@@ -226,7 +245,8 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
         own = np.where(thin[tri_cell], 0.0, tri_area / slope[tri_cell])       # each triangle's measure (docstring)
         tn = P.normal[P.tri_patch]
         tri_piece = label[tri_cell]
-        rows, vals = [], []
+        tri_centroid = P.tris.mean(axis=1)                    # where each level triangle's share lies (docstring)
+        rows, vals, moms = [], [], []
         for p, mq in enumerate(members):
             tq = np.flatnonzero(tri_piece == p)
             if not len(tq) or not len(mq):
@@ -246,12 +266,14 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
                 r, c = np.concatenate([r, o[mine]]), np.concatenate([c, flat[mine]])
                 share = np.concatenate([share, np.ones(int(mine.sum()))])
                 v = np.concatenate([v, own[tq[flat[mine]]]])
-            rows.append(mq[r]), vals.append(v)
+            rows.append(mq[r]), vals.append(v), moms.append(v[:, None] * tri_centroid[tq[c]])
             if k == levels:                                   # the base's ownership, by the plain area (docstring)
                 base_rows.append(mq[r]), base_cols.append(P.tri_patch[tq[c]]), base_vals.append(share * tri_area[tq[c]])
             found.append((np.full(len(bi), k), mq[bi], mq[bj], bl))
         if rows:
-            area[:, k] = np.bincount(np.concatenate(rows), np.concatenate(vals), minlength=n)
+            at, mom = np.concatenate(rows), np.concatenate(moms)
+            area[:, k] = np.bincount(at, np.concatenate(vals), minlength=n)
+            moment[:, k] = np.stack([np.bincount(at, mom[:, c], minlength=n) for c in range(3)], axis=1)
         if k == levels:
             base_cell, base_patch_area = P.cell.copy(), P.area.copy()
 
@@ -267,8 +289,12 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
         s = np.clip(-fc[mine], 0.0, depth) / dz
         kk = np.minimum(np.floor(s).astype(np.int64), levels - 1)
         rows, V = mq[o[mine]], exact[cells[mine]]
-        np.add.at(area, (rows, kk), V * (1.0 - (s - kk)) / w[kk])
-        np.add.at(area, (rows, kk + 1), V * (s - kk) / w[kk + 1])
+        at = mesh.points[T[mine]].mean(axis=1)                # the cell's centroid, where its volume lies
+        lower, upper = V * (1.0 - (s - kk)) / w[kk], V * (s - kk) / w[kk + 1]
+        np.add.at(area, (rows, kk), lower)
+        np.add.at(area, (rows, kk + 1), upper)
+        np.add.at(moment, (rows, kk), lower[:, None] * at)
+        np.add.at(moment, (rows, kk + 1), upper[:, None] * at)
 
     # the shared boundaries, at every level, and the pairs whose normals oppose that meet face to face (docstring)
     lev, bi, bj, bl = (np.concatenate(v) for v in zip(*found)) if found else (np.zeros(0, dtype=np.int64),) * 4
@@ -305,10 +331,11 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
     columns = np.bincount(piece[counted], (area @ w)[counted], minlength=n_pieces)
     with np.errstate(divide="ignore", invalid="ignore"):
         factor = np.where(columns > 0.0, layer_volume / columns, np.where(layer_volume > 0.0, np.inf, 1.0))
-    area = area * np.where(counted, factor[np.maximum(piece, 0)] if n_pieces else 1.0, 1.0)[:, None]
+    scale = np.where(counted, factor[np.maximum(piece, 0)] if n_pieces else 1.0, 1.0)
+    area, moment = area * scale[:, None], moment * scale[:, None, None]
     cat = lambda parts, dtype: np.concatenate(parts) if parts else np.zeros(0, dtype=dtype)
     base_owner = sp.csr_matrix((cat(base_vals, float), (cat(base_rows, np.int64), cat(base_cols, np.int64))),
                                shape=(n, len(base_cell)))
     return Division(z, area, area @ w, i, j, length, _boundary_normals(x, normal, i, j),
                     np.einsum("ek,ek->e", normal[i], normal[j]) < OPPOSED_NORMALS, piece, factor, base_cell,
-                    base_patch_area, base_owner)
+                    base_patch_area, base_owner, moment)

@@ -421,6 +421,55 @@ def test_split_and_merge_conserve_mass_and_enthalpy():
     assert mk.trapped == 0
 
 
+MERGE_MUSH = (885.0, 905.0)   # K: the merge test's columns, within LinearMeltMaterial's mushy range (specific volume
+                              # linear in enthalpy, so mixing keeps volume; density varying with depth and column)
+
+
+def test_a_merge_keeps_each_depth_s_metal_at_its_depth():
+    """Plan 03b Task 6 (the controller's ruling T6-c; design 21.5: metal keeps its depth when its owner changes): two
+    markers 0.2 mm apart, each with a full column of a flat measured profile (cross-sections 3 and 1 mm2, the skin depth
+    deep) of mushy metal whose temperature, and so density, varies with depth differently in each (MERGE_MUSH), moving
+    differently, merge (`Markers.merge`, closer than a third of the spacing): the merged column's mass, enthalpy and
+    momentum are the pair's to 1e-14, every cell keeps its depth span (1e-12 of the depth) and holds the pair's metal from
+    that span (1e-12 of its mass). (By the hand-over rule's relative mass depth, the rule before, the denser column's
+    metal shifts in depth against the lighter's.)"""
+    mat = LinearMeltMaterial()
+    depth = SETTINGS.depth
+    levels = np.linspace(0.0, depth, 25)
+    area = np.array([3e-6, 1e-6])
+    sk = Skins(mat, area, np.zeros((2, 2)), SETTINGS)
+    sk.set_profile(levels, area[:, None] * np.ones(len(levels))[None, :])
+    lo, hi = MERGE_MUSH
+    sk.fill(sk.density(np.full(2, hi)) * sk.column_volume(), hi)
+    sk.regrid()
+    dz = sk.dz()
+    z = np.concatenate([np.zeros((2, 1)), np.cumsum(dz, axis=1)], axis=1)
+    mid = 0.5 * (z[:, 1:] + z[:, :-1])
+    T = np.where(sk.valid, hi - (hi - lo) * (mid / depth) ** np.array([[0.5], [2.0]]), lo)
+    span = np.diff(sk._volume_at(z), axis=1)                     # each cell's span's volume, kept full at its T
+    m = np.where(sk.valid, sk.density(T) * span, 0.0)
+    U = np.zeros(m.shape + (3,))
+    U[0, :, 0], U[1, :, 1] = 0.3, -0.7
+    sk.install(m, m * sk.props.enthalpy(T), sk.count, U)
+    assert np.array_equal(sk.count[0], sk.count[1]) and np.abs(z[0] - z[1]).max() <= 1e-15    # the same cells in depth
+    K = int(sk.count[0])
+    held, spans = sk.m[:, :K].sum(axis=0), np.cumsum(sk.dz(), axis=1)[0, :K]
+    M0, E0, P0 = _books(sk)
+    x = np.array([[0.0, 0.0, 0.0], [0.2e-3, 0.0, 0.0]])
+    mk = Markers(x, np.tile([0.0, 0.0, 1.0], (2, 1)), area, np.zeros((2, 2)), np.arange(2), np.full(2, -1), 1e-3,
+                 skins=sk)
+    assert mk.merge(1e-3) == 1 and mk.n == 1 and sk.n == 1
+    M1, E1, P1 = _books(sk)
+    depth_miss = float(np.abs(np.cumsum(sk.dz(), axis=1)[0, :K] - spans).max() / depth)
+    level_miss = float(np.abs(sk.m[0, :K] - held).max() / sk.m[0].sum())
+    print("merge by depth: {} cells; books mass {:.1e} enthalpy {:.1e}; cell depths {:.1e} of H, cell metal {:.1e} of the "
+          "column".format(sk.count[0], M1 / M0 - 1, E1 / E0 - 1, depth_miss, level_miss))
+    assert sk.count[0] == K
+    assert M1 == pytest.approx(M0, rel=1e-14) and E1 == pytest.approx(E0, rel=1e-14)
+    assert np.abs(P1 - P0).max() <= 1e-14 * np.abs(P0).max()
+    assert depth_miss <= 1e-12 and level_miss <= 1e-12
+
+
 def test_the_hand_over_rule_mixes_layers_at_the_same_relative_depth():
     mat = LinearMeltMaterial()
     sk = Skins(mat, np.array([4e-6, 2e-6]), np.zeros((2, 2)), SETTINGS)

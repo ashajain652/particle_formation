@@ -69,7 +69,9 @@ def _seeded_box(lo, hi, base):
 def test_a_flat_slab_divides_into_prisms():
     """A flat face (phi = y - OFF, the metal below it filling the mesh) with markers on a 2 mm grid: every interior
     column is a 2 mm square prism, each pair of interior neighbours shares a 2 mm boundary at every level, and the
-    columns tile the layer exactly."""
+    columns tile the layer exactly. Each interior column's centroid at each level (plan 03b Task 6, the controller's
+    ruling T6-b: `Division.centroid`, each level triangle's share at the triangle's centroid) lies on that level, to
+    1e-12 m, and beneath its marker, to CENTROID_SLACK."""
     base = BoxBase((-6e-3, -2.5e-3, -6e-3), 0.5e-3, (24, 6, 24))
     mesh = build(base)
     phi = mesh.points[:, 1] - OFF
@@ -93,6 +95,16 @@ def test_a_flat_slab_divides_into_prisms():
     assert checked == 24
     assert np.abs(d.factor - 1.0).max() <= 1e-12
     assert not d.opposed.any()
+    c = d.centroid[inner]
+    off_level = np.abs(c[..., 1] - (OFF - d.levels)[None, :]).max()
+    sideways = np.linalg.norm(c[..., [0, 2]] - x[inner][:, None, [0, 2]], axis=2).max()
+    print("flat slab: interior centroids {:.1e} m off their levels, {:.4f} mm from beneath their markers".format(
+        off_level, sideways * 1e3))
+    assert off_level <= 1e-12 and sideways <= CENTROID_SLACK
+
+
+CENTROID_SLACK = 0.05e-3   # m: a tenth of the slab mesh's 0.5 mm cells (each triangle's share is placed at its centroid;
+                           # under 5e-8 m measured once here, the squares' cut triangles placed symmetrically)
 
 
 def test_the_base_level_s_ownership_divides_beta_s_patches_whole():

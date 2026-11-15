@@ -53,7 +53,9 @@ fluxes take the same lengths, so it predicts the transport it precedes. The arri
 the flowing depths), which puts metal at the depths it left where the two columns' flowing layers are equally deep. With
 lengths and cross-sections constant in depth this is the transport of a sheet of the same faces at one length at every
 depth (the constructor's) to round-off. `Sheet.side_faces` gives the same boundaries for the skins' sideways conduction
-(`skin.SideFaces`), which the body passes to `Skins.conduct` (plan 03b Task 6).
+(`skin.SideFaces`), which the body passes to `Skins.conduct` (plan 03b Task 6), with the division's cross-sections and
+first moments for the conductance's centroids (the controller's ruling T6-b); the runoff's weight w and lengths stay on
+the markers' distance, since they act on the surface's own quantities.
 
 Every number here is a numerical setting of the skyscrapers' rules (named with its source); the physics is the shared
 package's."""
@@ -115,8 +117,10 @@ class Sheet:
     ends `i`, `j` (E,) (rows, i < j as markers), their vectors `f` (E, 3) [m] from i toward j, their two-point weights
     `w` (E,), the skins' top areas `area` (n,) [m2] and each row's marker `marker` (n,).
     From a division (`from_division`, plan 03b Task 4), the faces are depth-resolved: each face's length at every level
-    `length_z` (E, B + 1) [m], the levels `levels` (B + 1,) [m] and its unit normal `face_normal` (E, 3); None for faces
-    given to the constructor directly, each of one length at every depth."""
+    `length_z` (E, B + 1) [m], the levels `levels` (B + 1,) [m] and its unit normal `face_normal` (E, 3), and every
+    column's cross-section `section` (n, B + 1) [m2] and first moment `moment` (n, B + 1, 3) [m3] at the levels (the
+    division's, for the sideways heat's centroids, plan 03b Task 6); None for faces given to the constructor directly,
+    each of one length at every depth."""
     normal: np.ndarray
     x: np.ndarray
     i: np.ndarray
@@ -128,6 +132,8 @@ class Sheet:
     length_z: np.ndarray = None
     levels: np.ndarray = None
     face_normal: np.ndarray = None
+    section: np.ndarray = None
+    moment: np.ndarray = None
 
     @classmethod
     def from_division(cls, division, markers, skins=None):
@@ -147,16 +153,19 @@ class Sheet:
         length = np.array(division.length, dtype=float)
         unit = np.array(division.normal, dtype=float)
         d = np.linalg.norm(x[j] - x[i], axis=1)
+        moment = None if getattr(division, "moment", None) is None else np.array(division.moment, dtype=float)[marker]
         return cls(normal, x, i, j, length[:, :1] * unit, length[:, 0] / d, skins.area, marker, length,
-                   np.array(division.levels, dtype=float), unit)
+                   np.array(division.levels, dtype=float), unit, np.array(division.area, dtype=float)[marker], moment)
 
     def side_faces(self):
         """The depth-resolved faces as the skins' sideways conduction takes them (`skin.SideFaces`, in the skins' row
-        order, the distance |x_j - x_i| between the faces' markers)."""
+        order: the distance |x_j - x_i| between the faces' markers and every column's cross-section and first moment,
+        whose ratio gives the conductance's centroids, plan 03b Task 6)."""
         if self.length_z is None:
             raise ValueError("the sheet's faces have no depths: build it from a division (Sheet.from_division)")
         return SideFaces(self.i, self.j, self.length_z, self.levels, np.linalg.norm(self.x[self.j] - self.x[self.i],
-                                                                                    axis=1))
+                                                                                    axis=1),
+                         None if self.moment is None else self.section, self.moment)
 
     def depth_faces(self, keep, z):
         """For the directed faces `keep` (D,) (`directed`'s order) and depths z (D, K) [m] of their senders' cells:

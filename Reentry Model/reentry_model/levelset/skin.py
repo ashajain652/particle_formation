@@ -58,14 +58,21 @@ is rigid with flowing metal between it and the floor. `momentum_step` advances e
 each component apart, with the drag between neighbouring cells through the cross-section at their interface's depth,
 each flowing cell's viscosity at its own shear rate, the anchored cells at rest and a crust one unknown.
 
-Sideways conduction (plan 03b Task 4, design 21.5, planning ruling 5). Neighbouring columns share boundaries in the layer
-(`division.Division`'s i, j and length, `SideFaces`): a point on a shared boundary lies at the same depth below phi on
-either side, so the cells that meet across it are those at that depth in each column. Cell k of column i and cell l of
-column j exchange heat through the conductance G_kl = Lambda_kl k_h / |x_j - x_i|, Lambda_kl the shared length
-integrated over the overlap of the two cells' depth spans (the length piecewise linear between the levels, and held at
-its last level's value below H, where only an overfull column's cells reach, as `cell_section` holds the end's
-cross-section), k_h the harmonic mean 2 k_k k_l / (k_k + k_l) of their conductivities and x the markers' positions: a
-two-point flux, like runoff's weight. `conduct(..., side=SideFaces)` puts these fluxes in the same backward-Euler step
+Sideways conduction (plan 03b Task 4, design 21.5, planning ruling 5 as the controller's ruling T6-b of Task 6 amends
+it). Neighbouring columns share boundaries in the layer (`division.Division`'s i, j and length, `SideFaces`): a point on
+a shared boundary lies at the same depth below phi on either side, so the cells that meet across it are those at that
+depth in each column. Cell k of column i and cell l of column j exchange heat through the conductance
+G_kl = Lambda_kl k_h / d_kl, Lambda_kl the shared length integrated over the overlap of the two cells' depth spans (the
+length piecewise linear between the levels, and held at its last level's value below H, where only an overfull column's
+cells reach, as `cell_section` holds the end's cross-section), k_h the harmonic mean 2 k_k k_l / (k_k + k_l) of their
+conductivities and d_kl the distance between the two columns' centroids over that overlap (each column's first moment
+integrated over it over its cross-section's, both linear between the levels: `SideFaces.section` and `moment`, the
+division's), a two-point flux between the parts of the two columns that meet there. (Task 6: with the markers' distance
+|x_j - x_i| instead, the stage 3 box's columns across an edge, whose centroids at 0.5 mm depth are 0.56 of their
+markers' distance apart, conducted about half as well as their geometry does, and the probe column beside the edge, 0.60
+to 1.84 times its neighbours' along the face, lost 9.3 % of its rise against the 3D solve's.) Where a column has no
+cross-section over the overlap (beyond a pinch, where only an overfull column's cells reach), and for faces given with
+no centroids, the markers' distance `SideFaces.distance` stands instead. `conduct(..., side=SideFaces)` puts these fluxes in the same backward-Euler step
 as the depth conduction: one Newton iteration over every column's cells together, its Jacobian (the columns'
 tridiagonal blocks and the sideways couplings, with their dk/dT terms) solved by restarted GMRES preconditioned by the
 columns' own tridiagonal solves (`_Sideways.solve`). Why that solver (plan 03b Task 4, design 21.14 leaves it to the
@@ -180,12 +187,14 @@ class BaseExchange:
     cells: np.ndarray
 
 
-SideFaces = namedtuple("SideFaces", "i j length levels distance")
+SideFaces = namedtuple("SideFaces", "i j length levels distance section moment", defaults=(None, None))
 SideFaces.__doc__ = """The boundaries neighbouring columns share in the layer, for sideways conduction (module docstring;
 plan 03b Task 4): the two columns of each boundary `i`, `j` (E,) (skins' rows), its length at each level `length`
 (E, B + 1) [m], the levels' depths `levels` (B + 1,) [m] from 0 to H (a `division.Division`'s, in the skins' row
-order: `runoff.Sheet.side_faces`), and the distance between the two columns' markers `distance` (E,) [m],
-|x_j - x_i|."""
+order: `runoff.Sheet.side_faces`), the distance between the two columns' markers `distance` (E,) [m], |x_j - x_i|,
+and (plan 03b Task 6, the controller's ruling T6-b) every column's cross-section `section` (n, B + 1) [m2] and first
+moment `moment` (n, B + 1, 3) [m3] at the levels, in the skins' rows (the division's `area` and `moment`), whose
+ratio over a depth span is the column's centroid there; without them the markers' distance stands."""
 
 
 def level_values(levels, values, z):
@@ -216,12 +225,12 @@ def level_integral(levels, values, z):
 
 
 class _Sideways:
-    """The sideways conduction of one heat sub-step (module docstring; planning ruling 5), between the cells of `side`'s
-    columns as they lie at the sub-step's start: `z` (n, K + 1) each column's cell boundaries [m] below its top (held at
-    its bottom beyond its count). For every pair of cells that overlap in depth across a shared boundary, the flat
-    indices `a`, `b` of the cells (in i's and j's columns), their columns `ci`, `cj` and `lam` [m], the shared length
-    integrated over the overlap over the markers' distance; with the Jacobian's sparsity pattern of the whole
-    sub-step."""
+    """The sideways conduction of one heat sub-step (module docstring; planning ruling 5, amended by ruling T6-b), between
+    the cells of `side`'s columns as they lie at the sub-step's start: `z` (n, K + 1) each column's cell boundaries [m]
+    below its top (held at its bottom beyond its count). For every pair of cells that overlap in depth across a shared
+    boundary, the flat indices `a`, `b` of the cells (in i's and j's columns), their columns `ci`, `cj` and `lam` [m],
+    the shared length integrated over the overlap over the distance between the columns' centroids there
+    (`_distances`); with the Jacobian's sparsity pattern of the whole sub-step."""
 
     def __init__(self, side, z, count):
         n, K1 = z.shape
@@ -238,6 +247,10 @@ class _Sideways:
         if not (np.all(np.diff(levels) > 0.0) and np.all(np.isfinite(length) & (length >= 0.0))
                 and np.all(np.isfinite(distance) & (distance > 0.0))):
             raise ValueError("side faces need rising levels, finite non-negative lengths and positive distances")
+        if side.section is not None and (np.shape(side.section) != (n, len(levels))
+                                         or np.shape(side.moment) != (n, len(levels), 3)):
+            raise ValueError("side faces' centroids need every column's cross-section (n, B + 1) and first moment "
+                             "(n, B + 1, 3) at the levels")
         # the pieces both columns' cell boundaries cut the depth into: a piece starting at the p-th boundary in the
         # merged order lies in the cell of i whose top is the last of i's boundaries up to it (likewise for j)
         s = np.concatenate([z[i], z[j]], axis=1)
@@ -246,7 +259,7 @@ class _Sideways:
         from_i = order < K1
         ki, kj = np.cumsum(from_i, axis=1)[:, :-1] - 1, np.cumsum(~from_i, axis=1)[:, :-1] - 1
         W = level_integral(levels, length, s)
-        lam = np.diff(W, axis=1) / distance[:, None]
+        lam = np.diff(W, axis=1) / self._distances(side, i, j, levels, s, distance)
         keep = ((s[:, 1:] > s[:, :-1]) & (lam > 0.0) & (ki >= 0) & (kj >= 0)
                 & (ki < count[i][:, None]) & (kj < count[j][:, None]))
         e, p = np.nonzero(keep)
@@ -258,6 +271,27 @@ class _Sideways:
                                      self.a, self.a, self.b, self.b])
         self._cols = np.concatenate([idx.ravel(), idx[:, :-1].ravel(), idx[:, 1:].ravel(),
                                      self.a, self.b, self.a, self.b])
+
+    @staticmethod
+    def _distances(side, i, j, levels, s, distance):
+        """Each overlap's distance [m] (E, P), the pieces between consecutive depths s (E, P + 1) of the boundaries
+        between columns i and j (E,): the distance between the two columns' centroids over the piece (module docstring),
+        or the markers' `distance` (E,) where either column has no cross-section over it, or `side` gives none."""
+        out = np.broadcast_to(distance[:, None], (len(i), s.shape[1] - 1)).copy()
+        if side.section is None or side.moment is None or not len(i):
+            return out
+        section = np.asarray(side.section, dtype=float)
+        moment = np.asarray(side.moment, dtype=float)
+        centre = []
+        for c in (i, j):
+            A = np.diff(level_integral(levels, section[c], s), axis=1)
+            M = np.stack([np.diff(level_integral(levels, moment[c][..., x], s), axis=1) for x in range(3)], axis=-1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                centre.append(np.where((A > 0.0)[..., None], M / A[..., None], np.nan))
+        d = np.linalg.norm(centre[1] - centre[0], axis=-1)
+        ok = np.isfinite(d) & (d > 0.0)
+        out[ok] = d[ok]
+        return out
 
     def fluxes(self, T, k, kp):
         """At the cells' temperatures T, conductivities k and their slopes kp (n, K): each pair's flux F [W] from cell
@@ -1056,7 +1090,10 @@ class Skins:
         cross-section), and the gone metal deeper than the keeper's bottom joins it as new cells below, the gone cells'
         parts in their order. The keeper's cell boundaries are kept: with both columns exactly full and their profiles
         summed, every cell spans the depths it spanned. Shares below END_SLACK of a cell are dropped and the rest scaled
-        to sum to one, so mass, enthalpy and momentum add to round-off."""
+        to sum to one, so mass, enthalpy and momentum add to round-off; a gone cell whose every share is so dropped (a
+        sliver at the round-off of the volumes the overlaps are reckoned from: plan 03b Task 6 found one of 2e-27 m3 in a
+        column of 7e-10 m3, whose shares were 0/0) joins whole the keeper's cell at its depth, or the metal below the
+        keeper's bottom."""
         keep = np.asarray(keep, dtype=np.int64).reshape(-1)
         gone = np.asarray(gone, dtype=np.int64).reshape(-1)
         both = np.concatenate([keep, gone])
@@ -1145,6 +1182,10 @@ class Skins:
             share = np.column_stack([np.maximum(hi - lo, 0.0), np.maximum(vb[1:] - np.maximum(vb[:-1], Va[-1]), 0.0)])
             share /= vol[b, :kb, None]
             share[share < END_SLACK] = 0.0
+            sliver = np.flatnonzero(share.sum(axis=1) <= 0.0)             # wholly at the volumes' round-off (docstring)
+            if len(sliver):
+                at = np.clip(np.searchsorted(Va, 0.5 * (vb[sliver] + vb[sliver + 1]), side="right") - 1, 0, ka)
+                share[sliver, at] = 1.0
             share /= share.sum(axis=1, keepdims=True)                      # gone cell c's share in each keeper cell,
             mg, Hg, Ug = self.m[b, :kb, None] * share, self.H[b, :kb, None] * share, self.U[b, :kb]    # and beyond
             m += mg[:, :ka].sum(axis=0)

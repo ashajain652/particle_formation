@@ -1174,14 +1174,14 @@ EDGE_PROBE = (0.5e-3, 0.6e-3)   # m: the probe 0.5 mm from the heated face's edg
                                 # below that face (at the edge's middle, z = BOX_OFF)
 REF_FLOOR = 0.1e-3              # m: the reference's cells near that edge (0.0875 mm, the box mesh's level below it)
 REF_STEPS = 100                 # the reference's backward-Euler steps over BOX_TIME
-EDGE_RTOL = 0.05                # the probe's temperature rise against the reference's, relative
-EDGE_FAILS = ("plan 03b Task 6, measured once: the probe lies in an unheated-face column wrapping the edge (its marker's "
-              "normal +y), whose cell at the probe's depth is the mean over its level surface, 0.50 to 1.98 mm from the "
-              "heated face; its rise is 25.73 K with the sideways heat (16 % under the reference's 30.71 K at the probe, "
-              "9.3 % under the reference's 28.37 K mean over the column's own region) and 31.12 K without it (9.7 % over "
-              "that mean); across the edge the columns' centroids at 0.5 mm depth are 0.56 of their markers' distance "
-              "apart, along a face 0.60 to 1.84 of it (planning ruling 5 divides by the markers' distance); for the "
-              "controller's ruling")
+EDGE_RTOL = 0.05                # the probe column's temperature rise against the reference's over that column, relative
+REGION_STEP = 0.02e-3           # m: the samples of a column's part of a level surface beside the edge (`_column_region`)
+REGION_REACH = (4.99e-3, 4.0e-3)   # m: they reach this far along the edge from its middle and from the edge itself
+EDGE_FAILS = ("plan 03b Task 6 with the controller's ruling T6-b, measured once: the probe's column (an unheated-face "
+              "column wrapping the edge, its marker's normal +y; 0.50 to 1.98 mm from the heated face at the probe's "
+              "0.496 mm depth) rises 26.30 K with the conductance over the columns' centroids' distance, 7.3 % under the "
+              "reference's 28.37 K mean over the column's part of the layer there (25.73 K, 9.3 % under, over the markers' "
+              "distance); the reference's rise at the probe itself is 30.71 K; EDGE_RTOL kept at 5 %")
 
 
 def _box_phi0():
@@ -1214,11 +1214,35 @@ def _layer_temperature(body, p):
     return float(np.interp(-val[0], np.cumsum(dz) - 0.5 * dz, sk.T()[row, :sk.count[row]])), m, float(-val[0])
 
 
-def _edge_reference(phi0, probe):
+def _column_region(body, m, depth):
+    """Points sampling marker m's column's part of the level surface `depth` [m] below the box's surface beside the
+    heated face's +y edge (the controller's ruling T6-b of plan 03b Task 6): the two planes of that level surface, under
+    the heated face (x = lo + depth) and under the +y face (y = hi - depth), REGION_STEP apart, within REGION_REACH of
+    the edge's middle along it and of the edge across it; each sample's foot on its face (along that face's normal)
+    owned by the nearest marker the same-side rule allows, as the division divides the layer. Returns the column's
+    samples (k, 3) [m] (equal areas)."""
+    from scipy.spatial import cKDTree
+    from cases import box_corners
+    from reentry_model.levelset import markers as M
+    lo, hi = box_corners()
+    along = np.arange(-REGION_REACH[0], REGION_REACH[0], REGION_STEP) + 0.5 * (lo[2] + hi[2])
+    across = np.arange(0.0, REGION_REACH[1], REGION_STEP)
+    Z, U = (g.ravel() for g in np.meshgrid(along, across, indexing="ij"))
+    heated = np.column_stack([np.full(Z.size, lo[0] + depth), hi[1] - depth - U, Z])
+    unheated = np.column_stack([lo[0] + depth + U, np.full(Z.size, hi[1] - depth), Z])
+    feet_h, feet_u = heated.copy(), unheated.copy()
+    feet_h[:, 0], feet_u[:, 1] = lo[0], hi[1]
+    points, feet = np.concatenate([heated, unheated]), np.concatenate([feet_h, feet_u])
+    n = np.concatenate([np.tile([-1.0, 0.0, 0.0], (len(heated), 1)), np.tile([0.0, 1.0, 0.0], (len(unheated), 1))])
+    owner = M._nearest(cKDTree(body.markers.x), feet, 1, body.markers.normal, n)[1][:, 0]
+    return points[owner == m]
+
+
+def _edge_reference(phi0):
     """CutThermal alone on the box (its phi0 exact on the nodes) at BOX_T0, BOX_FLUX on its -x face (`_box_flux`) for
     BOX_TIME in REF_STEPS steps, on the box's base mesh refined to REF_FLOOR within 1 mm of the heated face's +y edge, to
     0.175 mm within 2 mm of it, to 0.35 mm within 4 mm of the heated face and 0.7 mm elsewhere in the metal. Returns
-    (the temperature [K] at `probe`, the mesh's cells)."""
+    (the mesh, its nodal temperatures [K])."""
     from cases import box_corners
     from reentry_model.levelset.boxmesh import build
     from reentry_model.levelset.cutcell import patches
@@ -1242,18 +1266,21 @@ def _edge_reference(phi0, probe):
     q = _box_flux(solver.P)
     for _ in range(REF_STEPS):
         solver.step(BOX_TIME / REF_STEPS, q)
-    return float(interpolate(mesh, solver.T, np.asarray(probe, float)[None])[0]), len(mesh.tets)
+    return mesh, solver.T
 
 
 @pytest.mark.reference
 @pytest.mark.xfail(strict=True, reason=EDGE_FAILS)
 def test_heat_passes_a_box_edge_between_the_faces_columns():
-    """Plan 03b Task 6 (design 21.5 and planning ruling 5: the skins conduct sideways across the division's shared
-    boundaries): the stage 3 box (8 x 10 x 10 mm, its default meshes, development skins) at 700 K, 1 MW/m2 on its -x face
-    as a beam along +x puts it (`_box_flux`) for one 0.5 s step, nothing melting. At the probe 0.6 mm below the unheated
-    +y face, 0.5 mm along it from the heated face's edge (EDGE_PROBE), the body's temperature rise (its column's cell at
-    the probe's depth, `_layer_temperature`) is within EDGE_RTOL of the reference's, CutThermal alone on the same box
-    with 0.1 mm cells near that edge (`_edge_reference`); the books close."""
+    """Plan 03b Task 6 (design 21.5 and planning ruling 5 as the controller's ruling T6-b amends it: the skins conduct
+    sideways across the division's shared boundaries, over the columns' centroids' distance): the stage 3 box (8 x 10 x
+    10 mm, its default meshes, development skins) at 700 K, 1 MW/m2 on its -x face as a beam along +x puts it
+    (`_box_flux`) for one 0.5 s step, nothing melting. At the probe 0.6 mm below the unheated +y face, 0.5 mm along it
+    from the heated face's edge (EDGE_PROBE), the body's temperature rise -- its column's cell at the probe's depth
+    (`_layer_temperature`), a mean over the column's part of the layer there -- is within EDGE_RTOL of the reference's
+    mean over that same part (`_column_region`), CutThermal alone on the same box with 0.1 mm cells near that edge
+    (`_edge_reference`); the books close. The reference's rise at the probe itself is printed too (Task 6 measured
+    30.71 K there against 28.37 K over the column: the column's resolution, which this test does not judge)."""
     from cases import box_corners
     from reentry_model.levelset.cutcell import patches
     lo, hi = box_corners()
@@ -1273,15 +1300,20 @@ def test_heat_passes_a_box_edge_between_the_faces_columns():
     stepped = time.perf_counter() - started
     T_body, m, depth = _layer_temperature(body, probe)
     started = time.perf_counter()
-    T_ref, cells = _edge_reference(phi0, probe)
+    mesh, T_ref = _edge_reference(phi0)
     referenced = time.perf_counter() - started
-    rise, want = T_body - BOX_T0, T_ref - BOX_T0
+    region = _column_region(body, m, depth)
+    at_probe = float(interpolate(mesh, T_ref, probe[None])[0]) - BOX_T0
+    rise, want = T_body - BOX_T0, float(interpolate(mesh, T_ref, region).mean()) - BOX_T0
     print("box edge: built {:.0f} s, stepped {:.0f} s ({} parts, at most {} passes; heat in {:.4f} J against {:.4f} J; "
           "mismatch {:.2e} of it; residuals mass {:.1e} enthalpy {:.1e}); the probe in marker {}'s column (normal {}) at "
-          "{:.3f} mm: rise {:.3f} K against the reference's {:.3f} K ({:+.2%}; {} cells, {:.0f} s)".format(
+          "{:.3f} mm: rise {:.3f} K against the reference's {:.3f} K over the column's part ({} samples, {:.2f} to {:.2f} "
+          "mm from the heated face; {:+.2%}) and {:.3f} K at the probe ({} cells, {:.0f} s)".format(
               built, stepped, book.parts, book.passes, book.enthalpy_in, heat,
               book.interface_mismatch_J / book.enthalpy_in, book.mass_residual, book.enthalpy_residual, m,
-              np.round(body.markers.normal[m], 2), depth * 1e3, rise, want, rise / want - 1.0, cells, referenced))
+              np.round(body.markers.normal[m], 2), depth * 1e3, rise, want, len(region),
+              (region[:, 0].min() - lo[0]) * 1e3, (region[:, 0].max() - lo[0]) * 1e3, rise / want - 1.0, at_probe,
+              len(mesh.tets), referenced))
     assert np.nanmax(body.skins.T()) < body.material.T_solidus                     # nothing melting
     assert abs(book.mass_residual) <= 1e-12
     assert abs(book.enthalpy_residual) <= 1e-8

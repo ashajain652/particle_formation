@@ -793,6 +793,29 @@ def test_combining_by_depth_keeps_each_depth_s_metal():
     assert T[deep].max() > 650.0                                         # by mass the hot metal goes deeper
 
 
+def test_a_sliver_cell_combined_by_depth_joins_whole_at_its_depth():
+    """Plan 03b Task 6 (found when merges took the by-depth rule, the controller's ruling T6-c): a gone column whose
+    bottom cell holds 1e-27 kg, its volume some 1e-16 of the column's (left so by earlier cuts and combines on the test
+    slab), lies wholly at the round-off of the volumes its overlaps with the keeper's cells are reckoned from, so every
+    overlap rounded to nothing and its shares were 0/0 (NaN masses reached the property table). It joins whole the
+    keeper's cell at its depth: no floating-point warning, no NaN, and mass, enthalpy and momentum add exactly."""
+    mat = ConstMaterial()
+    flat = np.full(len(LEVELS), AREA)
+    sk = profiled(mat, np.vstack([flat, flat]))
+    edges = np.linspace(0.0, DEPTH, 61)
+    stack(sk, [(edges, 600.0), (edges, 700.0, np.tile([0.1, 0.0, 0.0], (60, 1)))])
+    m, H, U = (np.concatenate([a, np.zeros((2, 1) + a.shape[2:])], axis=1) for a in (sk.m, sk.H, sk.U))
+    m[1, 60], H[1, 60], U[1, 60] = 1e-27, 1e-27 * float(mat.enthalpy(700.0)), [0.1, 0.0, 0.0]
+    sk.install(m, H, [60, 61], U)
+    M0, E0, P0 = books(sk)
+    with np.errstate(all="raise"):
+        sk.combine([0], [1], by="depth")
+    M1, E1, P1 = books(sk)
+    assert np.all(np.isfinite(sk.m)) and np.all(np.isfinite(sk.H))
+    assert M1 == pytest.approx(M0, rel=1e-14) and E1 == pytest.approx(E0, rel=1e-14)
+    assert np.abs(P1 - P0).max() <= 1e-14 * np.abs(P0).max()
+
+
 def test_taking_metal_between_two_depths_is_exact():
     """`take_between` removes the metal between two depths of a narrowing column, splitting the two cells the depths
     cut: what it takes is the profile's volume between them at the cells' density, mass, enthalpy and momentum are
@@ -965,13 +988,19 @@ ROW_SPACING, ROW_WIDTH = 0.25e-3, 1.0e-3      # m: a row's columns' spacing and 
 def row(mat, T, spacing=ROW_SPACING, width=ROW_WIDTH, settings=None):
     """Columns in a row `spacing` apart, each a prism `spacing` by `width` through the skin depth (a constant measured
     profile), filled full in cells of equal depth at the temperatures T (n,), each sharing with the next a boundary
-    `width` long at every level. Returns the skins and their SideFaces."""
+    `width` long at every level. Returns the skins and their SideFaces, with every column's cross-section and first
+    moment (its centroid on the row's axis at every depth: the conductance's centroids, the controller's ruling T6-b of
+    plan 03b Task 6, `spacing` apart as the markers are)."""
     T = np.asarray(T, dtype=float)
     n = len(T)
-    sk = profiled(mat, np.full((n, len(LEVELS)), spacing * width), settings=settings)
+    section = np.full((n, len(LEVELS)), spacing * width)
+    sk = profiled(mat, section, settings=settings)
     sk.fill(sk.density(T) * sk.column_volume(), T)
     e = np.arange(n - 1)
-    return sk, SideFaces(e, e + 1, np.full((n - 1, len(LEVELS)), width), LEVELS, np.full(n - 1, spacing))
+    centre = np.zeros((n, len(LEVELS), 3))
+    centre[..., 0] = ((np.arange(n) + 0.5) * spacing)[:, None]
+    return sk, SideFaces(e, e + 1, np.full((n - 1, len(LEVELS)), width), LEVELS, np.full(n - 1, spacing), section,
+                         section[..., None] * centre)
 
 
 def insulated_step(x, length, x0, s, T_cold, step, images=3):
@@ -1030,7 +1059,7 @@ def test_sideways_conduction_closes_its_books():
     T0 = 600.0 + 2e4 * (box.x[:, 0] - box.x[:, 0].min())
     sk.fill(sk.density(T0) * sk.column_volume(), T0)
     sk.regrid()
-    side = SideFaces(d.i, d.j, d.length, d.levels, np.linalg.norm(box.x[d.j] - box.x[d.i], axis=1))
+    side = SideFaces(d.i, d.j, d.length, d.levels, np.linalg.norm(box.x[d.j] - box.x[d.i], axis=1), d.area, d.moment)
     q, T_amb, eps, dt = 2e6, 300.0, 0.8, 0.010
     T_b = T0 - 5.0
     for trial in (True, True, True, False):
@@ -1070,6 +1099,40 @@ def test_the_sideways_conductance_integrates_the_shared_length_over_the_overlap(
     assert book.E_side[0] == pytest.approx(expected, rel=1e-6)
     assert book.E_side[1] == -book.E_side[0]
     assert np.abs(sk.T()[1, :sk.count[1]] - hot).max() < 1e-4
+
+
+def test_the_sideways_conductance_divides_by_the_columns_centroids_over_the_overlap():
+    """The controller's ruling T6-b (plan 03b Task 6, amending planning ruling 5): two full columns of one constant
+    cross-section in equal cells, their markers 2 mm apart, sharing a boundary 2 mm long at every depth, the first's
+    centroid on its marker's axis at every depth and the second's drawing in from 2 mm to 1 mm away with depth (as
+    columns across a convex edge do); the second 100 K hotter above 0.6 mm. Over a sub-step of 1 ps the heat passed
+    sideways is the sum over the hot cells of dt 100 K k L dz over the distance between the two centroids at the cell's
+    mid-depth (both linear in depth, so the centroid over a cell is the one at its middle) to 1e-9, 1.15 times what the
+    markers' distance alone passes; with no centroids given, the markers' distance stands."""
+    mat = LinearMeltMaterial(rho_l=2800.0)
+    sk = profiled(mat, np.full((2, len(LEVELS)), AREA), settings=SkinSettings(swell=False))
+    edges = np.linspace(0.0, DEPTH, 61)
+    mid = 0.5 * (edges[1:] + edges[:-1])
+    hot = np.where(mid < 0.6e-3, 700.0, 600.0)
+    stack(sk, [(edges, 600.0), (edges, hot)])
+    away = 2e-3 - 1e-3 * LEVELS / DEPTH                            # the second's centroid's distance at each level
+    moment = np.zeros((2, len(LEVELS), 3))
+    moment[1, :, 0] = AREA * away
+    L = np.full((1, len(LEVELS)), 2e-3)
+    side = SideFaces(np.array([0]), np.array([1]), L, LEVELS, np.array([2e-3]), np.full((2, len(LEVELS)), AREA),
+                     moment)
+    dt, k = 1e-12, float(mat.k(650.0))
+    expected = dt * 100.0 * k * (2e-3 * np.diff(edges) / np.interp(mid, LEVELS, away))[mid < 0.6e-3].sum()
+    marker = dt * 100.0 * k * 2e-3 * 0.6e-3 / 2e-3
+    before = sk.state()
+    book = sk.conduct(dt, 0.0, 0.0, 0.0, None, side=side)
+    print("centroid conductance: {:.6e} J passed, {:.6e} J expected, {:.3f} times the markers' distance's".format(
+        -book.E_side[1], expected, -book.E_side[1] / marker))
+    assert -book.E_side[1] == pytest.approx(expected, rel=1e-9) and book.E_side[0] == -book.E_side[1]
+    assert expected > 1.1 * marker
+    sk.set_state(before)
+    plain = sk.conduct(dt, 0.0, 0.0, 0.0, None, side=side._replace(section=None, moment=None))
+    assert -plain.E_side[1] == pytest.approx(marker, rel=1e-9)
 
 
 def test_with_sideways_heat_the_trial_sensitivity_is_the_derivative_for_a_common_base_shift():
