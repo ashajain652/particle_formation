@@ -116,6 +116,50 @@ def test_low_speed_state():
     assert loads.q_c0 > 0.0
 
 
+def test_total_enthalpy_above_the_property_table_fails_the_meridian_with_the_freestream_and_the_limit():
+    """At 8200 m/s the unreacted total enthalpy, 33.5 MJ/kg, is above the frozen-air table's top (32.2 MJ/kg at
+    20 000 K): the meridian raises SimilarityError giving the freestream state (ruling R6) and both enthalpies, so a flight
+    fails that step cleanly instead of flying on clipped properties."""
+    g = gas_loads.GasLoads()
+    state = aero_state(1e-5, v=8200.0)
+    with pytest.raises(gas_loads.SimilarityError) as exc:
+        g.meridian(state, RADIUS, T_W)
+    msg = str(exc.value)
+    assert "V=8200" in msg and "Kn_body={:.4g}".format(state.kn) in msg
+    assert "exceeds the frozen-air property table" in msg and "{:.4g} J/kg".format(g._props.h_max) in msg
+    assert g._cache == {}
+
+
+def test_a_non_positive_joined_pressure_is_floored_before_cantera(monkeypatch):
+    """The joined pressure is clamped to `P_FLOOR` times the freestream pressure before Cantera's isentropic expansion (and
+    so in the loads returned): a non-positive value, which Daniels and Schwartzentruber's lee pressure could give where
+    their c_p is below -p_inf/q_inf, no longer reaches Cantera, and every other bin is unchanged. The floor is far below
+    any joined pressure met so far, so it changes no current result. Cantera itself cannot expand to the floor (the
+    isentropic temperature goes below zero), so the recording stand-in below expands such a bin to the freestream
+    pressure instead: the test asks only what pressure reaches Cantera."""
+    state = aero_state(0.0184, v=600.0, T=226.5)     # about 30 km, Mach about 2: separated by 106 degrees
+    plain = gas_loads.GasLoads().meridian(state, 0.05, 400.0)
+    real_join, real_expand = gas_loads.joined_pressure, UnreactedAir.expand
+    p_inf, seen = state.freestream.p, []
+
+    def join(*a, **k):
+        p, meet = real_join(*a, **k)
+        p[-2:] = (0.0, -5.0)                          # 178 and 180 degrees
+        return p, meet
+
+    def expand(self, stag, p):
+        seen.append(p)
+        return real_expand(self, stag, p if p > 1e-3 * p_inf else p_inf)
+    monkeypatch.setattr(gas_loads, "joined_pressure", join)
+    monkeypatch.setattr(UnreactedAir, "expand", expand)
+    loads = gas_loads.GasLoads().meridian(state, 0.05, 400.0)
+    assert 0.0 < gas_loads.P_FLOOR <= 1e-20
+    assert min(seen) == gas_loads.P_FLOOR * p_inf
+    assert list(loads.p_w[-2:]) == [gas_loads.P_FLOOR * p_inf] * 2
+    np.testing.assert_array_equal(loads.p_w[:-2], plain.p_w[:-2])
+    np.testing.assert_array_equal(loads.tau, plain.tau)
+
+
 def test_zero_speed_returns_zero_loads():
     loads = gas_loads.GasLoads().meridian(aero_state(1e-4, v=0.0), RADIUS, T_W)
     assert np.all(loads.tau == 0.0) and np.all(loads.q_c == 0.0) and np.all(loads.p_w == loads.p_inf)

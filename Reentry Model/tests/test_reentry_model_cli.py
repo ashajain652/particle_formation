@@ -1363,6 +1363,45 @@ def test_the_similarity_heating_refuses_the_sesam_table_bridging(tmp_path, monke
             cli.main(argv)
 
 
+def test_the_similarity_heating_refuses_a_stagnation_or_catalycity_it_would_not_read(tmp_path, monkeypatch, capsys):
+    """An explicit --stagnation or --catalycity other than its default, with --heating physics on the similarity loads,
+    exits 2 and names --gas-loads classic: the similarity heating takes its stagnation flux from the provider and has no
+    wall catalycity, so the option would be silently ignored (ruling R20). With --gas-loads classic or --heating sesam any
+    value is accepted (the objects are not built: the call that would build them is reached). Given at its default value
+    it is accepted, and the objects built record it as given, under "heating_unused" (nothing is flown: `CoupledRun` stops
+    the run once the objects are built)."""
+    from reentry_model import heating
+    real, got = cli.build_thermal, []
+
+    def stop(*a, **k):
+        raise _Built()
+
+    def build(*a, **k):
+        got.append(real(*a, **k))
+        return got[-1]
+    monkeypatch.setattr(cli, "build_thermal", stop)
+    assert (cli.DEFAULT_STAGNATION, cli.DEFAULT_CATALYCITY) == ("fay-riddell", 1.0)
+    run = PHYSICS + ["--t-max", "1", "--outdir", str(tmp_path)]
+    for given, said in ((["--stagnation", "dkr"], "--stagnation dkr needs --gas-loads classic"),
+                        (["--stagnation", "sutton-graves"], "--stagnation sutton-graves needs --gas-loads classic"),
+                        (["--catalycity", "0"], "--catalycity 0 needs --gas-loads classic"),
+                        (["--catalycity", "0.5"], "--catalycity 0.5 needs --gas-loads classic")):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(run + given)
+        assert exc.value.code == 2 and said in capsys.readouterr().err, given
+        for argv in (run + given + ["--gas-loads", "classic"], run + given + ["--heating", "sesam"]):
+            with pytest.raises(_Built):
+                cli.main(argv)
+    monkeypatch.setattr(cli, "build_thermal", build)
+    monkeypatch.setattr(coupled, "CoupledRun", stop)
+    for given in (["--stagnation", "fay-riddell"], ["--catalycity", "1"], ["--stagnation", "fay-riddell", "--catalycity", "1.0"]):
+        with pytest.raises(_Built):
+            cli.main(run + given)
+        _, heat, info = got[-1]
+        assert type(heat) is heating.SimilarityHeating and info["heating_unused"] == ["stagnation", "catalycity"], given
+        assert (info["stagnation"], info["catalycity"]) == ("fay-riddell", 1.0)
+
+
 def test_build_thermal_gives_the_surface_flow_and_the_heating_one_provider_and_classic_builds_what_it_built(tmp_path,
                                                                                                          monkeypatch):
     """`build_thermal` on the similarity loads (the default) builds one `GasLoads(gamma_pm=--gamma-pm)` and gives it to the

@@ -117,5 +117,9 @@ def test_unreacted_expand_keeps_composition():
     e = u.expand(stag, 0.5 * stag.p)
     assert e.X == pytest.approx({"N2": 0.79, "O2": 0.21}, rel=1e-6)
     assert e.h < stag.h
-    w = u.wall(1000.0, stag.p)
+    # the wall at 3000 K, above the equilibrium air's T_EQUILIBRATE (1500 K), where equilibrium air dissociates (its O2
+    # falls to about 0.10 at this pressure): the unreacted air keeps the freestream composition there too
+    assert 3000.0 > gas.T_EQUILIBRATE
+    w = u.wall(3000.0, stag.p)
     assert w.X == pytest.approx({"N2": 0.79, "O2": 0.21}, rel=1e-6)
+    assert gas.EquilibriumAir().wall(3000.0, stag.p).X["O2"] < 0.15

@@ -287,13 +287,61 @@ def test_old_state_is_classic():
 
 
 def test_free_molecular_and_degenerate():
+    """The free-molecular branch with a provider takes the provider's shear on both sides with no slip factor: above
+    Kn_body 10 it is Daniels and Schwartzentruber's (already rarefied), and in a subsonic dense state (Ma_inf below 1,
+    Kn_body about 1e-6) the continuum similarity shear, whose missing slip factor is 1 to within about the wall Knudsen
+    number. The pressure stays the freestream's; a zero density gives finite loads (review T5-2)."""
     flow = provider_flow()
+    th_deg = [0.0, 60.0, 120.0, 180.0]
+    th = np.radians(th_deg)
     rho = 8.057e-7 * 0.25 / 20.0                                 # Kn_body 20
-    r = run(flow, rho, [0.0, 60.0, 120.0, 180.0])
+    r = run(flow, rho, th_deg)
     assert r.branch == sf.BRANCH_FREE_MOLECULAR and np.isfinite(r.tau).all() and np.isfinite(r.G).all()
     assert (r.p_w == hb_state(rho).freestream.p).all()
-    r0 = run(flow, 0.0, [0.0, 60.0, 120.0, 180.0])
+    L = flow.gas_loads.meridian(hb_state(rho), _RAD, _TW)
+    assert L.shear_source == "daniels-schwartzentruber" and r.tau[1] > 0.0
+    np.testing.assert_array_equal(r.tau, L.at(th, "tau"))
+    np.testing.assert_array_equal(r.tau_continuum, r.tau)
+    rho, v = 0.3, 200.0                                          # Ma_inf 0.71 at 200 K
+    state = hb_state(rho, v)
+    r = run(flow, rho, th_deg, v=v)
+    L = flow.gas_loads.meridian(state, _RAD, _TW)
+    assert state.ma < 1.0 and state.kn < 1e-5 and r.branch == sf.BRANCH_FREE_MOLECULAR
+    assert L.shear_source == "similarity" and r.tau[1] > 0.0
+    np.testing.assert_array_equal(r.tau, L.at(th, "tau"))
+    np.testing.assert_array_equal(r.tau_continuum, r.tau)
+    assert (r.p_w == state.freestream.p).all()
+    r0 = run(flow, 0.0, th_deg)
     assert np.isfinite(r0.tau).all() and np.isfinite(r0.G).all()
+
+
+def test_provider_on_the_merged_branch_below_the_switch_blends_the_slip_corrected_similarity_shear():
+    """The merged branch below Kn_body 0.05 (here 0.0298, the 100 mm flight's start) with a provider and rarefied_shear
+    "slip": the shear is (1 - f) tau_c S + f tau_fm, with tau_c the provider's continuum similarity shear at the patch,
+    S = 1/(1 + C Kn_local) the slip factor, f the SESAM-table bridge at Kn_body and tau_fm the windward free-molecular
+    shear (zero on the lee); the windward wall Knudsen number is the classic one (ruling R10), the lee's comes from the
+    provider's lee pressure (ruling R9). Pinned patch by patch against that formula (review T5-3)."""
+    flow = provider_flow()
+    rho_ref = 2.014e-5
+    rho = rho_ref * aero.knudsen(rho_ref, M_BAR_AIR, 2 * _RAD) / 0.0298
+    state = hb_state(rho)
+    th_deg = np.array([0.0, 30.0, 60.0, 85.0, 100.0, 120.0, 140.0])
+    th = np.radians(th_deg)
+    r = run(flow, rho, th_deg)
+    assert r.branch == sf.BRANCH_MERGED and state.kn == pytest.approx(0.0298, rel=1e-9) and flow.rarefied_shear == "slip"
+    L = flow.gas_loads.meridian(state, _RAD, _TW)
+    assert L.shear_source == "similarity" and state.kn < gl.KN_SHEAR_SWITCH
+    windward = th <= 0.5 * math.pi
+    classic = run(sf.SurfaceFlow(), rho, th_deg)
+    mu = sf.gas.wilke_viscosity(_TW, {"N2": 0.79, "O2": 0.21}, flow.air.molar_masses)
+    _, kn_lee = sf.wall_knudsen(L.at(th, "p_w"), np.full(th.size, _TW), np.full(th.size, mu), _RAD)
+    slip = 1.0 / (1.0 + flow.slip_C * np.where(windward, classic.kn_local, kn_lee))
+    f = flow.bridging(state.kn)
+    tau_fm = np.where(windward, flow.sigma_t * rho * _V ** 2 * np.sin(th) * np.abs(np.cos(th)), 0.0)
+    tau_c = L.at(th, "tau")
+    assert 0.0 < f < 1.0 and tau_c[0] == 0.0 and (tau_c[1:] > 0.0).all() and (slip < 1.0).all()
+    np.testing.assert_allclose(r.tau, (1.0 - f) * tau_c * slip + f * tau_fm, rtol=1e-12, atol=0.0)
+    np.testing.assert_array_equal(r.tau_continuum, tau_c)
 
 
 def test_lee_shear_survives_a_high_lee_knudsen_number():

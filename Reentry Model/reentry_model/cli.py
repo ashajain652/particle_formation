@@ -62,12 +62,13 @@ MELT_MODES = ("off", "on")
 # every surface flow the run builds and, with --heating physics, by `heating.SimilarityHeating`, with the skins' sheltered
 # corners read in the separated wake (`skinbody.SHELTER_WAKE`); `classic`, the loads as they were (`PhysicsHeating`, a
 # `SurfaceFlow` without a provider), named _loads-classic. A run without a thermal model reads no surface loads and
-# ignores the option; a saved state keeps the loads it was saved with (`gas_loads_of_run`).
+# ignores the option; a saved state keeps the loads its saved arguments name (`gas_loads_of_run` for one saved before them).
 GAS_LOADS = ("similarity", "classic")
 DEFAULT_GAS_LOADS = "similarity"
 # options the similarity heating does not read (it takes its stagnation flux from the provider, with no catalycity), which
-# a run on it records in the settings' "heating_unused"
+# a run on it records in the settings' "heating_unused"; given other than their defaults on it they exit 2 (ruling R20)
 SIMILARITY_UNUSED = ("stagnation", "catalycity")
+DEFAULT_STAGNATION, DEFAULT_CATALYCITY = "fay-riddell", 1.0
 # numpy's global generator is seeded with this at the start of every run (amendment of 2026-10-05): pyamg draws from it
 # the starting vector of the spectral-radius estimate that weights the prolongation smoother of every hierarchy it builds,
 # so an unseeded run differed from the next from the first solve on. 12345 is the seed the measurement harness of the
@@ -463,15 +464,17 @@ def build_parser():
                          "provider of wall pressure round the whole body (the model's windward law joined to Daniels and "
                          "Schwartzentruber's lee pressure), Lees similarity shear and heating to separation and Daniels and "
                          "Schwartzentruber's shear from body Knudsen number 0.05, read by the surface flow and, with --heating "
-                         "physics, the heating (Matting's bridging only; --stagnation and --catalycity unused), the skins' "
+                         "physics, the heating (Matting's bridging only; --stagnation and --catalycity not read, and refused "
+                         "other than at their defaults), the skins' "
                          "corners the centroid test shelters read in the separated wake (default); classic, the loads as they "
                          "were, Fay-Riddell and Lees heating and no loads on the lee (named _loads-classic). Ignored without "
                          "--thermal fem; a resumed state keeps the loads it was saved with")
-    th.add_argument("--stagnation", choices=heating.STAGNATION_NAMES, default="fay-riddell")
+    th.add_argument("--stagnation", choices=heating.STAGNATION_NAMES, default=DEFAULT_STAGNATION)
     th.add_argument("--bridging-heat", choices=heating.BRIDGING_HEAT_NAMES, default="matting")
     th.add_argument("--matting-n", type=float, default=1.0, help="Matting exponent n (default %(default)s)")
     th.add_argument("--accommodation", type=float, default=0.8, help="free-molecular energy accommodation A_cq (default %(default)s)")
-    th.add_argument("--catalycity", type=float, default=1.0, help="wall catalycity 0..1 in Fay-Riddell (default %(default)s)")
+    th.add_argument("--catalycity", type=float, default=DEFAULT_CATALYCITY,
+                    help="wall catalycity 0..1 in Fay-Riddell (default %(default)s)")
     th.add_argument("--material", default=None,
                     help="AA7075_nomelt | AA7075 | AA7075_range | AA7075_scheil | AA7075-empiricaldata | <DRAMA material JSON> "
                          "(default: AA7075_nomelt, or AA7075_scheil with --melt on)")
@@ -865,6 +868,14 @@ def cmd_run(args, parser):
     if args.thermal == "fem" and args.heating == "physics" and args.gas_loads == "similarity" and args.bridging_heat != "matting":
         parser.error("--bridging-heat {} needs --gas-loads classic: the similarity heating bridges to the free-molecular flux "
                      "by Matting's law only".format(args.bridging_heat))
+    if args.thermal == "fem" and args.heating == "physics" and args.gas_loads == "similarity":
+        # ruling R20: an option the similarity heating would not read is refused rather than silently ignored
+        if args.stagnation != DEFAULT_STAGNATION:
+            parser.error("--stagnation {} needs --gas-loads classic: the similarity heating takes its stagnation flux from "
+                         "the gas-loads provider".format(args.stagnation))
+        if args.catalycity != DEFAULT_CATALYCITY:
+            parser.error("--catalycity {:g} needs --gas-loads classic: the similarity heating has no wall catalycity".format(
+                args.catalycity))
     if args.thermal == "none" and (args.animate or args.stills or args.frames_every):
         parser.error("--animate/--stills/--frames-every need --thermal fem")
     if args.melt == "on" and args.thermal != "fem":
@@ -1189,7 +1200,8 @@ def gas_loads_of_run(run):
     body reads its sheltered corners at an angle other than the classic one; `classic` otherwise, as for every state saved
     before the interim gas loads (no provider on any instance: the class attributes say None, and the classic angle). A run
     on the similarity loads that reads no loads at all -- SESAM's heating on a body with no surface flow -- reads `classic`
-    here, which flies the same."""
+    here, which flies the same; `cmd_resume` therefore labels a state by its saved arguments' `gas_loads` and calls this
+    only for a state whose arguments have none (review T7-1)."""
     body = run.body
     providers = (getattr(run.heating, "gas_loads", None), getattr(getattr(body, "surface_flow", None), "gas_loads", None),
                  getattr(getattr(body, "flow", None), "gas_loads", None))
@@ -1205,7 +1217,10 @@ def cmd_resume(args, parser):
     state and what was changed. Only the droplet records after the resume are written."""
     state = load_state(args.state, parser)
     run, saved = state["run"], argparse.Namespace(**state["meta"]["args"])
-    saved.gas_loads = gas_loads_of_run(run)        # the loads it flies on, which a resume does not change (interim gas loads)
+    # the loads it was flown on, which a resume does not change (interim gas loads): its arguments' label, and for a state
+    # saved before the option, whose arguments have none, the loads its objects hold; the objects fly either way
+    if "gas_loads" not in state["meta"]["args"]:
+        saved.gas_loads = gas_loads_of_run(run)
     run_dir = os.path.join(args.outdir, args.name)
     settings, changed = run.settings, {}
     if args.t_max is not None:

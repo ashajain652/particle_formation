@@ -110,6 +110,27 @@ def _toy_march_args():
     return th, RADIUS, p_w, u_e, 2.0e7, T_W, p_w / (R_AIR * T_W) * 5e-5
 
 
+def test_total_enthalpy_above_the_property_table_raises_before_any_solve(props, monkeypatch):
+    """The frozen-air splines end at 20 000 K, where `T_of_h` would clip silently: a march whose edge total enthalpy is
+    above the table's top (`h_max`, the enthalpy at 20 000 K) raises SimilarityError naming both enthalpies and the
+    table's temperature, before any boundary-layer solve, so a flight fails that step (ruling R6) instead of marching
+    on clipped properties; a NaN enthalpy is refused too. The calorically perfect gas has no table and no limit."""
+    assert props.h_max == props.h[-1] and props.T[-1] == 20000.0
+    assert similarity.ConstantProperties().h_max == math.inf
+
+    def no_solve(*a, **k):
+        raise AssertionError("solved before the enthalpy check")
+    monkeypatch.setattr(similarity.SimilaritySolver, "solve", no_solve)
+    th, radius, p_w, u_e, _, T_w, rmw = _toy_march_args()
+    H_e = 1.01 * props.h_max
+    with pytest.raises(similarity.SimilarityError, match="exceeds the frozen-air property table") as exc:
+        similarity.march(th, radius, p_w, u_e, H_e, T_w, rmw, similarity.SimilaritySolver(props))
+    msg = str(exc.value)
+    assert "{:.4g} J/kg".format(H_e) in msg and "{:.4g} J/kg".format(props.h_max) in msg and "20000 K" in msg
+    with pytest.raises(similarity.SimilarityError, match="exceeds"):
+        similarity.march(th, radius, p_w, u_e, float("nan"), T_w, rmw, similarity.SimilaritySolver(props))
+
+
 def test_march_after_failed_march_equals_fresh(props, monkeypatch):
     args = _toy_march_args()
     fresh = similarity.march(*args, similarity.SimilaritySolver(props))

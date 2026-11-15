@@ -1286,3 +1286,74 @@ def test_a_state_saved_before_the_gas_loads_resumes_on_the_classic_loads(tmp_pat
     again = restart.load(str(tmp_path / "r.state.pkl"))
     assert again["run"].body.surface_flow.gas_loads is None and type(again["run"].heating) is heating.PhysicsHeating
     assert again["meta"]["args"]["gas_loads"] == "classic"
+
+
+def test_a_resumed_state_keeps_the_gas_loads_its_arguments_name(tmp_path, capsys):
+    """A flight on the similarity loads whose objects hold no provider -- SESAM's heating on the element model that does not
+    melt, which has no surface flow -- records `similarity` (the loads its arguments chose), and its resume says and records
+    `similarity` too, from the saved arguments, while flying the same objects (the unbroken flight's rows, to the last bit);
+    the loads are inferred from the objects only for a state whose arguments do not name them (review T7-1; the state saved
+    before the option is `test_a_state_saved_before_the_gas_loads_resumes_on_the_classic_loads`)."""
+    from reentry_model import heating
+    pytest.importorskip("cantera")
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    elements[elements.index("--heating") + 1] = "sesam"
+    out = str(tmp_path / "f")
+    assert cli.main(elements + ["--t-max", "0.1", "--outdir", out, "--name", "f", "--save-state-at", "0.05"]) == 0
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["gas_loads"] == "similarity"
+    state = restart.load(os.path.join(out, "f.state.pkl"))
+    assert type(state["run"].heating) is heating.SesamEquivalentHeating and not hasattr(state["run"].body, "flow")
+    assert state["meta"]["args"]["gas_loads"] == "similarity" and cli.gas_loads_of_run(state["run"]) == "classic"
+    capsys.readouterr()
+    assert cli.main(["resume", os.path.join(out, "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "gas loads similarity" in line
+    flight, resumed = rows_of(os.path.join(out, "f.csv")), rows_of(str(tmp_path / "r.csv"))
+    assert len(flight) == 5 and resumed == flight[-3:]
+    assert json.load(open(str(tmp_path / "r.json")))["settings"]["gas_loads"] == "similarity"
+    assert restart.load(str(tmp_path / "r.end.state.pkl"))["meta"]["args"]["gas_loads"] == "similarity"
+
+
+def test_a_macro_step_of_a_skin_flight_solves_one_meridian_shared_by_the_heating_and_the_surface_flow(tmp_path, monkeypatch):
+    """One provider per flight and a cache keyed on (density, temperature, speed, nose radius, stagnation-patch wall
+    temperature): in every macro step of the melting skins' test flight the similarity heating and the skins' surface flow
+    call the provider at the same key, which is solved once, so a step costs one meridian solve; the history's first row
+    adds one solve, the heating's alone (review T7-4). Counted by wrapping `GasLoads.meridian` and `GasLoads._solve`, not
+    by instrumenting the package."""
+    from reentry_model import heating, surface_flow
+    from reentry_model.shared.gas_loads import GasLoads
+    pytest.importorskip("cantera")
+    calls, solves, caller = [], [], [None]
+    meridian, solve = GasLoads.meridian, GasLoads._solve
+
+    def tag(cls, label):
+        real = cls.evaluate
+
+        def evaluate(self, *a, **k):
+            caller.append(label)
+            try:
+                return real(self, *a, **k)
+            finally:
+                caller.pop()
+        monkeypatch.setattr(cls, "evaluate", evaluate)
+    tag(heating.SimilarityHeating, "heating")
+    tag(surface_flow.SurfaceFlow, "flow")
+    key_of = lambda state, radius, T_wall: (state.freestream.rho, state.freestream.T, state.V, radius, T_wall)
+
+    def counted_meridian(self, state, radius, T_wall):
+        calls.append((caller[-1], key_of(state, radius, T_wall)))
+        return meridian(self, state, radius, T_wall)
+
+    def counted_solve(self, state, radius, T_wall):
+        solves.append(key_of(state, radius, T_wall))
+        return solve(self, state, radius, T_wall)
+    monkeypatch.setattr(GasLoads, "meridian", counted_meridian)
+    monkeypatch.setattr(GasLoads, "_solve", counted_solve)
+    assert cli.main(FLIGHT + ["--t-max", "0.0375", "--outdir", str(tmp_path), "--name", "f"]) == 0
+    rows = rows_of(str(tmp_path / "f.csv"))
+    assert len(rows) == 3                                  # the first row and two macro steps (25 ms, then 12.5 ms)
+    assert len(solves) == len(rows) and len(set(solves)) == len(solves)
+    assert {key for _, key in calls} == set(solves)       # every call was at one of the solved keys
+    callers = [sorted(who for who, k in calls if k == key) for key in solves]
+    assert callers == [["heating"]] + [["flow", "heating"]] * (len(rows) - 1), callers

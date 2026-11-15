@@ -29,16 +29,19 @@ BVP_MAX_NODES = 20000    # converged solves reach at most 1866 nodes over the fo
 
 
 class SimilarityError(RuntimeError):
-    """The boundary-value solver did not converge."""
+    """The boundary-value solver did not converge, or the edge total enthalpy is above the property table."""
 
 
 class FrozenAirProperties:
     """Smooth (cubic-spline) frozen-air h(T), T(h), mu(T) and their derivatives on 150 to 20000 K every 50 K: the
-    collocation solver needs a continuous right-hand side, and piecewise-linear tables make it refine without end."""
+    collocation solver needs a continuous right-hand side, and piecewise-linear tables make it refine without end.
+    `T_of_h` clips to the table, so `march` refuses an edge total enthalpy above `h_max`, the enthalpy at T_MAX."""
+
+    T_MAX = 20000.0
 
     def __init__(self, air):
         g = air.gas
-        self.T = np.arange(150.0, 20000.0 + 1.0, 50.0)
+        self.T = np.arange(150.0, self.T_MAX + 1.0, 50.0)
         h = []
         for t in self.T:
             g.TPX = t, 101325.0, "N2:0.79, O2:0.21"
@@ -49,6 +52,11 @@ class FrozenAirProperties:
         self._T = CubicSpline(self.h, self.T)
         self._mu = CubicSpline(self.T, self.mu)
         self._cp, self._dmu = self._h.derivative(), self._mu.derivative()
+
+    @property
+    def h_max(self):
+        """J/kg, the table's top enthalpy (at T_MAX): above it T_of_h would clip silently."""
+        return float(self.h[-1])
 
     def T_of_h(self, h):
         return self._T(np.clip(h, self.h[0], self.h[-1]))
@@ -69,6 +77,8 @@ class FrozenAirProperties:
 class ConstantProperties:
     """Calorically perfect gas with viscosity proportional to temperature, so C = 1 and T/T_e = h/h_e (the
     Falkner-Skan problem)."""
+
+    T_MAX = h_max = math.inf          # no table, no limit
 
     def __init__(self, cp=1005.0, mu_per_K=1.0e-7):
         self.cp, self.k = cp, mu_per_K
@@ -176,7 +186,13 @@ def march(theta_deg, radius, p_w, u_e, H_e, T_w, rho_w_mu_w, solver):
     uses beta = 1/2 with u_e r / sqrt(2 xi) -> sqrt(2 beta0 / (rho_w mu_w)). The last bin is not marched (as in the
     reference); the first bin with f''(0) <= 0.005 or a failed solve is the separation angle. The solver is reset at
     the start, so every march begins from the homotopy and does not depend on earlier marches; a failure of the
-    stagnation-point solve itself propagates as SimilarityError."""
+    stagnation-point solve itself propagates as SimilarityError, and so does an edge total enthalpy above the property
+    table's top (`h_max`, where `T_of_h` would clip silently), refused before any solve."""
+    h_max = solver.props.h_max
+    if not H_e <= h_max:
+        raise SimilarityError("the edge total enthalpy {:.4g} J/kg exceeds the frozen-air property table's top, {:.4g} J/kg "
+                              "(its enthalpy at {:.0f} K), above which the properties would be clipped".format(
+                                  H_e, h_max, solver.props.T_MAX))
     th = np.asarray(theta_deg, dtype=float)
     solver.reset()
     n = len(th)

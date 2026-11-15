@@ -22,6 +22,14 @@ KN_SHEAR_SWITCH = 0.05
 BIN_DEG = 2.0
 R_GAS = 287.05
 _CACHE_SIZE = 8
+# The joined pressure is clamped to P_FLOOR times the freestream pressure before Cantera's isentropic expansion, which
+# refuses a pressure at or below zero. Only Daniels and Schwartzentruber's lee pressure p_inf + c_p q_inf can be that low
+# (the windward law is floored at p_inf and the Prandtl-Meyer pressure is positive by construction), where their c_p falls
+# below -p_inf/q_inf. The floor is more than five orders of magnitude below the lowest lee pressure their model gives
+# over 1e-12 to 1.26 kg/m3, 100 to 8000 m/s, 5 to 300 mm, 190 to 1000 K and walls at 300 to 2500 K (7.4e-15 of the
+# freestream, at 1e-12 kg/m3), so it changes no result. Cantera cannot expand to the floor either (the isentropic
+# temperature falls below zero), so a state that reaches it still fails its step, on Cantera's temperature instead.
+P_FLOOR = 1e-20
 
 
 def joined_pressure(theta_deg, p_stag, p_inf, q_inf, gamma_pm, p_ds):
@@ -120,6 +128,7 @@ class GasLoads:
         cp_ds, cf_ds = ds.coefficients(np.radians(th), cond)
         p_ds = p_inf + cp_ds * q_inf
         p_w, meet = joined_pressure(th, stag.p, p_inf, q_inf, self.gamma_pm, p_ds)
+        p_w = np.maximum(p_w, P_FLOOR * p_inf)            # never a non-positive pressure into Cantera (P_FLOOR)
         u_e = np.array([math.sqrt(max(0.0, 2.0 * (H_e - air.expand(stag, float(p)).h))) for p in p_w])
         u_e[0] = 0.0
         mu_w = float(props.mu_of_T(T_wall))
@@ -127,8 +136,8 @@ class GasLoads:
         try:
             sol = march(th, radius, p_w, u_e, H_e, T_wall, rmw, self._solver)
         except SimilarityError as err:
-            raise SimilarityError(f"similarity stagnation-point solve failed at rho={rho:.4g} T={T_inf:.4g} "
-                                  f"V={V:.4g} Kn_body={state.kn:.4g}") from err
+            raise SimilarityError(f"similarity stagnation-point solution failed at rho={rho:.4g} T={T_inf:.4g} "
+                                  f"V={V:.4g} Kn_body={state.kn:.4g}: {err}") from err
         if state.kn < self.kn_switch:
             tau, source = sol.tau_c, "similarity"
         else:

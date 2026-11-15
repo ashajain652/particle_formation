@@ -329,7 +329,11 @@ class SurfaceFlow:
             lam_inf = aero.mean_free_path(fs.rho, fs.m_bar)
             tau_fm_out, tau_fm_cont = tau_fm, zero
             if self.gas_loads is not None:
-                # the provider's shear (Daniels and Schwartzentruber's, already rarefied) on both sides; p_w stays p_inf
+                # the provider's shear on both sides, with no slip factor; p_w stays p_inf. At Kn_body >= 10 it is Daniels and
+                # Schwartzentruber's, already rarefied. At Ma_inf <= 1 (Kn_body at most 1.1e-5 and 4.6e-5 on the 100 mm and
+                # 50 mm Step 2 flights) it is the continuum similarity shear, whose missing slip factor 1/(1 + C Kn_local)
+                # differs from 1 by about the wall Knudsen number (at most 2.1e-4 and 8.1e-4 there at the freestream
+                # pressure, and the lee's pressure is not much lower): harmless
                 tau_fm_out = tau_fm_cont = self.gas_loads.meridian(state, radius, float(T_w[np.argmin(theta)])).at(theta, "tau")
             return SurfaceFlowResult(branch, state.kn, float("nan"), state.ma, float("nan"), p_inf, float("nan"), decel,
                                      self.gamma_pm, np.full(n, p_inf), zero, zero, np.full(n, fs.rho), np.full(n, fs.T),
