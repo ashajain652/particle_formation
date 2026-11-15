@@ -170,7 +170,9 @@ class PhysicsHeating:
 
 class SimilarityHeating:
     """Convective heating with the continuum flux and its angular shape taken from the shared gas-loads provider
-    (duck-typed: `meridian(state, radius, T_wall)` and `wall_enthalpy(T)`) instead of Fay-Riddell and Lees, so the
+    (duck-typed on four methods, all of which `evaluate` calls: `meridian(state, radius, T_wall)`, `wall_enthalpy(T)`,
+    `held_loads(state)` and `total_enthalpy(state)`, so a replacement provider, such as a coupled CFD solution, must
+    supply all four) instead of Fay-Riddell and Lees, so the
     heating reaches round the shoulder and onto the lee until the boundary layer separates:
         q = q_stag [(1 - w) q_sim(theta)/q_sim(0) + w max(cos theta, 0)] (H_e - h_w(T_patch))/(H_e - h_w(T_stag)),
     q_stag = Matting bridge of q_c = q_sim(0) and q_fm = accommodation rho V (H_e - h_w), w = 1 - q_stag/q_c.
@@ -182,7 +184,11 @@ class SimilarityHeating:
     stagnation point the edge speed is zero, so a wall at or above the total enthalpy receives no heat; elsewhere the gas
     recovers less than the total enthalpy (recovery factor about the square root of the Prandtl number), so it receives
     none either. The model already returned zero heating in exactly this case, after paying for the solve; the skip makes
-    the same decision before it, from the same two numbers, so no recorded value changes. Like the model, it neglects the
+    the same decision before it, from the same two numbers, so no recorded value changes on a call. A skipped call holds
+    nothing, though: where nothing else reads the provider during continuum steps (an explicit --dt-continuum with
+    --removal instant, on either surface model; not a default), steps that a solved call would have served a held
+    zero-heating solution for the rest of its window are checked at every step instead, so heating resumes at the first
+    step at which the wall can be heated, up to one --dt earlier. Like the model, it neglects the
     convective cooling of a wall hotter than the gas. Inside a hold window the held solution is used and the check is not
     made, so the result there is the one the held solution gave before."""
 

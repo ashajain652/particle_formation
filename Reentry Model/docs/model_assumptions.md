@@ -1118,7 +1118,7 @@ measurement behind it; Asha's decisions are dated as in the design.
   the flight time of its solve, and every later call less than one `--dt` after that time returns it, whatever that
   call's freestream, nose radius and wall temperature; the first call at or after the end of the window solves again
   (or finds its key in the cache) and starts a new window. Calls at the held flight time itself are not served from the
-  hold (ruling P10 of the plan): they go to the key cache as without a hold, so calls at one flight time at different
+  hold (the window opens strictly after the held time; ruling P10, recorded in `docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md`): they go to the key cache as without a hold, so calls at one flight time at different
   keys solve separately, and the last of them is the one held. The window ends a millionth of `--dt` early (`HOLD_TOL`),
   so that steps of exactly `--dt`, whose summed flight times can fall short of a multiple of `--dt` by round-off, still
   solve at every step.
@@ -1130,12 +1130,13 @@ measurement behind it; Asha's decisions are dated as in the design.
     at the same key, finds that solution; on the element model the heating and the surface flow each solve, and the
     flow's solution, at the wall temperature after the step's thermal solve, is the one held for the rest of the window.
     The element model's second evaluation of the loads, for the record, at the end of a step in which elements died, is
-    at the held flight time, so it also goes to the key cache and solves as before, and its solution is then the one
-    held. **(verified)** On the 65 km melting element flight of the restart tests with the continuum switch off
+    at that step's flight time. At a window's first step that is the held time, so it goes to the key cache and solves
+    as before, and its solution is then the one held; at any later step of the window it is strictly later than the held
+    time and is served the held solution, with no solve. **(verified)** On the 65 km melting element flight of the restart tests with the continuum switch off
     (`--dt-continuum off`, two 25 ms steps to 0.05 s), the provider solved the same five keys in the same order with and
     without the hold (the history's first row, then the heating and the flow at each step) and the three rows were
-    identical (measured once, 2026-11-14, with the review's scratch script extended to count the solves). Before ruling
-    P10 the flow's two calls on that flight received the heating's solutions instead of solving their own. One shorter
+    identical (measured once, 2026-11-14, with the review's scratch script extended to count the solves). Before the window was made to serve only calls strictly later than the held time (ruling
+    P10, see above) the flow's two calls on that flight received the heating's solutions instead of solving their own. One shorter
     step is served from the window of the step before it: a last step cut short by the ground or by `--t-max`. On a
     non-melting element flight from 77.5 km whose last step was cut to 0.2 s by `--t-max 1.2`, the last row's stagnation
     heat flux was 1.8868 MW/m^2 on the held solution against 1.8860 MW/m^2 when that step solved (0.05 % higher), and its
@@ -1207,22 +1208,23 @@ measurement behind it; Asha's decisions are dated as in the design.
   c_p q_inf (p_inf the freestream pressure, q_inf the freestream dynamic pressure, c_p their pressure coefficient),
   rescaled so that at the stagnation point it equals the unreacted stagnation pressure: p_inf + c_p q_inf (p_stag -
   p_inf) / (c_p(0) q_inf) (`gas_loads.anchored_ds_pressure`). The rescaling keeps the stagnation pressure the
-  same quantity at every Mach number, the unreacted one the edge enthalpy and the joined law are built from, instead of
-  their c_p at the stagnation point, which is only approximately that value. Between M = 3.5 and 5 the anchored pressure and
+  same quantity at every Mach number, the unreacted one the edge enthalpy and the joined law are built from. At
+  supersonic states their c_p at the stagnation point differs from the frozen-gas value by 0.3 to 2 %. Below about Mach
+  0.5 the difference is dominated by the model's own composition offset, set out in the known limitation below. Between M = 3.5 and 5 the anchored pressure and
   the joined pressure are blended with a weight on the anchored law that falls linearly in M from 1 to 0
   (`gas_loads.ds_pressure_weight`); at and above M = 5 the joined law is used unchanged. The weight is stored on the
   loads as `ds_pressure_weight`, and the meeting angle is not a number when it is 1. **(assumed)** The blend edges 3.5
   and 5 and the linear shape are choices, not fitted values; 3.5 is just above the Mach 3.39 below which the step
   appears. **(verified)** Pressure and shear at 30 km (density 0.0184 kg/m3, 226.5 K, nose radius 50 mm, wall 900 K, 2-degree
   bins), before and after, from a scratch script run on this commit, 2026-11-14:
-  - Pressure over the freestream pressure at 80 to 94 degrees. At Mach 2 the old law gave 1.000 up to 88 degrees and
-    then 1.000, 0.778 and 0.729 at 90, 92 and 94 degrees; the new law gives 0.901, 0.835, 0.777 and 0.729 at 88, 90,
+  - Pressure over the freestream pressure at 80 to 94 degrees. At Mach 2 the old law gave 1.000 up to 90 degrees and
+    then 0.778 and 0.729 at 92 and 94 degrees; the new law gives 0.901, 0.835, 0.777 and 0.729 at 88, 90,
     92 and 94 degrees, falling smoothly. At Mach 3 the old law gave 1.000 at 90 degrees and then 0.874 and 0.781; the
     new law gives 1.122, 0.987, 0.874 and 0.781 at 88, 90, 92 and 94 degrees.
   - Wall shear in pascals at 80, 84, 86, 88, 90, 92 and 94 degrees. Mach 2, old: 9.48, 9.22, 9.09, 8.95, 56.54, 61.57,
     35.35; new: 49.96, 47.33, 45.64, 43.64, 41.32, 38.62, 35.48. Mach 3, old: 65.11, 60.63, 41.44, 11.60, 47.65, 62.18,
     54.31; new: 82.20, 77.19, 73.99, 70.23, 65.82, 60.62, 54.45. The fourfold rise at 90 degrees at Mach 2 and the dip
-    to 11.6 pascals at 88 degrees at Mach 3 are gone; the new shear changes by about 2 to 4 pascals per bin.
+    to 11.6 pascals at 88 degrees at Mach 3 are gone; the new shear changes by about 3.2 to 6.2 pascals per 2-degree bin.
   - Stagnation-point similarity heat flux, the old and new values in kilowatts per square metre: Mach 4 (weight 0.67)
     3.643 to 3.539, minus 2.9 %; Mach 4.25 (weight 0.5) 25.77 to 25.24, minus 2.0 %; Mach 6 unchanged at 322.1. At
     Mach 2 and 3 the 900 K wall is hotter than the gas, so the flux is a loss (negative): minus 53.37 to minus 50.69
@@ -1237,6 +1239,21 @@ measurement behind it; Asha's decisions are dated as in the design.
     comparisons at Mach 0.37, 2, 3, 4, 7 and 10. The Mach numbers of their pressure comparisons have not been read from
     the paper, so the pressure at low Mach number rests on their model being validated at the conditions of the shear
     comparisons, **(assumed)**.
+  - **Known limitation: a composition offset below about Mach 0.5 (final review, 2026-11-15).** The provider's
+    stagnation pressure comes from Cantera's air, N2:0.79 and O2:0.21 without argon, whose freestream pressure at the
+    same density and temperature is 0.396 % above the atmosphere's pressure that the provider uses as p_inf (ratio
+    1.00396 at 0.5, 2, 10 and 30 km of the US76 table). At hypersonic speeds that offset is nothing against the
+    dynamic pressure, but the dynamic pressure is only 0.7 M squared times the freestream pressure (2.3 % of it at Mach
+    0.18), so at low speed the offset is a large share of p_stag - p_inf, and the anchoring scales the whole of Daniels
+    and Schwartzentruber's distribution, lee included, by it. **(verified)** Measured on `GasLoads.meridian` at US76
+    states (nose radius 50 mm, wall 900 K), the pressure difference from freestream is 1.173 times theirs at Mach 0.18
+    (0.5 km), 1.061 at Mach 0.3 (2 km), 1.021 at Mach 0.5 (10 km) and 1.002 at Mach 3 (30 km), the same factor at 0, 90
+    and 180 degrees. The film's pressure gradient and the lee suction carry the same factor. The offset predates this
+    branch (the joined law's windward amplitude carries it too). No result measured so far is affected: the Step 2
+    flights receive no heat below Mach 6.2 and have no surface flow, and the melting flights so far stop near Mach 3.5.
+    The two Step 2 flights land at Mach 0.24 and 0.17, so every flight to the ground ends in this regime. Removing the
+    offset is an open decision (14.9). Anchoring is still the right structure: without it the offset would appear as a
+    pressure drop between the stagnation bin and the 4-degree bin and inflate the nose velocity gradient far more.
 - The film feels this pressure as a gradient on both sides: the gradient along the surface is taken on the provider's
   bins, so the fall past the shoulder now pushes the film rearward, where before the drop to freestream at the equator
   never acted on it.
@@ -1381,7 +1398,12 @@ measurement behind it; Asha's decisions are dated as in the design.
   caller records, in exactly this case (H_e - h_w at most zero), after paying for the solve; the skip makes the same
   decision before the solve, from the same two numbers, so no recorded value changes. A skipped step returns q_c as not
   a number, which only the unrecorded field shows. It neglects, as the model already does, the convective cooling of a
-  wall hotter than the gas. Inside a hold window (14.1) the held solution is used and the check is not made.
+  wall hotter than the gas. Inside a hold window (14.1) the held solution is used and the check is not made. "No recorded value changes" is exact for each
+  call, not for every flight: a skipped call makes no solve and so holds nothing. Where nothing else reads the provider
+  during continuum steps (an explicit `--dt-continuum` with `--removal instant`, on either surface model; never a
+  default configuration), the steps that a solved call would have served a held zero-heating solution for the rest of
+  its 0.5 s window are checked at every step instead, so heating resumes at the first step at which the wall can be
+  heated, up to one `--dt` earlier (more accurate, not less).
   **(verified)** `test_similarity_heating_skips_the_solve_when_the_wall_is_hotter_than_the_total_enthalpy`,
   `test_skip_matches_the_solved_result` (one state each side of H_e = h_w, equal to the same call with the skip disabled),
   `test_skip_when_the_wall_enthalpy_equals_the_total_enthalpy` and `test_skip_is_not_taken_inside_a_hold_window`.
@@ -1560,7 +1582,12 @@ Each item below was measured once, on the flights named; none is a sweep.
   and 49 % of the steps. The skip starts when the stagnation-point wall temperature (`T_stagnation_K` in the history) is 1878.1 K on the 100 mm flight, at 168 s,
   and 1960.6 K on the 50 mm flight, at 283 s; the stagnation wall peaks at 2433.1 K and 2625.7 K. The walls are that hot
   only because the reference flights do not melt; a melting wall stays near 900 K, so the skip starts much later there (only below about 1.2 km/s, where half the speed squared falls to
-  the enthalpy of gas at that wall temperature). The time saved on a melting flight was not measured.
+  the enthalpy of gas at that wall temperature). The time saved on a melting flight was not measured, and the skip saves less there than on the Step 2 flights: on the
+  skins the surface flow reads the provider at the same key as the heating, so when the heating skips, the flow makes the
+  very solve the heating would have made and the skip saves none; on the element model it saves one of the two solves at a
+  window's start; only the element model that does not melt, whose loads only the heating reads, saves every solve. Nor
+  is the loads solved "at most once per `--dt`" on the element model: its heating and surface flow solve separately, twice
+  per `--dt` (14.1).
 - The elapsed time is the JSON's `results.runtime_s`, which `CoupledRun.run` (`skyscrapers/coupled.py`) times from the
   start of the flight to its results. It therefore leaves out the mesh (gmsh or the mesh cache), the construction of the
   body and the heating, and the writing of the CSV, JSON and droplet files afterwards, and it includes the history's
@@ -1588,9 +1615,18 @@ Each item below was measured once, on the flights named; none is a sweep.
 - The blend of the pressure laws between Mach 3.5 and 5 (14.1, Asha's decision 1 of 2026-11-14) is a choice, not a
   fitted law: it removes the step at 90 degrees below about Mach 3.4, but nothing compares it with measurement between
   Mach 3.5 and 5, and the stagnation heat flux moves by about 2 to 3 % across that range (14.1). The Step 2 trajectories
-  cross Mach 5 to 3.5 in about 8 s (the 100 mm sphere is below Mach 4 from 181.55 s and the 50 mm sphere from
+  cross Mach 5 to 3.5 in about 9 to 10 s (9.5 and 10.0 s in the model's histories, 9.0 s in the SESAM references; the 100 mm sphere is below Mach 4 from 181.55 s and the 50 mm sphere from
   296.55 s), so the blend acts for a short part of a flight and the Daniels and Schwartzentruber pressure acts for the
   rest of it below Mach 3.5.
+- The low-Mach pressure carries a composition offset (final review, 2026-11-15; 14.1). Below about Mach 0.5 the
+  pressure difference from freestream is 1.173 times Daniels and Schwartzentruber's at Mach 0.18, 1.061 at Mach 0.3 and
+  1.021 at Mach 0.5 (1.002 at Mach 3), because the provider's stagnation pressure comes from Cantera's air without argon,
+  whose freestream pressure is 0.396 % above the atmosphere's pressure that the provider uses as p_inf. The offset
+  predates this branch and no result measured so far is affected: the Step 2 flights receive no heat below Mach 6.2 and
+  have no surface flow, and the melting flights so far stop near Mach 3.5. Removing it is an open decision for Asha: the
+  clean fix, one freestream pressure for the provider consistent with its Cantera air, would also move results at and
+  above Mach 5 by about 1e-5 relative, which the bit-identity constraint of this branch forbids, so it belongs on a
+  later branch.
 - The lee pressure (14.1) and the zero heating behind separation (14.2) are known to differ from DSMC; the coupled CFD
   solution is meant to replace them behind the same provider (design A5).
 - The sheltered-corner rule is to be revisited with the fitted-sphere loading bug (14.5).

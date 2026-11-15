@@ -149,8 +149,11 @@ hold and the skip). `resume` has no option: a state keeps the
 loads it was saved with, and a state saved before the option resumes on `classic`. The provider solves its similarity
 boundary layer (about 0.5 to 3 s a solve) at most once per `--dt` of flight (0.5 s by default; `GasLoads(hold_s=--dt)`),
 and holds the solution over the `--dt-continuum` steps after the continuum switch. A flight stepping at `--dt` throughout
-therefore solves at every step. No solve is made when the stagnation wall's enthalpy is at or above the total enthalpy
-of the arriving gas, where the heating is zero anyway. On the 65 km smoke flights the loads added about 1 s a macro
+therefore solves at every step (twice per `--dt` on the element model, whose heating and surface flow solve separately).
+The heating makes no solve when the stagnation wall's enthalpy is at or above the total enthalpy of the arriving gas,
+where it is zero anyway; that saves every solve only on a flight that does not melt, since on a melting flight the
+surface flow reads the same provider (on the skins it makes the solve the heating skipped; on the element model the skip
+saves one of the two at a window's start). On the 65 km smoke flights the loads added about 1 s a macro
 step. The non-melting Step 2 flights to the ground took 1068 s and 1684 s on 2026-11-14, before the skip, and 409.5 s
 and 466.8 s on 2026-11-15 with it, against 57 s and 21 s on the classic loads. Each was measured once under a different
 machine load, so the factors are approximate (`docs/model_assumptions.md` 14.8). Below Mach 5 the pressure blends to

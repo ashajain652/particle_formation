@@ -180,7 +180,8 @@ def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_fi
     and the JSON naming the state it came from with nothing changed (sub-plan 22 Task 5b, Asha 2026-11-06). The flight is
     its own, `FLIGHT` (the defaults: the hand-down off, the part count by the melting) to 0.2125 s saved at 0.1875 s as
     `flown` is, because on the gas loads' hold (one solve per --dt) the `flown` flight releases nothing after 0.1875 s and
-    this one does, so the records' check is not empty (ruling P6 of the 2026-11-14 gas-loads plan)."""
+    this one does, so the records' check is not empty (the test must use a flight that releases droplets after 0.1875 s; ruling P6 in
+    docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md)."""
     pytest.importorskip("cantera")
     out = str(tmp_path / "flown")
     assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
@@ -1408,7 +1409,8 @@ def test_a_flight_resumed_inside_a_hold_window_matches_the_unbroken_flight(tmp_p
 
 
 def test_a_state_whose_provider_has_no_hold_resumes_solving_every_step_and_records_none(flown, tmp_path, monkeypatch):
-    """Review Focus 4 on the resume command (ruling P9): the `flown` state with its provider stripped of the hold's
+    """Review Focus 4 on the resume command (a state saved before the hold must resume without it; ruling P9 in
+    docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md): the `flown` state with its provider stripped of the hold's
     attributes stands in for a state saved before the hold. Resumed, it solves at both steps from 0.1875 s (0.2 and
     0.2125 s, 12.5 ms apart), where the state as saved solves at 0.2 s only, one --dt after its held solve at 0.175 s,
     and holds that solution at 0.2125 s; its JSON records

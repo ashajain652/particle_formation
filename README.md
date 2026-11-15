@@ -319,9 +319,11 @@ A skin flight ends itself normally, with end reason `geometry`, exit code 0 and 
 `--gas-loads similarity|classic` chooses the surface gas loads of a `--thermal fem` run (the interim gas loads, built
 2026-11-13 from Part A of `Reentry Model/docs/superpowers/specs/2026-11-12-shoulder-melt-loss-design.md`). `similarity`,
 the default, is one provider (`reentry_model/shared/gas_loads.py`). It is solved at most once per `--dt` of flight (held
-over the `--dt-continuum` steps after the continuum switch, so a flight stepping at `--dt` solves at every step), and
-not at all while the stagnation wall holds at least the total enthalpy of the arriving gas, where the heating is zero
-anyway. It is read by the surface flow and, with `--heating physics`, by the heating: the wall pressure round the whole body (at and above Mach 5 the model's windward law,
+over the `--dt-continuum` steps after the continuum switch, so a flight stepping at `--dt` solves at every step; the element model's heating and surface flow solve separately, so twice per `--dt`), and the
+heating makes no solve while the stagnation wall holds at least the total enthalpy of the arriving gas, where it is zero
+anyway. That skip saves every solve only on a flight that does not melt (the Step 2 flights, whose loads only the heating
+reads); on a melting flight the surface flow reads the same provider, so on the skins it makes the solve the heating
+skipped, and on the element model the skip saves one of the two solves at a window's start. It is read by the surface flow and, with `--heating physics`, by the heating: the wall pressure round the whole body (at and above Mach 5 the model's windward law,
 continued past 90 degrees until it meets Daniels and Schwartzentruber's lee pressure; at and below Mach 3.5 their own
 pressure, anchored to the stagnation pressure; a linear blend between), the shear and heat flux of a Lees
 similarity boundary layer on chemically frozen post-shock air to the angle where it separates (152 degrees at Holman and

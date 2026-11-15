@@ -13,8 +13,14 @@ above M = 5 the model's windward `surface_flow.wall_pressure` (modified Newtonia
 Schwartzentruber's (2026) lee pressure, then theirs (`joined_pressure`). That joined law has a step at 90 degrees below
 about Mach 3.4, where the Newtonian cosine-squared law and the Prandtl-Meyer expansion no longer agree. At and below
 M = 3.5 the pressure is Daniels and Schwartzentruber's own, p_inf + c_p q_inf, rescaled so that its stagnation value is
-the unreacted stagnation pressure (their c_p at the stagnation point is only approximately the frozen-gas value, and
-the rescaling keeps the stagnation pressure the same quantity at every Mach number); between M = 3.5 and 5 the two
+the unreacted stagnation pressure, so that the stagnation pressure is the same quantity at every Mach number (at
+supersonic states their stagnation c_p differs from the frozen-gas value by 0.3 to 2 %). Below about Mach 0.5 the
+rescaling also carries the provider's own composition offset: its stagnation pressure comes from Cantera's air (N2:0.79,
+O2:0.21, no argon), whose freestream pressure is 0.396 % above the atmosphere's pressure used here as p_inf, so every
+pressure difference from p_inf is 1.173 times Daniels and Schwartzentruber's at Mach 0.18, 1.061 at Mach 0.3, 1.021 at
+Mach 0.5 and 1.002 at Mach 3 (measured at US76 states, 50 mm radius, 900 K wall). The offset predates this branch, no
+result measured so far is affected, and removing it is an open decision (docs/model_assumptions.md 14.1 and 14.9);
+between M = 3.5 and 5 the two
 pressures are blended with a weight falling linearly in M from 1 to 0 (a choice, not a fitted law). The joined
 expansion starts from the UNREACTED (chemically frozen) stagnation pressure. Shear and heat flux: Lees local similarity (`similarity.march`) on that pressure. Below the shear
 switch Kn_body = 0.05 the continuum similarity shear is returned (the caller applies slip and blend); at and above it
@@ -64,7 +70,12 @@ def ds_pressure_weight(mach):
 def anchored_ds_pressure(cp_ds, p_stag, p_inf, q_inf):
     """Daniels and Schwartzentruber's pressure p_inf + c_p q_inf with c_p rescaled so the stagnation-point value is
     p_stag: p_inf + c_p q_inf (p_stag - p_inf) / (c_p[0] q_inf). Raises ValueError if c_p at the stagnation point
-    (cp_ds[0]) is not positive."""
+    (cp_ds[0]) is not positive. The whole distribution is scaled by (p_stag - p_inf) / (c_p[0] q_inf), which is 1 only if
+    their stagnation value is the caller's. The provider's p_stag comes from Cantera's air without argon, whose
+    freestream pressure is 0.396 % above the p_inf it passes (the atmosphere's), so below about Mach 0.5 the factor on
+    the pressure difference from p_inf is 1.173 at Mach 0.18, 1.061 at Mach 0.3 and 1.021 at Mach 0.5 (1.002 at Mach 3),
+    on top of their stagnation c_p's own 0.3 to 2 % difference from the frozen-gas value at supersonic states
+    (model_assumptions 14.1, 14.9)."""
     cp_ds = np.asarray(cp_ds, dtype=float)
     if not cp_ds[0] > 0.0:
         raise ValueError(f"Daniels and Schwartzentruber's stagnation-point pressure coefficient is {cp_ds[0]:.4g}; "
@@ -158,7 +169,8 @@ class GasLoads:
     def held_loads(self, state):
         """The held solution, if `state` falls within its window: a hold is set, `state.t` is not None, a solution is held
         and 0 < state.t - (its flight time) < hold_s (1 - HOLD_TOL); otherwise None. A call at the held time itself is
-        not served (ruling P10 of the 2026-11-14 plan): it goes to the key cache, so two calls at one flight time at
+        not served (the hold's window opens strictly after the held time; rulings in
+Reentry Model/docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md): it goes to the key cache, so two calls at one flight time at
         different keys (the element model's heating and surface flow) solve separately, as without a hold."""
         if self.hold_s is None or state.t is None or self._held is None:
             return None

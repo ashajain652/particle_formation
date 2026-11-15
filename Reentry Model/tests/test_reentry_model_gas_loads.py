@@ -335,7 +335,8 @@ def test_hold_returns_the_held_solution_within_the_window(counted):
 
 
 def test_a_call_at_the_held_time_goes_to_the_key_cache_and_replaces_the_held_solution(counted):
-    """Ruling P10: the hold serves only calls strictly later than the held time. A second call at the held time with
+    """The hold serves only calls strictly later than the held time (ruling P10, in the plan's rulings document
+    2026-11-14-gas-loads-low-mach-and-cadence-rulings.md). A second call at the held time with
     another wall temperature (the element model's surface flow, after the thermal step, beside the heating's call before
     it) solves its own solution, returns it and holds it in place of the first; a third, at the first key, finds the
     first solution in the key cache, returns it and holds it again. `held_loads` at the held time is None, and the

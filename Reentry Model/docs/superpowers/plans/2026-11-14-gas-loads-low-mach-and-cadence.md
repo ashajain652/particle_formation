@@ -1,5 +1,7 @@
 # Gas Loads: Low-Mach Pressure, Solve Cadence and Reference Flights Implementation Plan
 
+> **Amendment (2026-11-15):** during the build the hold window was amended to serve only calls strictly later than the held time (ruling P10), so Task 2's `0 <=` is `0 <`; the rulings are recorded in `docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

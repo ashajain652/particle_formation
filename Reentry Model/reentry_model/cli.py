@@ -679,8 +679,11 @@ def build_thermal(args, settings, mass, spool=None):
     directory for a spraying skin body's droplet records (SOURCE_SPOOL in the run's directory, sub-plan 22 Task 4).
     On the similarity gas loads (--gas-loads, `GAS_LOADS`) one `GasLoads(gamma_pm=--gamma-pm, hold_s=--dt)` is given to every
     surface flow built here and, with --heating physics, to `heating.SimilarityHeating`, and the skins read their sheltered
-    corners at `skinbody.SHELTER_WAKE`; the provider holds each solution for one --dt of flight, so it solves at most once per
-    --dt after the continuum switch, and the settings record that hold as `gas_loads_hold_s`. On `classic` the objects are
+    corners at `skinbody.SHELTER_WAKE`; the provider holds each solution for one --dt of flight, so each reader solves at most once per
+    --dt after the continuum switch (the element model's heating and surface flow solve separately, twice per --dt), and the
+    settings record that hold as `gas_loads_hold_s`. The heating's skip of the solve when the wall is as hot as the gas saves
+    a solve only where the surface flow does not read the provider as well (not on a melting skin flight, where the flow
+    then makes the solve; one of two at a window's start on the element model; every solve on a flight that does not melt). On `classic` the objects are
     those built before the interim gas loads, with the same arguments."""
     radius = settings.diameter / 2.0
     loads = GasLoads(gamma_pm=args.gamma_pm, hold_s=args.dt) if args.gas_loads == "similarity" else None  # shared, once a --dt
