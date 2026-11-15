@@ -48,7 +48,7 @@ stretch of flight time; "the skip" is the heating making no solve when the wall 
 
 6. **One resume test got its own flight (P6).** Under the hold, the test that a resumed flight repeats the original to
    the last bit no longer had droplets after its save point, so its precondition failed. It was given its own flight
-   and save time (the flight to 0.2125 s, saved at 0.1875 s) rather than moving a shared fixture that about 15 resume
+   and save time (the flight to 0.2125 s, saved at 0.1875 s) rather than moving a shared fixture that many other resume
    tests rely on, or relaxing the check. The final review notes that the test passes on a single droplet record. The
    cost if wrong is one test on a different flight.
 7. **A last step shorter than `--dt` is served from the window before it (P7).** That is what "at most one solve per
@@ -83,7 +83,7 @@ stretch of flight time; "the skip" is the heating making no solve when the wall 
     main 4e857e1 first reported six extra "named file is missing" lines, because the earlier scratch copy of main had
     been deleted and its mesh files could not be compared. Main 4e857e1 was rebuilt from git at the same path, its four
     cases were run again, and the comparison then gave exactly the four expected lines (the new `settings.gas_loads`
-    key three times, and the absolute path of the fap file). The cost was about five minutes.
+    key three times, and the absolute path of the fap file). The cost was one rebuild from git and one run of main's four cases.
 
 ## The final review
 
