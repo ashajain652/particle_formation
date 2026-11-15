@@ -20,7 +20,11 @@ the windward side only, Asha). The order of decisions is that of spec 4.3c:
 
 Integrated followers run to the smaller of `ScenarioSettings.t_max` and the end of the parent's track (a release that
 leaves less than MIN_FLIGHT_S of that track is refused), and `overlap.residence` measures them against
-`Plume(parent track, law, bound)` from the release time. The far-wake start does not depend on theta, so the far-wake
+`Plume(parent track, law, bound)` from the release time. A follower whose first inside interval ends at the parent's
+base plane after it had fallen behind (the engine's `reached_parent`) caught the parent up from behind and never left
+its wake, so its reason is `near_wake_captured` and it is censored: the residence time, to the base plane, is a lower
+bound (Asha, 2026-11-14; Register et al. 2020 call this trapped behind the parent). The engine's label stays in
+`residence_reason`. The far-wake start does not depend on theta, so the far-wake
 integration and its residence are memoised in this process by (twin, diameter, altitude, settings) and shared by every
 far-wake theta; each theta still has its own run name and writes its own files, since its AFFIx record differs.
 
@@ -72,6 +76,7 @@ AFFIX_STATUS = {"continuum": "governing", "transitional": "indicative", "free_mo
 RELEASES = ("far_wake", "escape", "surface", "shock_band", "trapped", "no_law", "centroid")
 NO_THETA_RELEASES = ("centroid",)             # releases whose run name carries no theta (theta is undefined there)
 NO_LAW = {"rarefied": "rarefied_no_law", "too_slow": "too_slow_no_law"}
+NEAR_WAKE_CAPTURED = "near_wake_captured"     # reason for a follower that fell behind and caught the parent up
 IN_LAYER_WEIGHT = 0.5         # the follower is "in the shock layer" where the field's weight exceeds this
 LAYER_SAMPLE_DT = 1e-4        # s, sampling of the dense run up to the shock-layer exit for the smallest Kn_f ...
 LAYER_MAX_SAMPLES = 20_000    # ... widened so that this grid never has more samples
@@ -519,6 +524,11 @@ def sphere_in_spacecraft_plume(d_mm, h_km, theta_deg=90.0, settings=ScenarioSett
     summary["release_kind"] = release
     summary.update(_residence_summary(res, run, wa, plume, rel.t_r, d))
     summary["reason"] = "hit_parent" if run.end_reason == "hit_parent" else res.reason
+    if summary["reason"] == "reached_parent":
+        # It fell behind and caught the parent up from behind, so it never left the wake: Register et al. (2020) would
+        # call it trapped behind the parent. Reported as captured, with the residence time (to the parent's base plane,
+        # where the plume ends and tracking stops) a lower bound (Asha, 2026-11-14).
+        summary["reason"], summary["censored"] = NEAR_WAKE_CAPTURED, True
     if release == "escape":
         summary["residence_exceeds_t_fz"] = _residence_exceeds_t_fz(res, af.t_fz)
     return done(release, res, _history(plume, follower, rel.t_r, [x.t for x in res.exits]))

@@ -416,7 +416,9 @@ def test_map_cell_shows_residence_for_far_wake_and_total_inside_for_releases_tha
     never = plots.map_cell(_row(release_kind="surface", residence_time=0.0, first_interval=nan, t_first_entry=nan,
                                 total_inside=nan))
     assert never["value"] == 0.0
-    assert plots.map_cell(_row(reason="reached_parent", censored=True))["flags"] == ["c", "r"]
+    # a follower that caught the parent up from behind is captured in its near wake, and its time is a lower bound
+    assert plots.map_cell(_row(reason="near_wake_captured", censored=True))["flags"] == ["c", "w"]
+    assert "lower bound" in plots.CELL_FLAG_TEXT["c"] and "caught" in plots.CELL_FLAG_TEXT["w"]
     assert plots.map_cell(_row(reason="hit_parent", release_kind="surface"))["flags"] == ["h"]
     assert plots.map_cell(_row(release_kind="", reason="rarefied_no_law", residence_time=nan))["flags"] == ["n"]
     assert plots.map_cell(_row(release_kind="", reason="shock_band", residence_time=nan))["flags"] == ["b"]

@@ -70,9 +70,10 @@ KIND_HATCH = {"far_wake": "", "escape": "///", "surface": "xxx"}
 ZONE_COLOR = {"far_wake": "#256abf", "shock_band": "#e69f00", "escape": "#2a9d6f"}
 EXIT_MARKER = {"through_shock": "o", "past_base_plane": "s", "hit_parent": "X", "inside_at_end": "^"}
 # letters printed in the residence map's cells (reason or censored flag), explained in its legend
-CELL_FLAGS = {"censored": "c", "reached_parent": "r", "ahead_of_parent": "a", "hit_parent": "h",
+CELL_FLAGS = {"censored": "c", "near_wake_captured": "w", "ahead_of_parent": "a", "hit_parent": "h",
               "rarefied_no_law": "n", "too_slow_no_law": "n", "shock_band": "b", "near_wake_trapped": "t"}
-CELL_FLAG_TEXT = {"c": "censored (still inside when the integration ended)", "r": "reached_parent (fell behind, caught up)",
+CELL_FLAG_TEXT = {"c": "censored (still inside when tracking stopped: the time shown is a lower bound)",
+                  "w": "near_wake_captured (fell behind, then caught the parent up: still in its wake)",
                   "a": "ahead_of_parent (never fell behind)", "h": "hit_parent (struck the parent)",
                   "n": "no plume law (rarefied or too slow parent)", "b": "shock_band (not integrated)",
                   "t": "near_wake_trapped (not integrated)"}

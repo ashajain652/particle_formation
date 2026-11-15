@@ -366,6 +366,16 @@ the plane is labelled: `reached_parent` when the follower had fallen behind and 
 parent or be pushed aside by its shock, neither modelled), `ahead_of_parent` when it never fell behind (a larger
 ballistic coefficient than the parent, or a release on or ahead of the plane).
 
+**Catching the parent up is near-wake capture (Asha, 2026-11-14).** A follower that fell behind and then caught the
+parent up never left its wake: Register et al. (2020) would call it trapped behind the parent. The 2026-10-31 sweep
+had 152 of its 188 far-wake releases end this way, after 0.35 to 3.5 s, mostly dense spheres whose ballistic
+coefficient exceeds the hollow parent's (25 to 140 kg/m2), and the residence map showed those times as if the follower
+had left the plume. So the scenario's summary reports such a case with reason `near_wake_captured` and `censored`
+true: the residence time, to the base plane where the plume ends and tracking stops, is a lower bound. The engine
+(`overlap.residence`) is unchanged and its `reached_parent` label stays in the summary's `residence_reason`. What
+happens next (impact on the parent's base, being held in its recirculating near wake, or being pushed aside) is not
+modelled. The residence map marks these cells `w`.
+
 ### 4.3b Release angle and the shock-interaction outcome (Register et al. 2020; Asha, 2026-10-29)
 
 Source: Register, Mathias, Wheeler et al. (2020), Icarus 337:113468, the AFFIx model, read in full (notes:
@@ -892,6 +902,11 @@ three offered after Task 7b measured a 27 to 73 percent mass-flux excess with Bi
 ahead of the base plane is set by mass balance (flux-matched), Billig's shape kept as the sensitivity case (§4.3d).
 Asha also asked whether a rarefied follower turns continuum near the shock or bounces off it; the answers (it
 becomes more rarefied when crossing outward; a shock does not reflect it) and the smallest-Kn_f record are in §4.3d.
+On 2026-11-14, after the 2026-10-31 sweep put no follower in the far wake for long, Asha chose (first of three options:
+relabel catch-ups, an engineering near-wake flow field, a near-wake field from CFD or DSMC) to report a follower that
+catches the parent up as captured in its near wake, censored, rather than as having left the plume (§4.3a). The
+near-wake flow field (the inward turn round the shoulder, the low-pressure base region, the wake's neck), which this
+model lacks and which would act on rarefied followers and droplets, is left as an open design question.
 
 Calls made by the author (not decided by Asha; the final handover lists them again):
 - Union-of-balls definition of "in the plume" (§4.4).
