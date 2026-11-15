@@ -41,6 +41,20 @@ heights across a mixed face (`Sheet.gradient`'s `level`): a top-zone skin's thic
 held melt, not the surface, and the outer surface phi runs on across the boundary; the capillary term reads phi's
 curvature there as anywhere.
 
+Depth-resolved faces (plan 03b Task 4, design 21.5, planning ruling 5). `Sheet.from_division(division, markers)` takes
+the faces from the division of the layer (`division.divide`) instead of the tessellation: its shared boundaries, each
+with a length at every level from phi down to H (`length_z`, `levels`) and a unit normal from i toward j along the
+surface (`face_normal`). The surface's own operators (the gradient, the curvature's change, the thickness terms' face
+pushes) take the boundaries' lengths at phi, f = length(0) normal and w = length(0) / |x_j - x_i|. The transport takes
+each cell's own depth: across a boundary a moving cell k of the donor a sends at the rate (u_k . n)+ L(z_k) / A_a(z_k)
+[1/s], with the boundary's length L and the donor's cross-section A_a (`Skins.cell_section`) at the cell's mid-depth
+z_k (the length linear between the levels and held at its last level's value below H, where only an overfull column's
+cells reach), and a face push's part scaled by L(z_k) / L(0); landed metal flowing on, a new top cell, at L(0) / A(0).
+The thickness step's predicted fluxes take the same lengths, so it predicts the transport it precedes. The arrival rule
+is stage 3's (by fractions of the flowing depths), which puts metal at the depths it left where the two columns' flowing
+layers are equally deep. With lengths and cross-sections constant in depth this is the transport of `Sheet.of` to
+round-off. `Sheet.side_faces` gives the same boundaries for the skins' sideways conduction (`skin.SideFaces`).
+
 Every number here is a numerical setting of the skyscrapers' rules (named with its source); the physics is the shared
 package's."""
 import math
@@ -52,7 +66,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.sparse.csgraph import connected_components
 
-from .skin import Skins, above
+from .skin import SideFaces, Skins, above, level_values
 
 SLIVER = 1.0e-12          # a piece of a donor cell shorter than this share of it is a shared boundary's round-off, and a
                           # landing estimate below this share of the largest stays where it lands (skyscrapers' SLIVER)
@@ -100,7 +114,10 @@ class Sheet:
     """The markers' geometry in the skins' row order: unit normals `normal` (n, 3), positions `x` (n, 3), the faces'
     ends `i`, `j` (E,) (rows, i < j as markers), their vectors `f` (E, 3) [m] from i toward j, their two-point weights
     `w` (E,), the skins' top areas `area` (n,) [m2] and each row's marker `marker` (n,); `top` (n,) whether each row's
-    skin is top-zone (None: every skin full-depth) and `zone` [m] the skins' fine zone (stage 3 Task 10, Ruling 3)."""
+    skin is top-zone (None: every skin full-depth) and `zone` [m] the skins' fine zone (stage 3 Task 10, Ruling 3).
+    From a division (`from_division`, plan 03b Task 4), the faces are depth-resolved: each face's length at every level
+    `length_z` (E, B + 1) [m], the levels `levels` (B + 1,) [m] and its unit normal `face_normal` (E, 3); None for the
+    tessellation's faces (`of`)."""
     normal: np.ndarray
     x: np.ndarray
     i: np.ndarray
@@ -111,6 +128,9 @@ class Sheet:
     marker: np.ndarray
     top: np.ndarray = None
     zone: float = np.inf
+    length_z: np.ndarray = None
+    levels: np.ndarray = None
+    face_normal: np.ndarray = None
 
     @classmethod
     def of(cls, markers, skins=None):
@@ -131,6 +151,46 @@ class Sheet:
         top = getattr(markers, "top", None)
         top = None if top is None else np.asarray(top, bool)[marker]
         return cls(normal, x, i, j, f, length / d, skins.area, marker, top, skins.settings.fine_zone)
+
+    @classmethod
+    def from_division(cls, division, markers, skins=None):
+        """The sheet of `markers` carrying `skins` (default markers.skins) with the depth-resolved faces of `division`
+        (a `division.Division` of the markers, in their order; module docstring): f = length(0) normal,
+        w = length(0) / |x_j - x_i|, and every face's lengths at the division's levels."""
+        skins = markers.skins if skins is None else skins
+        n, rows = skins.n, markers.skin_index
+        if len(np.unique(rows)) != len(rows) or len(rows) != n:
+            raise ValueError("every skin row must belong to exactly one marker")
+        if len(division.area) != len(rows):
+            raise ValueError("the division must be of these markers: one column per marker")
+        marker = np.empty(n, dtype=np.int64)
+        marker[rows] = np.arange(len(rows))
+        normal, x = markers.normal[marker], markers.x[marker]
+        i, j = rows[division.i], rows[division.j]
+        length = np.array(division.length, dtype=float)
+        unit = np.array(division.normal, dtype=float)
+        d = np.linalg.norm(x[j] - x[i], axis=1)
+        top = getattr(markers, "top", None)
+        top = None if top is None else np.asarray(top, bool)[marker]
+        return cls(normal, x, i, j, length[:, :1] * unit, length[:, 0] / d, skins.area, marker, top,
+                   skins.settings.fine_zone, length, np.array(division.levels, dtype=float), unit)
+
+    def side_faces(self):
+        """The depth-resolved faces as the skins' sideways conduction takes them (`skin.SideFaces`, in the skins' row
+        order, the distance |x_j - x_i| between the faces' markers)."""
+        if self.length_z is None:
+            raise ValueError("the sheet's faces have no depths: build it from a division (Sheet.from_division)")
+        return SideFaces(self.i, self.j, self.length_z, self.levels, np.linalg.norm(self.x[self.j] - self.x[self.i],
+                                                                                    axis=1))
+
+    def depth_faces(self, keep, z):
+        """For the directed faces `keep` (D,) (`directed`'s order) and depths z (D, K) [m] of their senders' cells:
+        each face's length at those depths (D, K) [m], its length at phi (D,) [m] and its unit normal from sender to
+        receiver (D, 3) (module docstring; depth-resolved faces only)."""
+        E = len(self.i)
+        face = keep % E
+        sign = np.where(keep < E, 1.0, -1.0)[:, None]
+        return level_values(self.levels, self.length_z[face], z), self.length_z[face, 0], sign * self.face_normal[face]
 
     @property
     def n(self):
@@ -314,10 +374,17 @@ def thickness_step(skins, sheet, dt, mbook, applied, g, sigma, kappa, J):
     a, b, f = a_all[keep], b_all[keep], f_all[keep]
     phi_d = np.r_[phi0, -phi0][keep]
     dphi_d = sp.vstack([dphi, -dphi]).tocsr()[keep]
-    un = np.where(moving[a], np.einsum("dkx,dx->dk", (skins.U - r[..., None] * applied[:, None, :])[a], f), 0.0)
+    u_mov = (skins.U - r[..., None] * applied[:, None, :])[a]
+    ra = r[a]
+    if sheet.length_z is None:
+        un = np.where(moving[a], np.einsum("dkx,dx->dk", u_mov, f), 0.0)
+    else:                          # the depth-resolved faces' lengths at the cells' mid-depths, as `transport` takes them
+        L, L0, unit = sheet.depth_faces(keep, (np.cumsum(dz, axis=1) - 0.5 * dz)[a])
+        un = np.where(moving[a], np.einsum("dkx,dx->dk", u_mov, unit) * L, 0.0)
+        ra = ra * np.divide(L, L0[:, None], out=np.zeros_like(L), where=L0[:, None] > 0.0)
     mx = np.r_[sheet.mixed(), sheet.mixed()][keep]
     sends = moving[a] & _zone_cells(sheet, dz, a, mx)                                   # as `transport`
-    ra, da = r[a], np.where(sends, dz[a], 0.0)
+    da = np.where(sends, dz[a], 0.0)
 
     def flux(phi):
         return (np.maximum(un + ra * phi[:, None], 0.0) * da).sum(axis=1)                  # m3/s
@@ -544,11 +611,21 @@ def transport(skins, sheet, dt, faces=None):
     keep = np.flatnonzero(moving.any(axis=1)[A_all])
     a, b, f, mx = A_all[keep], B_all[keep], F_all[keep], mixed_all[keep]
     dz = skins.dz(T)
-    across = np.einsum("dkx,dx->dk", skins.U[a], f)
-    if faces is not None:
-        across = across + faces.response[a] * faces.across[keep][:, None]
     sends = moving[a] & _zone_cells(sheet, dz, a, mx)                   # Ruling 3: a mixed face takes the top zone
-    c = np.where(sends, np.maximum(across, 0.0), 0.0) / sheet.area[a][:, None]
+    if sheet.length_z is None:
+        across = np.einsum("dkx,dx->dk", skins.U[a], f)
+        if faces is not None:
+            across = across + faces.response[a] * faces.across[keep][:, None]
+        c = np.where(sends, np.maximum(across, 0.0), 0.0) / sheet.area[a][:, None]
+    else:                          # each cell at its mid-depth's length and cross-section (ruling 5, module docstring)
+        mid = np.cumsum(dz, axis=1) - 0.5 * dz
+        L, L0, unit = sheet.depth_faces(keep, mid[a])
+        per = np.einsum("dkx,dx->dk", skins.U[a], unit)
+        if faces is not None:
+            push = np.divide(faces.across[keep], L0, out=np.zeros(len(keep)), where=L0 > 0.0)
+            per = per + faces.response[a] * push[:, None]
+        A = skins.cell_section(mid)[a]
+        c = np.divide(np.where(sends, np.maximum(per * L, 0.0), 0.0), A, out=np.zeros(A.shape), where=A > 0.0)
     sel = (c > 0.0).any(axis=1)
     a, b, c, mx = a[sel], b[sel], c[sel], mx[sel]
     if not len(a):
@@ -589,7 +666,13 @@ def transport(skins, sheet, dt, faces=None):
     u_on = _landed_velocity(sheet, run, dt, np.bincount(rec, w_land, n),
                             np.stack([np.bincount(rec, w_land * v[:, x], n) for x in range(3)], axis=1), stay)
     on = np.flatnonzero((u_on != 0.0).any(axis=1)[A_all])
-    c_on = np.maximum(np.einsum("dx,dx->d", u_on[A_all[on]], F_all[on]), 0.0) / sheet.area[A_all[on]]
+    if sheet.length_z is None:
+        c_on = np.maximum(np.einsum("dx,dx->d", u_on[A_all[on]], F_all[on]), 0.0) / sheet.area[A_all[on]]
+    else:                          # a new top cell, at the length and cross-section at phi
+        _, L0, unit = sheet.depth_faces(on, np.zeros((len(on), 1)))
+        A0 = skins.cell_section(np.zeros((n, 1)))[A_all[on], 0]
+        c_on = np.divide(np.maximum(np.einsum("dx,dx->d", u_on[A_all[on]], unit), 0.0) * L0, A0,
+                         out=np.zeros(len(on)), where=A0 > 0.0)
     on, c_on = on[c_on > 0.0], c_on[c_on > 0.0]
     reach = np.zeros(n, dtype=bool)                          # the new top cells metal reaches: only those send
     reach[rec] = True
@@ -720,10 +803,11 @@ def transport(skins, sheet, dt, faces=None):
 def landing_conduct(skins, landed, dt, depth=None):
     """Metal that landed on a rigid top loses its heat to the metal beneath within the flow sub-steps (the skyscrapers'
     `landing_conduct`): the cells of each skin in `landed` (n,) whose tops lie within `depth` (LANDING_DEPTH) of its top,
-    at least LANDING_CELLS, are conducted for dt [s] implicitly (`Skins.conduct` on those cells alone), with no heat
-    across the block's top (its heating and radiation are the heat sub-step's) nor its bottom; what the Newton iteration
-    leaves of the block's energy is kept by its bottom cell, so the books are exact. An open trial pass's sensitivity is
-    carried with the heat. Updates the cells' enthalpies."""
+    at least LANDING_CELLS, are conducted for dt [s] implicitly (`Skins.conduct` on those cells alone, on their columns'
+    measured profiles where the skins have them), with no heat across the block's top (its heating and radiation are
+    the heat sub-step's) nor its bottom; what the Newton iteration leaves of the block's energy is kept by its bottom
+    cell, so the books are exact. An open trial pass's sensitivity is carried with the heat. Updates the cells'
+    enthalpies."""
     rows = np.flatnonzero(landed)
     if not rows.size:
         return
@@ -739,6 +823,9 @@ def landing_conduct(skins, landed, dt, depth=None):
     block.material, block.settings, block.props = skins.material, skins.settings, skins.props
     block.rho_s, block.rho_l = skins.rho_s, skins.rho_l
     block.area, block.kappa = skins.area[rows].copy(), skins.kappa[rows].copy()
+    if skins.profile is not None:                                   # the blocks are their columns' tops: they conduct
+        block.profile_levels = skins.profile_levels                 # on the columns' measured profiles (plan 03b
+        block.profile = skins.profile[rows].copy()                  # Task 4, the controller's ruling 4)
     block.momentum_out = np.zeros((len(rows), 3))
     block.dH = None
     block.install(np.where(inside, skins.m[rows, :width], 0.0), np.where(inside, skins.H[rows, :width], 0.0), k,

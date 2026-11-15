@@ -450,3 +450,236 @@ def test_the_transport_reports_its_residual_against_its_tolerance(monkeypatch):
     assert runoff.TRANSPORT_TOL == 1e-13
     assert "residual 1.111e-01 of its scale" in message
     assert "tolerance of 1e-13" in message and "1.111e+12 times" in message
+
+
+# -- depth-resolved faces from the division (plan 03b Task 4, planning ruling 5) -----------------------------------------
+import copy
+import dataclasses
+
+from reentry_model.levelset.boxmesh import BoxBase, build
+from reentry_model.levelset.division import divide
+
+from cases import DESIGN_SPACING, stage3_box, stage3_division
+
+SHEET_OFF = 0.13e-3        # m: the flat face off the mesh's node planes (the stage 3 box's offset)
+GRID_OFF = 0.07e-3         # m: the markers' grid off the node planes (test_levelset_division's offset) ...
+JITTER = 0.05e-3           # m: ... and each marker off it by an irregular offset of up to this (the controller's ruling 2:
+                           # a marker equidistant from two planes of nodes drops boundary length at some levels)
+DEPTH_SETTINGS = SkinSettings(cell=20e-6)    # the development cells, H = 1.2 mm
+
+
+def flat_division(n_side, seed=3):
+    """A flat face (phi = y - SHEET_OFF, normal +y, the metal below it filling a box mesh of 0.5 mm cells) with n_side by
+    n_side markers DESIGN_SPACING apart, off the mesh's planes of nodes by GRID_OFF and an irregular offset of up to
+    JITTER, and the layer divided among them at the skin depth. Returns (positions (n, 3), normals (n, 3), Division)."""
+    half = 0.5 * n_side * DESIGN_SPACING
+    cells = int(round(2.0 * half / 0.5e-3))
+    mesh = build(BoxBase((-half, -2.5e-3, -half), 0.5e-3, (cells, 6, cells)))
+    phi = mesh.points[:, 1] - SHEET_OFF
+    g = -half + (np.arange(n_side) + 0.5) * DESIGN_SPACING + GRID_OFF
+    X, Z = np.meshgrid(g, g, indexing="ij")
+    rng = np.random.default_rng(seed)
+    x = np.column_stack([X.ravel() + rng.uniform(-JITTER, JITTER, X.size), np.full(X.size, SHEET_OFF),
+                         Z.ravel() + rng.uniform(-JITTER, JITTER, X.size)])
+    normal = np.tile([0.0, 1.0, 0.0], (len(x), 1))
+    return x, normal, divide(mesh, phi, DEPTH_SETTINGS.depth, x, normal)
+
+
+def division_markers(x, normal, d, mat, T, settings=DEPTH_SETTINGS):
+    """Markers at x with the normals given, each with a skin whose measured profile is its column of the division d and
+    whose top area is the column's top, filled full at T [K] (one or per marker). Returns the markers (skins set)."""
+    n = len(x)
+    sk = Skins(mat, d.area[:, 0], np.zeros((n, 2)), settings)
+    sk.set_profile(d.levels, d.area)
+    T = np.broadcast_to(np.asarray(T, dtype=float), (n,))
+    sk.fill(sk.density(T) * sk.column_volume(), T)
+    return Markers(x, normal, d.area[:, 0], np.zeros((n, 2)), np.arange(n), np.full(n, -1), DESIGN_SPACING, skins=sk)
+
+
+def _same_cells(a, b, rel):
+    assert np.array_equal(a.count, b.count)
+    for p, q in ((a.m, b.m), (a.H, b.H), (a.U, b.U)):
+        assert np.abs(p - q).max() <= rel * np.abs(q).max()
+
+
+def test_depth_faces_with_constant_lengths_transport_as_before():
+    """On a flat face the division's boundaries have the same length at every level and its columns the same
+    cross-section, to 1e-12. With exactly constant lengths and cross-sections the sheet of the division
+    (`Sheet.from_division`: each cell's rate (u.n) L(z)/A(z) at its mid-depth, ruling 5) and the sheet of the markers
+    given the division's top faces (`Sheet.of`, stage 3's faces) carry the same metal: liquid over rigid metal (and four
+    columns rigid at the top, which metal lands on and flows over), running one way at speeds varying with the column
+    and the depth, one transport sub-step with a face push leaves the same cells and books to 1e-14, and a heat
+    sub-step's flow sub-steps (the pushes, the momentum, the thickness terms, the transport, the landing conduction) to
+    1e-12."""
+    x, normal, d = flat_division(6)
+    B = len(d.levels) - 1
+    assert np.all(d.length[:, 0] > 0.0)
+    assert np.abs(d.length / d.length[:, :1] - 1.0).max() <= 1e-12
+    assert np.abs(d.area / d.area[:, :1] - 1.0).max() <= 1e-12
+    const = dataclasses.replace(d, length=np.repeat(d.length[:, :1], B + 1, axis=1),
+                                area=np.repeat(d.area[:, :1], B + 1, axis=1))
+    mat = LinearMeltMaterial(rho_l=2800.0)            # no swelling: the temperatures below move no cell's depth
+    mk = division_markers(x, normal, const, mat, RIGID)
+    sk = mk.skins
+    n = mk.n
+    rng = np.random.default_rng(11)
+    dz = sk.dz()
+    z = np.cumsum(dz, axis=1) - 0.5 * dz
+    liquid_to = rng.uniform(0.2e-3, 0.6e-3, n)
+    liquid_to[[3, 14, 21, 32]] = 0.0                  # rigid tops
+    T = np.where(z < liquid_to[:, None], LIQUID, RIGID)
+    sk.H = np.where(sk.valid, sk.m * sk.props.enthalpy(T), 0.0)
+    angle = np.deg2rad(25.0)
+    e = np.array([np.cos(angle), 0.0, np.sin(angle)])
+    speed = 0.2 * rng.uniform(0.5, 1.5, n)[:, None] * (1.0 + z / DEPTH_SETTINGS.depth)
+    sk.U = np.where((sk.valid & sk.flowing())[..., None], speed[..., None] * e, 0.0)
+    mk.faces = Faces(d.i, d.j, d.length[:, 0], d.normal)
+    old, new = runoff.Sheet.of(mk), runoff.Sheet.from_division(const, mk)
+    assert new.length_z.shape == (len(d.i), B + 1) and np.array_equal(new.levels, d.levels)
+    np.testing.assert_allclose(new.f, old.f, rtol=1e-15, atol=0.0)
+    np.testing.assert_allclose(new.w, old.w, rtol=1e-15)
+    E = len(d.i)
+    push = runoff.FacePush(np.where(sk.valid & sk.flowing(), 1e-7, 0.0), 0.2 * rng.uniform(-1.0, 1.0, 2 * E)
+                           * np.r_[old.w, old.w] * 1e3)
+    a, b = copy.deepcopy(sk), copy.deepcopy(sk)
+    book_a = runoff.transport(a, old, 4e-3, faces=push)
+    book_b = runoff.transport(b, new, 4e-3, faces=push)
+    assert book_a.landed[[3, 14, 21, 32]].any() and book_a.courant > 0.1
+    _same_cells(b, a, 1e-14)
+    for p, q in ((book_b.mass, book_a.mass), (book_b.enthalpy, book_a.enthalpy), (book_b.momentum, book_a.momentum),
+                 (book_b.wall, book_a.wall)):
+        assert np.abs(p - q).max() <= 1e-14 * np.abs(q).max()
+    v_hat = np.array([-0.6 * np.cos(angle), 0.8, -0.6 * np.sin(angle)])     # the meridian along e
+    forcing = flight_forcing(mk, v_hat, dp_ds=-2e4, tau=20.0, decel=50.0)
+    forcing.cycles = 3
+    a, b = copy.deepcopy(sk), copy.deepcopy(sk)
+    runoff.flow_substeps(a, old, forcing, 0.01)
+    runoff.flow_substeps(b, new, forcing, 0.01)
+    _same_cells(b, a, 1e-12)
+
+
+def test_a_uniform_flow_over_a_flat_face_neither_gathers_nor_spreads():
+    """Liquid filling every column of a flat face of 8 by 8 markers (the division's real lengths and cross-sections),
+    every cell moving at 0.1 m/s in one direction 30 degrees off the markers' grid, one transport sub-step at a Courant
+    number of about 1e-5: every interior column's mass changes by at most 1e-12 of itself. The interior is the columns
+    at least two markers inside the face's edge: the columns at the edge, whose cells are open on the outer side, lose
+    or gain metal at the Courant number, and the implicit sub-step carries that into their neighbours at its square
+    and into the next at its cube (1e-15)."""
+    n_side = 8
+    x, normal, d = flat_division(n_side, seed=5)
+    mk = division_markers(x, normal, d, LinearMeltMaterial(), LIQUID)
+    sk = mk.skins
+    angle = np.deg2rad(30.0)
+    sk.U = np.where(sk.valid[..., None], 0.1 * np.array([np.cos(angle), 0.0, np.sin(angle)]), 0.0)
+    sheet = runoff.Sheet.from_division(d, mk)
+    m0 = sk.m.sum(axis=1)
+    book = runoff.transport(sk, sheet, 2e-7)
+    change = np.abs(sk.m.sum(axis=1) / m0 - 1.0)
+    g = np.arange(n_side)
+    gx, gz = np.meshgrid(g, g, indexing="ij")
+    inner = ((gx >= 2) & (gx < n_side - 2) & (gz >= 2) & (gz < n_side - 2)).ravel()
+    print("uniform flow: Courant {:.2e}; interior columns' largest change {:.2e}, the edge's {:.2e}".format(
+        book.courant, change[inner].max(), change[~inner].max()))
+    assert 1e-6 < book.courant < 1e-4 and change[~inner].max() > 1e-7
+    assert change[inner].max() <= 1e-12
+    assert sk.m.sum() == pytest.approx(m0.sum(), rel=1e-14)
+
+
+def test_runoff_crosses_a_box_edge():
+    """The stage 3 box's division (cases.stage3_division), liquid filling every column, and the pair of columns across
+    one of its edges (normals more than 60 degrees apart) sharing the longest boundary at the skin depth: the cells of
+    the column on one face run toward the edge at 0.2 m/s for one transport sub-step of 0.1 ms. Each of its cells sends
+    at ruling 5's rate, the sum over its boundaries of (u.n)+ L(z)/A(z) at its mid-depth (the division's lengths and the
+    column's cross-section, an independent oracle, 1e-12); the column across the edge receives the metal at the depths
+    it left (each of its cells gains what the donor's cells sent from the depths it spans, 1e-9); the books close. The
+    sheet hands the same boundaries to the sideways heat (`Sheet.side_faces`, in the skins' row order)."""
+    box, d = stage3_box(), stage3_division()
+    mk = division_markers(box.x, box.normal, d, LinearMeltMaterial(), LIQUID)
+    sk = mk.skins
+    full = d.area[:, -1] > 0.0
+    edge = (np.einsum("ek,ek->e", box.normal[d.i], box.normal[d.j]) < 0.5) & full[d.i] & full[d.j]
+    e = int(np.argmax(np.where(edge, d.length[:, -1], -1.0)))
+    a, b = int(d.i[e]), int(d.j[e])
+    t = d.normal[e] - (d.normal[e] @ box.normal[a]) * box.normal[a]
+    u = 0.2 * t / np.linalg.norm(t)
+    sk.U[a] = np.where(sk.valid[a][:, None], u, 0.0)
+    sheet = runoff.Sheet.from_division(d, mk)
+    side = sheet.side_faces()                                       # the same boundaries for the sideways heat
+    assert np.array_equal(side.i, d.i) and np.array_equal(side.length, d.length)
+    np.testing.assert_allclose(side.distance, np.linalg.norm(box.x[d.j] - box.x[d.i], axis=1), rtol=1e-15)
+    M0, E0, P0 = sk.m.sum(), sk.H.sum(), sk.totals()[2].sum(axis=0)
+    m_old, count_old = sk.m.copy(), sk.count.copy()
+    dz = sk.dz()
+    edges = [np.r_[0.0, np.cumsum(dz[c, :sk.count[c]])] for c in (a, b)]
+    mid = 0.5 * (edges[0][1:] + edges[0][:-1])
+    dt = 1e-4
+    book = runoff.transport(sk, sheet, dt)
+    # the donor's rate (ruling 5) from the division itself
+    faces = np.flatnonzero((d.i == a) | (d.j == a))
+    rate = np.zeros(len(mid))
+    sends = {}
+    A = np.interp(mid, d.levels, d.area[a])
+    for f in faces:
+        n_out = d.normal[f] if d.i[f] == a else -d.normal[f]
+        c = max(u @ n_out, 0.0) * np.interp(mid, d.levels, d.length[f]) / A
+        rate += c
+        sends[f] = c
+    k = count_old[a]
+    kept = m_old[a, :k] / (1.0 + dt * rate)
+    np.testing.assert_allclose(sk.m[a, :k], kept, rtol=1e-12)
+    sent = dt * sends[e] * kept                                     # what each donor cell sent across the edge
+    assert np.all(sent > 0.0) and sk.count[b] == count_old[b]       # into the receiver's flowing layer, no new cell
+    # each receiving cell's gain: the donor's metal from the depths it spans (both columns full to H)
+    za, zb = edges
+    overlap = np.maximum(np.minimum(za[1:, None], zb[None, 1:]) - np.maximum(za[:-1, None], zb[None, :-1]), 0.0)
+    expected = (sent[:, None] * overlap / np.diff(za)[:, None]).sum(axis=0)
+    got = sk.m[b, :count_old[b]] - m_old[b, :count_old[b]]
+    print("box edge: columns {} and {} (their normals' dot product {:.2f}), boundary {:.3f} to {:.3f} mm long from phi "
+          "to H; the donor's rate across it from {:.1f} to {:.1f} 1/s".format(
+              a, b, box.normal[a] @ box.normal[b], d.length[e, 0] * 1e3, d.length[e, -1] * 1e3, sends[e].min(),
+              sends[e].max()))
+    np.testing.assert_allclose(got, expected, rtol=1e-9, atol=1e-9 * expected.max())
+    assert book.mass[b] == pytest.approx(sent.sum(), rel=1e-12)
+    assert sk.m.sum() == pytest.approx(M0, rel=1e-14) and sk.H.sum() == pytest.approx(E0, rel=1e-14)
+    assert abs(book.mass.sum()) <= 1e-14 * M0
+    P1 = sk.totals()[2].sum(axis=0)
+    assert np.linalg.norm(P1 - P0 - (book.momentum + book.wall).sum(axis=0)) <= 1e-12 * np.linalg.norm(P0)
+
+
+def test_landing_conduction_conducts_on_the_profile():
+    """The controller's ruling 4: the landing conduction's blocks carry their columns' measured profile, so that metal
+    landed on a profiled skin conducts on the profile's cross-sections, not on the flat top area. A film of 20 um at
+    950 K on rigid metal at 700 K in a column narrowing by 60 % to H with a top area 10 % above the profile's top, one
+    landing conduction of 0.5 ms: the block's cells end as a profiled column of those cells alone conducted with no heat
+    across its top or bottom ends them, to 1e-12, and differently from the flat top area's conduction; the block keeps
+    its energy and the column nothing landed on is untouched."""
+    mat = LinearMeltMaterial()
+    area = 4e-6 * (1.0 - 0.6 * np.linspace(0.0, 1.0, 25))
+    levels = np.linspace(0.0, DEPTH_SETTINGS.depth, 25)
+    settings = SkinSettings(cell=10e-6)
+    sk = Skins(mat, np.full(2, 1.1 * area[0]), np.zeros((2, 2)), settings)
+    sk.set_profile(levels, np.vstack([area, area]))
+    sk.fill(mat.rho * sk.column_volume() * 0.8, 700.0)
+    sk.H[:, :2] = sk.m[:, :2] * sk.props.enthalpy(LIQUID)
+    m0, H0 = sk.m.copy(), sk.H.copy()
+    dz = sk.dz()
+    k = int(max(((np.cumsum(dz, axis=1) - dz)[0] < runoff.LANDING_DEPTH).sum(), runoff.LANDING_CELLS))
+    landed = np.array([True, False])
+    runoff.landing_conduct(sk, landed, 5e-4)
+
+    def alone(profile):
+        ref = Skins(mat, sk.area[:1], np.zeros((1, 2)), settings)
+        if profile:
+            ref.set_profile(levels, area[None, :])
+        ref.install(m0[:1, :k], H0[:1, :k], [k])
+        heat = ref.conduct(5e-4, 0.0, 0.0, 0.0, None)
+        ref.H[0, k - 1] += heat.E_base[0]
+        return ref.H[0, :k]
+
+    on_profile, on_flat = alone(True), alone(False)
+    change = np.abs(on_profile - H0[0, :k]).max()
+    assert change > 0.0
+    np.testing.assert_allclose(sk.H[0, :k], on_profile, rtol=0.0, atol=1e-12 * change)
+    assert np.abs(on_flat - on_profile).max() > 1e-3 * change
+    assert sk.H[0, :k].sum() == pytest.approx(H0[0, :k].sum(), rel=1e-14)
+    assert np.array_equal(sk.H[0, k:], H0[0, k:]) and np.array_equal(sk.H[1], H0[1]) and np.array_equal(sk.m, m0)

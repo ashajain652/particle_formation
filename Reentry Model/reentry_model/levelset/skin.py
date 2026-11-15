@@ -55,10 +55,31 @@ T every time: a cell flows above the shared T_rigid (solid fraction below the rh
 is liquid at or above the liquidus, anchored in the unbroken run of rigid cells from the bottom up, and a crust where it
 is rigid with flowing metal between it and the floor. `momentum_step` advances every column's velocities implicitly,
 each component apart, with the drag between neighbouring cells through the cross-section at their interface's depth,
-each flowing cell's viscosity at its own shear rate, the anchored cells at rest and a crust one unknown."""
+each flowing cell's viscosity at its own shear rate, the anchored cells at rest and a crust one unknown.
+
+Sideways conduction (plan 03b Task 4, design 21.5, planning ruling 5). Neighbouring columns share boundaries in the layer
+(`division.Division`'s i, j and length, `SideFaces`): a point on a shared boundary lies at the same depth below phi on
+either side, so the cells that meet across it are those at that depth in each column. Cell k of column i and cell l of
+column j exchange heat through the conductance G_kl = Lambda_kl k_h / |x_j - x_i|, Lambda_kl the shared length
+integrated over the overlap of the two cells' depth spans (the length piecewise linear between the levels, and held at
+its last level's value below H, where only an overfull column's cells reach, as `cell_section` holds the end's
+cross-section), k_h the harmonic mean 2 k_k k_l / (k_k + k_l) of their conductivities and x the markers' positions: a
+two-point flux, like runoff's weight. `conduct(..., side=SideFaces)` puts these fluxes in the same backward-Euler step
+as the depth conduction: one Newton iteration over every column's cells together, its Jacobian (the columns'
+tridiagonal blocks and the sideways couplings, with their dk/dT terms) solved by restarted GMRES preconditioned by the
+columns' own tridiagonal solves (`_Sideways.solve`). Why that solver (plan 03b Task 4, design 21.14 leaves it to the
+builder; measured once on the stage 3 box's Jacobian, 132 columns, 5676 unknowns): a sparse LU (SuperLU) factorised it
+in 0.115 s, its fill 1.9 million entries for 64 thousand, against 0.014 s for GMRES in 18 iterations; with sideways
+conductances eight times larger (markers 0.25 mm apart) 0.031 s in 45. The LU's fill grows faster than the cells,
+while an iteration costs one Thomas solve and one product, and the depth conduction, the stiff part, is solved exactly
+by the preconditioner. The heat each column gains sideways is booked per column (`HeatBook.E_side`), each pair's flux
+given by one and taken by the other, so it sums to zero to round-off whatever the solve's error."""
+from collections import namedtuple
 from dataclasses import dataclass
 
 import numpy as np
+import scipy.sparse as sp
+import scipy.sparse.linalg as spla
 
 from reentry_model.shared import rheology
 from reentry_model.shared.thermal import SIGMA_SB
@@ -89,6 +110,11 @@ END_SLACK = 1e-12          # cells within this share of their column's volume re
                            # (round-off where two depths nearly coincide) are none, and above one less it the whole
                            # (plan 03b Task 3: the profile's depths, `exchange_base`, `take_between`, by-depth combine)
 LEVELS_RTOL = 1e-9         # a profile's deepest level must be the skins' depth to within this share (`set_profile`)
+SIDE_RTOL = 1e-12          # the sideways heat's linear solve stops at this share of its right-hand side's norm (plan 03b
+                           # Task 4; Newton's NEWTON_TOL still decides the sub-step's convergence)
+SIDE_RESTART = 50          # GMRES iterations between restarts in that solve (plan 03b Task 4: on the stage 3 box it took
+                           # 18, and 45 with the sideways conductances eight times larger, measured once each)
+SIDE_CYCLES = 20           # restarts at most: SIDE_RESTART * SIDE_CYCLES iterations before it raises
 
 
 @dataclass
@@ -175,8 +201,10 @@ def _depth_of_volume(v, k1, k2):
 class HeatBook:
     """What one heat sub-step (`Skins.conduct`) did, per column [J]: the convective heat taken in at the top, the heat
     radiated from it, the heat conducted into the volume through the base (the residual of the books, so they close
-    exactly whatever the iteration error), the heat gained sideways (zero: no sideways conduction in the level set's
-    skins yet) and, in a trial pass, the base heat's derivative with respect to the base temperature [J/K]."""
+    exactly whatever the iteration error), the heat gained sideways from the neighbouring columns (zero without
+    `side`; with it, each pair's flux given by one column and taken by the other, so the columns' sum is zero to
+    round-off) and, in a trial pass, the base heat's derivative with respect to the base temperature [J/K] (with
+    sideways conduction, for every column's base temperature moving together, `Skins.conduct`)."""
     E_top: np.ndarray
     E_rad: np.ndarray
     E_base: np.ndarray
@@ -213,6 +241,131 @@ class BaseExchange:
     H: np.ndarray
     P: np.ndarray
     cells: np.ndarray
+
+
+SideFaces = namedtuple("SideFaces", "i j length levels distance")
+SideFaces.__doc__ = """The boundaries neighbouring columns share in the layer, for sideways conduction (module docstring;
+plan 03b Task 4): the two columns of each boundary `i`, `j` (E,) (skins' rows), its length at each level `length`
+(E, B + 1) [m], the levels' depths `levels` (B + 1,) [m] from 0 to H (a `division.Division`'s, in the skins' row
+order: `runoff.Sheet.side_faces`), and the distance between the two columns' markers `distance` (E,) [m],
+|x_j - x_i|."""
+
+
+def level_values(levels, values, z):
+    """Row by row, `values` (E, B + 1) given at the depths `levels` (B + 1,) [m] and linear between them, at the depths
+    z (E, ...) [m]; held at the end values above the first level and below the last."""
+    z = np.asarray(z, dtype=float)
+    flat = z.reshape(len(values), int(np.prod(z.shape[1:])))
+    k = np.clip(np.searchsorted(levels, flat, side="right") - 1, 0, len(levels) - 2)
+    s = np.clip((flat - levels[k]) / (levels[k + 1] - levels[k]), 0.0, 1.0)
+    out = (1.0 - s) * np.take_along_axis(values, k, axis=1) + s * np.take_along_axis(values, k + 1, axis=1)
+    return out.reshape(z.shape)
+
+
+def level_integral(levels, values, z):
+    """Row by row, the integral of `level_values` from 0 to the depths z (E, ...) [m] (zero above 0): piecewise quadratic
+    to the last level and linear below it, at the last value."""
+    z = np.asarray(z, dtype=float)
+    flat = z.reshape(len(values), int(np.prod(z.shape[1:])))
+    h = np.diff(levels)
+    W = np.zeros(values.shape)
+    W[:, 1:] = np.cumsum(0.5 * (values[:, :-1] + values[:, 1:]) * h, axis=1)
+    zc = np.clip(flat, levels[0], levels[-1])
+    k = np.clip(np.searchsorted(levels, zc, side="right") - 1, 0, len(levels) - 2)
+    t = zc - levels[k]
+    v0, v1 = np.take_along_axis(values, k, axis=1), np.take_along_axis(values, k + 1, axis=1)
+    inside = np.take_along_axis(W, k, axis=1) + t * (v0 + 0.5 * (v1 - v0) / h[k] * t)
+    return (inside + values[:, -1:] * np.maximum(flat - levels[-1], 0.0)).reshape(z.shape)
+
+
+class _Sideways:
+    """The sideways conduction of one heat sub-step (module docstring; planning ruling 5), between the cells of `side`'s
+    columns as they lie at the sub-step's start: `z` (n, K + 1) each column's cell boundaries [m] below its top (held at
+    its bottom beyond its count). For every pair of cells that overlap in depth across a shared boundary, the flat
+    indices `a`, `b` of the cells (in i's and j's columns), their columns `ci`, `cj` and `lam` [m], the shared length
+    integrated over the overlap over the markers' distance; with the Jacobian's sparsity pattern of the whole
+    sub-step."""
+
+    def __init__(self, side, z, count):
+        n, K1 = z.shape
+        K = K1 - 1
+        i, j = np.asarray(side.i, dtype=np.int64), np.asarray(side.j, dtype=np.int64)
+        length = np.asarray(side.length, dtype=float)
+        levels = np.asarray(side.levels, dtype=float).reshape(-1)
+        distance = np.asarray(side.distance, dtype=float).reshape(-1)
+        E = len(i)
+        if (j.shape != (E,) or length.shape != (E, len(levels)) or distance.shape != (E,)
+                or (E and (min(i.min(), j.min()) < 0 or max(i.max(), j.max()) >= n))):
+            raise ValueError("side faces need columns i, j (E,) of the skins, lengths (E, B + 1) at the levels and "
+                             "distances (E,)")
+        if not (np.all(np.diff(levels) > 0.0) and np.all(np.isfinite(length) & (length >= 0.0))
+                and np.all(np.isfinite(distance) & (distance > 0.0))):
+            raise ValueError("side faces need rising levels, finite non-negative lengths and positive distances")
+        # the pieces both columns' cell boundaries cut the depth into: a piece starting at the p-th boundary in the
+        # merged order lies in the cell of i whose top is the last of i's boundaries up to it (likewise for j)
+        s = np.concatenate([z[i], z[j]], axis=1)
+        order = np.argsort(s, axis=1, kind="stable")
+        s = np.take_along_axis(s, order, axis=1)
+        from_i = order < K1
+        ki, kj = np.cumsum(from_i, axis=1)[:, :-1] - 1, np.cumsum(~from_i, axis=1)[:, :-1] - 1
+        W = level_integral(levels, length, s)
+        lam = np.diff(W, axis=1) / distance[:, None]
+        keep = ((s[:, 1:] > s[:, :-1]) & (lam > 0.0) & (ki >= 0) & (kj >= 0)
+                & (ki < count[i][:, None]) & (kj < count[j][:, None]))
+        e, p = np.nonzero(keep)
+        self.ci, self.cj, self.lam = i[e], j[e], lam[e, p]
+        self.a, self.b = self.ci * K + ki[e, p], self.cj * K + kj[e, p]
+        self.n, self.K = n, K
+        idx = np.arange(n * K).reshape(n, K)
+        self._rows = np.concatenate([idx.ravel(), idx[:, 1:].ravel(), idx[:, :-1].ravel(),
+                                     self.a, self.a, self.b, self.b])
+        self._cols = np.concatenate([idx.ravel(), idx[:, :-1].ravel(), idx[:, 1:].ravel(),
+                                     self.a, self.b, self.a, self.b])
+
+    def fluxes(self, T, k, kp):
+        """At the cells' temperatures T, conductivities k and their slopes kp (n, K): each pair's flux F [W] from cell
+        a to cell b, and its derivatives with respect to T_a and T_b [W/K]."""
+        Ta, Tb, ka, kb = T.ravel()[self.a], T.ravel()[self.b], k.ravel()[self.a], k.ravel()[self.b]
+        s = ka + kb
+        G = self.lam * 2.0 * ka * kb / s
+        dT = Ta - Tb
+        F = G * dT
+        dFa = G + dT * self.lam * 2.0 * kb * kb / (s * s) * kp.ravel()[self.a]
+        dFb = -G + dT * self.lam * 2.0 * ka * ka / (s * s) * kp.ravel()[self.b]
+        return F, dFa, dFb
+
+    def residual(self, F):
+        """The fluxes' share of the residual (n, K): out of each pair's a, into its b."""
+        N = self.n * self.K
+        return (np.bincount(self.a, F, N) - np.bincount(self.b, F, N)).reshape(self.n, self.K)
+
+    def gained(self, F):
+        """The heat rate each column gains sideways [W] (n,) from the pairs' quantities F (fluxes, or their changes)."""
+        return np.bincount(self.cj, F, self.n) - np.bincount(self.ci, F, self.n)
+
+    def solve(self, lower, diag, upper, jac, rhs):
+        """x (n, K) with J x = rhs, J the sub-step's whole Jacobian: the columns' tridiagonal rows (lower, diag, upper,
+        as `_tridiagonal` takes them) and the pairs' couplings jac = (dFa, dFb). Restarted GMRES preconditioned by the
+        columns' own tridiagonal solves (block Jacobi: the depth conduction exactly, the sideways couplings left to
+        the iteration), to SIDE_RTOL of the right-hand side; RuntimeError if it has not converged within SIDE_RESTART
+        times SIDE_CYCLES iterations (module docstring)."""
+        dFa, dFb = jac
+        n, K = self.n, self.K
+        N = n * K
+        b = rhs.ravel()
+        if not np.any(b):
+            return np.zeros((n, K))
+        data = np.concatenate([diag.ravel(), lower[:, 1:].ravel(), upper[:, :-1].ravel(), dFa, dFb, -dFa, -dFb])
+        J = sp.csr_matrix((data, (self._rows, self._cols)), shape=(N, N))
+        M = spla.LinearOperator((N, N), matvec=lambda v: _tridiagonal(lower, diag, upper, v.reshape(n, K)).ravel(),
+                                dtype=float)
+        x, info = spla.gmres(J, b, M=M, rtol=SIDE_RTOL, atol=0.0, restart=SIDE_RESTART, maxiter=SIDE_CYCLES)
+        if info != 0:
+            raise RuntimeError("the skins' sideways heat solve did not converge in {} GMRES iterations (residual {:.2e} "
+                               "of the right-hand side, against {:.0e})".format(
+                                   SIDE_RESTART * SIDE_CYCLES, np.linalg.norm(b - J @ x) / np.linalg.norm(b),
+                                   SIDE_RTOL))
+        return x.reshape(n, K)
 
 
 def _tridiagonal(lower, diag, upper, rhs):
@@ -1112,7 +1265,7 @@ class Skins:
         return a, b
 
     # -- heat through the depth -------------------------------------------------------------------------------------
-    def conduct(self, dt, q_top, T_amb, emissivity, T_b, trial=False):
+    def conduct(self, dt, q_top, T_amb, emissivity, T_b, trial=False, side=None):
         """One implicit (backward-Euler) heat sub-step dt [s] of every column through its depth: the convective flux
         q_top [W/m2] over the top area A(0) in at the top cell, radiation emissivity * SIGMA_SB (T0^4 - T_amb^4) over
         the same area out of it (the shared Stefan-Boltzmann constant), conduction between cells through harmonic
@@ -1125,10 +1278,22 @@ class Skins:
         (`PropertyTable.conduction`), the Jacobian with the slopes of its h and k across each cell's grid interval, so
         it is the exact tangent of the residual solved. An empty column passes its heat straight to the base.
 
+        With `side` (a SideFaces, plan 03b Task 4) the columns also conduct sideways across their shared boundaries,
+        in the same backward-Euler step (module docstring; planning ruling 5): each pair of cells overlapping in depth
+        across a boundary through Lambda k_h / |x_j - x_i| at the sub-step's start's depths, the conductivities' harmonic
+        mean at the iterate's temperatures. The Newton iteration is then one over every column's cells together, its
+        Jacobian (the columns' tridiagonal blocks, the sideways couplings and their dk/dT terms) solved by GMRES
+        preconditioned by the columns' tridiagonal solves (`_Sideways.solve`), the line search still per column; the
+        heat each column gains sideways is the book's E_side, and it enters E_base's residual. Without `side` every
+        column is solved apart by the Thomas algorithm, as before.
+
         With trial=True the sub-step belongs to a trial pass (opened by the first such call, closed by `base_law` or
         `set_state`): each cell's dH/dT_b is carried from the last sub-step and updated by the converged step's own
         linearisation, J S = dH_old / dt + G_b e_bottom, so the book's dE_base_dTb is the exact derivative of E_base
-        for the linearised step (and of the pass, through the carried dH). Returns a HeatBook."""
+        for the linearised step (and of the pass, through the carried dH). With `side` the right-hand side holds every
+        column's G_b at once, so S and dE_base_dTb (its sideways part included) are the derivatives for every column's
+        T_b moving together (an exact derivative with respect to a column's own T_b alone would need one solve per
+        column). Returns a HeatBook."""
         n = self.n
         valid, rows = self.valid, np.arange(n)
         has = self.count > 0
@@ -1160,9 +1325,17 @@ class Skins:
             A_b = self.cross_section(z_bot[rows, last][:, None])[:, 0]
         bottom = has & base
         m, E_old = self.m, self.H
+        sideways = None
+        if side is not None:
+            z = np.concatenate([np.zeros((n, 1)), z_bot], axis=1)            # each column's cell boundaries
+            sideways = _Sideways(side, z, self.count)
+            solve = sideways.solve
+        else:
+            solve = lambda lower, diag, upper, jac, rhs: _tridiagonal(lower, diag, upper, rhs)
 
         def system(T):
-            """The residual R, the Jacobian's (lower, diag, upper) and the base conductance at T."""
+            """The residual R, the Jacobian's (lower, diag, upper), the base conductance, cp and, with sideways
+            conduction, the pairs' fluxes and their derivatives (F, dFa, dFb) at T."""
             h, cp, k, kp = props.conduction(T)
             r = 0.5 * dz / k
             G = np.where(link, A_i / (r[:, :-1] + r[:, 1:]), 0.0)
@@ -1188,25 +1361,30 @@ class Skins:
             lower, upper = np.zeros_like(D), np.zeros_like(D)
             upper[:, :-1] = dFr
             lower[:, 1:] = -dFl
+            pairs = None
+            if sideways is not None:
+                pairs = sideways.fluxes(T, k, kp)
+                R += sideways.residual(pairs[0])
             return (np.where(valid, R, 0.0), np.where(valid, lower, 0.0), np.where(valid, D, 1.0),
-                    np.where(valid, upper, 0.0), Gb, cp)
+                    np.where(valid, upper, 0.0), Gb, cp, pairs)
 
         T = T_old
-        R, lo, D, up, Gb, cp = system(T)
+        R, lo, D, up, Gb, cp, pairs = system(T)
         moved = np.zeros(n)
         for _ in range(NEWTON_MAX):
-            dT = _tridiagonal(lo, D, up, -R)
+            dT = solve(lo, D, up, None if pairs is None else pairs[1:], -R)
             r0 = np.sqrt((R * R).sum(axis=1))
             lam = np.ones(n)
             for _ in range(LINE_SEARCH_MAX):
                 T_try = T + lam[:, None] * dT
-                R_try, lo_t, D_t, up_t, Gb_t, cp_t = system(T_try)
+                trying = system(T_try)
+                R_try = trying[0]
                 moved = np.abs(T_try - T).max(axis=1)
                 worse = (np.sqrt((R_try * R_try).sum(axis=1)) > (1.0 - 1e-4 * lam) * r0) & (moved > NEWTON_TOL)
                 if not worse.any():
                     break
                 lam = np.where(worse, 0.5 * lam, lam)
-            T, R, lo, D, up, Gb, cp = T_try, R_try, lo_t, D_t, up_t, Gb_t, cp_t
+            T, (R, lo, D, up, Gb, cp, pairs) = T_try, trying
             if moved.max() <= NEWTON_TOL:
                 break
         else:
@@ -1215,15 +1393,19 @@ class Skins:
         E_new = np.where(valid, m * props.enthalpy(T), 0.0)
         E_top = q * dt
         E_rad = np.where(has, es * (T[:, 0] ** 4 - T_amb ** 4) * dt, 0.0)
-        E_side = np.zeros(n)
+        E_side = np.zeros(n) if pairs is None else sideways.gained(pairs[0]) * dt
         E_base = E_top - E_rad + E_side - (E_new.sum(axis=1) - E_old.sum(axis=1))
         book = HeatBook(E_top, E_rad, E_base, E_side)
         if trial:
             rhs = self.dH / dt
             rhs[rows, last] += Gb                                  # -dR/dT_b: the base's pull on the bottom cell
-            S = _tridiagonal(lo, D, up, np.where(valid, rhs, 0.0))   # the converged step's own Jacobian
+            S = solve(lo, D, up, None if pairs is None else pairs[1:],
+                      np.where(valid, rhs, 0.0))                   # the converged step's own Jacobian
             dH_new = np.where(valid, m * cp * S, 0.0)
             dE = np.where(has, -4.0 * es * T[:, 0] ** 3 * S[:, 0] * dt, 0.0) - (dH_new - self.dH).sum(axis=1)
+            if pairs is not None:                                  # the sideways heat's own change
+                _, dFa, dFb = pairs
+                dE = dE + sideways.gained(dFa * S.ravel()[sideways.a] + dFb * S.ravel()[sideways.b]) * dt
             book.dE_base_dTb = dE
             self.dH = dH_new
             self._trial_E += E_base

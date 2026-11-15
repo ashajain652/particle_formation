@@ -2,8 +2,8 @@
 one another): the gas state of the loads and body tests, markers seeded as the body seeds them, a box mesh refined along a
 level set, and each marker's tessellated area against the area nearest it, with the acceptance numbers of the ruling on
 the neighbour test; and (plan 03b Task 2, moved here from test_levelset_division.py) the exact signed distances of a box
-and of a polygonal prism, and the stage 3 box refined by the body's refinement rule around its exact distance.
-Test-only; no physics of the level set lives here."""
+and of a polygonal prism, and the stage 3 box refined by the body's refinement rule around its exact distance, with (plan
+03b Task 4) its division at the skin depth. Test-only; no physics of the level set lives here."""
 import functools
 from collections import namedtuple
 
@@ -12,6 +12,7 @@ from scipy.spatial import cKDTree
 
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.criteria import kappa_max_nodal, make_target
+from reentry_model.levelset.division import divide
 from reentry_model.levelset.cutcell import inside_volumes, patches
 from reentry_model.levelset.markers import Markers
 from reentry_model.levelset.repartition import surface_samples
@@ -144,6 +145,16 @@ def stage3_box():
     base = BoxBase.around((-BOX_H0, -BOX_HALF - BOX_H0, -BOX_HALF - BOX_H0),
                           (BOX_LENGTH + BOX_H0, BOX_HALF + BOX_H0, BOX_HALF + BOX_H0), BOX_H0)
     return body_on(base, box_sdf(lo, hi))
+
+
+@functools.lru_cache(maxsize=1)
+def stage3_division():
+    """The stage 3 box's layer divided among its seeded markers at the skin depth (`division.divide` at
+    SkinSettings().depth with its default levels), in the markers' order of `stage3_box`. Measured once (plan 03b Task 4):
+    132 markers, 405 shared boundaries (108 between columns whose normals differ by more than 60 degrees, 20 with no
+    length at phi but some at depth), one column pinching before H, divided in 8.3 s."""
+    box = stage3_box()
+    return divide(box.mesh, box.phi, SkinSettings().depth, box.x, box.normal)
 
 
 def edge_length(size):

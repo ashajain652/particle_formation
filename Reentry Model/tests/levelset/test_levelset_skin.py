@@ -1069,3 +1069,156 @@ def test_metal_in_a_column_with_no_volume_and_no_area_has_no_depth():
         sk.base_area()
     sk.take_top(np.array([1]), np.array([sk.count[1]]))
     assert np.all(sk.dz()[1] == 0.0) and sk.thickness()[0] == pytest.approx(DEPTH, rel=1e-12)
+
+
+# -- sideways conduction between neighbouring columns (plan 03b Task 4, planning ruling 5) ------------------------------
+from scipy.special import erf
+
+from reentry_model.levelset.skin import SideFaces
+
+ROW_SPACING, ROW_WIDTH = 0.25e-3, 1.0e-3      # m: a row's columns' spacing and the width of the boundary they share
+
+
+def row(mat, T, spacing=ROW_SPACING, width=ROW_WIDTH, settings=None):
+    """Columns in a row `spacing` apart, each a prism `spacing` by `width` through the skin depth (a constant measured
+    profile), filled full in cells of equal depth at the temperatures T (n,), each sharing with the next a boundary
+    `width` long at every level. Returns the skins and their SideFaces."""
+    T = np.asarray(T, dtype=float)
+    n = len(T)
+    sk = profiled(mat, np.full((n, len(LEVELS)), spacing * width), settings=settings)
+    sk.fill(sk.density(T) * sk.column_volume(), T)
+    e = np.arange(n - 1)
+    return sk, SideFaces(e, e + 1, np.full((n - 1, len(LEVELS)), width), LEVELS, np.full(n - 1, spacing))
+
+
+def insulated_step(x, length, x0, s, T_cold, step, images=3):
+    """The temperatures [K] at x [m] along a rod `length` [m] long with insulated ends, `step` [K] hotter than T_cold on
+    [0, x0] at t = 0, at the time when 2 sqrt(alpha t) = s [m]: the error-function solution summed over the ends'
+    images (the hot interval reflected about both ends repeats every 2 length; the controller's ruling P2), exact on the
+    finite rod."""
+    T = np.full(len(x), float(T_cold))
+    for m in range(-images, images + 1):
+        a, b = 2.0 * length * m - x0, 2.0 * length * m + x0
+        T += 0.5 * step * (erf((x - a) / s) - erf((x - b) / s))
+    return T
+
+
+def test_a_lateral_temperature_step_relaxes_at_the_analytic_rate():
+    """Forty columns in a row 0.25 mm apart (10 mm), constant properties, insulated at the top, at the base and at both
+    ends, the first twenty 100 K hotter than the rest: after 100 sub-steps to sqrt(alpha t) = 2 mm every cell lies
+    within 1 % of the step of the error-function solution summed over the ends' images (the plain error function misses
+    the insulated ends by about 3.9 K there, ruling P2). The heat moves only sideways: every sub-step's books close, the
+    sideways heat sums to zero and the total enthalpy is kept."""
+    mat = ConstMaterial()
+    n, T_cold, step = 40, 500.0, 100.0
+    sk, side = row(mat, np.where(np.arange(n) < n // 2, T_cold + step, T_cold),
+                   settings=SkinSettings(cell=SKIN_PRESETS["dev"]))
+    alpha = mat._k / (mat.rho * mat._cp)
+    t, N = (2e-3) ** 2 / alpha, 100
+    E0 = sk.H.sum()
+    for _ in range(N):
+        H0 = sk.totals()[1]
+        book = sk.conduct(t / N, 0.0, 0.0, 0.0, None, side=side)
+        H1 = sk.totals()[1]
+        scale = np.abs(book.E_side).sum()
+        assert scale > 0.0 and abs(book.E_side.sum()) <= 1e-12 * scale
+        assert np.abs(book.E_side - (H1 - H0)).max() <= 1e-9 * scale
+    x = (np.arange(n) + 0.5) * ROW_SPACING
+    ref = insulated_step(x, n * ROW_SPACING, 0.5 * n * ROW_SPACING, 2.0 * np.sqrt(alpha * t), T_cold, step)
+    T = sk.T()
+    err = np.abs(np.where(sk.valid, T - ref[:, None], 0.0))
+    print("lateral step: largest miss {:.3f} K of the {:.0f} K step ({} cells a column)".format(err.max(), step,
+                                                                                            sk.count[0]))
+    assert err.max() <= 0.01 * step
+    assert sk.H.sum() == pytest.approx(E0, rel=1e-13)
+
+
+def test_sideways_conduction_closes_its_books():
+    """The stage 3 box's 132 columns with the division's measured profiles and shared boundaries (cases.stage3_division:
+    boundaries across edges, some with no length at phi), filled full at temperatures rising 160 K along the box, heated
+    at the top, radiating and held at the base: over a trial pass of three sub-steps and a real sub-step the heat gained
+    sideways sums to zero over the columns to 1e-12 of its magnitude, each column's books close, and the hottest face's
+    columns lose heat sideways while the coldest face's gain it."""
+    from cases import stage3_box, stage3_division
+    box, d = stage3_box(), stage3_division()
+    mat = LinearMeltMaterial(rho_l=2800.0)
+    sk = Skins(mat, d.area[:, 0], np.zeros((len(d.area), 2)), SkinSettings(cell=SKIN_PRESETS["dev"]))
+    sk.set_profile(d.levels, d.area)
+    T0 = 600.0 + 2e4 * (box.x[:, 0] - box.x[:, 0].min())
+    sk.fill(sk.density(T0) * sk.column_volume(), T0)
+    sk.regrid()
+    side = SideFaces(d.i, d.j, d.length, d.levels, np.linalg.norm(box.x[d.j] - box.x[d.i], axis=1))
+    q, T_amb, eps, dt = 2e6, 300.0, 0.8, 0.010
+    T_b = T0 - 5.0
+    for trial in (True, True, True, False):
+        if not trial and sk.dH is not None:
+            sk.base_law(3 * dt)
+        H0 = sk.totals()[1]
+        book = sk.conduct(dt, q, T_amb, eps, T_b, trial=trial, side=side)
+        H1 = sk.totals()[1]
+        size = np.abs(book.E_side).sum()
+        assert size > 0.0 and abs(book.E_side.sum()) <= 1e-12 * size
+        scale = np.abs(book.E_top) + np.abs(H1 - H0) + np.abs(book.E_side)
+        assert np.all(np.abs(book.E_top - book.E_rad - book.E_base + book.E_side - (H1 - H0)) <= 1e-12 * scale)
+        hottest, coldest = T0 >= T0.max() - 1.0, T0 <= T0.min() + 1.0      # the +x face's columns and the -x face's
+        assert book.E_side[hottest].sum() < 0.0 < book.E_side[coldest].sum()
+        sk.regrid()
+
+
+def test_the_sideways_conductance_integrates_the_shared_length_over_the_overlap():
+    """Planning ruling 5 on two full columns whose cells do not line up (one in equal cells, the other in cells growing
+    with depth and a boundary at 0.6 mm), sharing a boundary whose length falls by 60 % with depth, 2 mm between their
+    markers, the conductivity rising with temperature: the first column at 600 K throughout, the second 100 K hotter
+    above 0.6 mm and at 600 K below. Over a sub-step of 1 ps (the temperatures move by under 1e-4 K) the heat passed
+    sideways is dt 100 K k_h int_0^0.6mm L dz / 2 mm to 1e-6, k_h the harmonic mean of the conductivities at 600 and
+    700 K: the shared length integrated over the overlaps of the hot cells alone, whatever the cells."""
+    mat = VariableKMaterial(rho_l=2800.0)
+    sk = profiled(mat, np.full((2, len(LEVELS)), AREA), settings=SkinSettings(swell=False))
+    half = LEVELS[12]
+    graded = np.union1d(DEPTH * np.linspace(0.0, 1.0, 23) ** 1.5, [half])
+    hot = np.where(graded[:-1] < half, 700.0, 600.0)
+    stack(sk, [(np.linspace(0.0, DEPTH, 61), 600.0), (graded, hot)])
+    L = 2e-3 * (1.0 - 0.6 * LEVELS / DEPTH)
+    side = SideFaces(np.array([0]), np.array([1]), L[None, :], LEVELS, np.array([2e-3]))
+    dt = 1e-12
+    book = sk.conduct(dt, 0.0, 0.0, 0.0, None, side=side)
+    k0, k1 = float(mat.k(600.0)), float(mat.k(700.0))
+    expected = dt * 100.0 * 2.0 * k0 * k1 / (k0 + k1) * np.trapezoid(L[:13], LEVELS[:13]) / 2e-3
+    assert book.E_side[0] == pytest.approx(expected, rel=1e-6)
+    assert book.E_side[1] == -book.E_side[0]
+    assert np.abs(sk.T()[1, :sk.count[1]] - hot).max() < 1e-4
+
+
+def test_with_sideways_heat_the_trial_sensitivity_is_the_derivative_for_a_common_base_shift():
+    """Three columns of different measured profiles in a row (a jagged narrowing one, one that pinches, a constant one)
+    at different temperatures, conducting sideways, over a trial pass of four sub-steps with regrids: each column's
+    summed dE_base/dT_b is the derivative of its summed base heat when every column's base temperature moves together
+    (the trial's derivative with sideways heat), against central differences to 1e-6. rho_l = rho, so the sub-steps'
+    geometry does not move with T_b."""
+    mat = LinearMeltMaterial(rho_l=2800.0)
+    jag = AREA * (1.0 - 0.5 * LEVELS / DEPTH) * np.random.default_rng(7).uniform(0.7, 1.3, len(LEVELS))
+    pinch = AREA * np.clip(1.0 - LEVELS / PINCH, 0.0, None)
+    area = np.vstack([jag, pinch, np.full(len(LEVELS), AREA)])
+    L = np.vstack([np.full(len(LEVELS), 2e-3), 2e-3 * (1.0 - 0.5 * LEVELS / DEPTH)])
+    side = SideFaces(np.array([0, 1]), np.array([1, 2]), L, LEVELS, np.array([2e-3, 2e-3]))
+    T_start = np.array([890.0, 820.0, 760.0])
+
+    def run(T_b, trial):
+        sk = profiled(mat, area, top=np.array([1.1, 0.9, 1.0]) * AREA, settings=SkinSettings(swell=False))
+        sk.fill(mat.rho * sk.column_volume(), T_start)
+        sk.regrid()
+        E, dE = np.zeros(3), np.zeros(3)
+        for _ in range(4):
+            book = sk.conduct(0.010, 3e6, 300.0, 0.8, T_b, trial=trial, side=side)
+            E += book.E_base
+            if trial:
+                dE += book.dE_base_dTb
+            sk.regrid()
+        return E, dE
+
+    T_b, d = np.array([850.0, 800.0, 740.0]), 1e-2
+    E, dE = run(T_b, True)
+    E_hi, E_lo = run(T_b + d, False)[0], run(T_b - d, False)[0]
+    fd = (E_hi - E_lo) / (2 * d)
+    assert np.all(dE[[0, 2]] < 0.0)
+    np.testing.assert_allclose(dE, fd, rtol=1e-6, atol=1e-9 * np.abs(fd).max())
