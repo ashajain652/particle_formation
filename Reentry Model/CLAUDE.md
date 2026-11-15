@@ -94,14 +94,17 @@ after which they and their two test files were run again and pass). Main's figur
 about 35 minutes on a quiet machine. With the interim gas loads (branch `interim-gas-loads`, 2026-11-14) the unit tier has
 1056 tests: 1055 pass and 1 is skipped (the FEniCSx module), in 61 minutes on four processes with other runs on the machine.
 After the low-Mach pressure, the one-solve-per-`--dt` hold and the solve skip were added (2026-11-15) it has 1080 tests:
-1079 pass and 1 is skipped, in 57 minutes on four processes, run once with one-minute load averages of 2 to 14. The
+1079 pass and 1 is skipped, in 57 minutes on four processes, run once with one-minute load averages of 2 to 14. With
+the fitted-sphere loads merged in (branch `fitted-sphere-loads`, 2026-11-15) it has 1110 tests: 1109 pass and 1 is
+skipped, in 70 minutes on four processes, run once with one-minute load averages of about 6 to 17 and other runs on the
+machine (main had 1080 and the branch alone 1022; the merge adds two tests of its own). The
 droplet tests, `pytest reentry_model/droplet_reentry/tests`, are 35 and pass (40 s on 2026-11-15, 74 s before). The port's own tools have their tests in `analysis/skyscrapers_port/`, run
 explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 1080 tests, 1 skipped, ~35-71 min on four
+                                                          # the package's unit tier: 1110 tests, 1 skipped, ~35-71 min on four
                                                           # processes (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module

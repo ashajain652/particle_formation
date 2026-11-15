@@ -1869,7 +1869,22 @@ sprayed 0.001329 kg. A run seeds numpy's generator at its start (`cmd_run` in `c
 ones), so two runs of one build agree bit for bit and these differences are not noise: against `normals`, the skins under
 `sphere` drew 3.1 % less metal and sprayed 2.3 % more on that one short flight, which is the rule's effect there. The two
 cost the same within one run's wall-time noise (32.1 s and 32.8 s). That flight is far too short and too early to say how
-the rule changes a real flight; it says only that the rule runs.
+the rule changes a real flight; it says only that the rule runs. Those numbers are on the classic loads, before the merge.
+
+**(verified, one run of each)** After the merge with the interim gas loads (2026-11-15) the comparison was repeated
+against main at 70deee0, on the similarity loads that both sides fly by default: the merged tree under
+`--windward-loads normals` differs from main in exactly one place on the skins case, the key `settings.skin.windward_loads`,
+the element, non-melting and non-melting element cases are identical, and a resume of main's saved skins state from
+0.125 s to 0.25 s differs only in `settings.windward_loads`. The smoke flight on the merged tree, now on the similarity
+loads, exited 0 at its end time under both rules. The sphere rule drew 0.02548 kg of metal into the skins and sprayed
+3.264e-05 kg (2,679 droplets); `normals` drew 0.02578 kg and sprayed 2.279e-05 kg (1,610 droplets), so on that one short
+flight the sphere rule drew 1.2 % less metal and sprayed 43 % more, the sprayed masses being only a few hundredths of a gram.
+The ray test sheltered no corner at any step; the corners behind the centroid's plane that face the flow, which the
+provider reads at 180 degrees, numbered none from the first step to 0.075 s and then 40, 52, 47 and 39 under `sphere`
+(29, 52, 51 and 40 under `normals`). The wall times were 127.6 s and 124.8 s, measured with the unit tier running beside
+them, so they say only that the two rules cost about the same. Both rules spray 40 to 60 times less than the same flight
+on the classic loads above (1.359 and 1.329 g), which is a difference between the two loads (section 14.7), not between the
+rules.
 
 The resume test of `tests/test_reentry_model_restart.py`
 (`test_resume_windward_loads_keeps_the_saved_rule_switches_it_and_reads_an_old_state_as_normals`) and three tests in
@@ -1890,7 +1905,7 @@ ring's crest corners whose own normals face away from the flow are heated (the c
 The element model (`--surface-model elements`) keeps its own 30-degree cap fit and its own windward test. It refuses
 `--windward-loads` (exit 2), as it refuses `--geometry-stop`. **(verified)** The element and non-melting cases of
 `same_results.py` are identical between main at 4e857e1 and this branch, apart from the one JSON key in the skins case
-described above.
+described above, and again between main at 70deee0 and the tree merged with the interim gas loads (15.5).
 
 ### 15.7 What to watch in real flights
 
