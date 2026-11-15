@@ -332,13 +332,15 @@ def test_hot_plate_at_half_second_steps(preset):
 
 BOX_FAILS = ("the 2 mm markers do not resolve the sharp heated edge (diagnosis D1, the controller's ruling T7-j; design "
              "21.10's finer markers near edges are the remedy): markers on the side faces own the heated face's outer "
-             "strip, which does not recede. Measured 2026-11-15 on plan 03b Task 7b's code (bfb6344): the first step "
-             "(0.5 s, nothing yet melting) keeps the face flat and the books exact; the second stops at its end on "
-             "stepend.THIN_METAL, 4 pairs of opposed columns, the first between markers on the +z and -z side faces "
-             "10.1 mm apart (ruling T7-k's spurious kind), so no judged time is reached. As the stop left it, the "
-             "face's inner 7 by 7 points of the 9 by 9 grid 1 mm apart had receded 0.81 to 0.95 mm and its outer ring "
-             "-0.01 to 0.92 mm (median 0.60), the heated edges had lips at the -y and -z midpoints (radii -0.21 and "
-             "-0.22 mm), and the face centre had receded 0.888 mm against the reference's 0.789 at 1.0 s (12.6 % ahead)")
+             "strip, which does not recede. Measured 2026-11-15 on plan 03b Task 7c's code (92f4424), the thin-metal "
+             "stop's spurious pairs gone (ruling T7-k): the first step (0.5 s, nothing yet melting) keeps the face "
+             "flat and the books exact; the second completes, but its mass books miss by 1.19e-11 of the stored mass "
+             "(MASS_TOL 1e-12) and the face centre has receded 0.888 mm at 1.0 s against the reference's 0.789 (12.6 % "
+             "ahead, past RECESSION_TOL); the third accepts 56 parts in 1973 s and stops on a piece of phi with layer "
+             "but no marker (ruling T7-g; 4.08e-14 m3 at (1.631, -4.294, -2.425) mm, 0.6 mm inside the -y face, at "
+             "the rim's depth), so 1.5 and 2.0 s are not reached. As the stop left it, the face centre had receded "
+             "2.18 mm, the inner 7 by 7 points of the 9 by 9 grid 1 mm apart 1.94 to 2.49 mm and the outer ring 1.35 "
+             "to 2.35 mm (median 1.92)")
 
 
 @pytest.mark.reference
