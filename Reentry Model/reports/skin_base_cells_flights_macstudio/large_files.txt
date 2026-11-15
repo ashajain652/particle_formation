@@ -1,0 +1,12 @@
+-rw-r--r--@ 1 ashajain  staff  5386 Nov 15 06:00 /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm/particles.npz
+32ac048c1b8b955adce21ba81e8c9e8dc7c50e589caf1b67dc333fb85e1460bd  /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm/particles.npz
+-rw-r--r--@ 1 ashajain  staff  5012 Nov 15 02:56 /Users/ashajain/skin-base-cells-flights/flights/d050__base-off/particles.npz
+c84037d07583c2111f2d5364330d1b4159d6c9ed8e51fddefe18e5b039e94d3a  /Users/ashajain/skin-base-cells-flights/flights/d050__base-off/particles.npz
+-rw-r--r--@ 1 ashajain  staff  148801748 Nov 15 06:00 /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm.end.state.pkl
+2695096f57b84d5a123a6c5c6d1e4a1fe54794d86e31b091e203dbd0f47befe4  /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm.end.state.pkl
+-rw-r--r--@ 1 ashajain  staff  227051081 Nov 14 23:01 /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm.state.pkl
+7c08109b36e575ba5a1cb54f906ab3d14f9085a5dd864f1e2138030031e94e43  /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm.state.pkl
+-rw-r--r--@ 1 ashajain  staff  127071948 Nov 15 02:56 /Users/ashajain/skin-base-cells-flights/flights/d050__base-off.end.state.pkl
+8c44d18ad3141a6b4f2e0992dca3d9a0998a516da51ae546f6b11cc87f1434e7  /Users/ashajain/skin-base-cells-flights/flights/d050__base-off.end.state.pkl
+-rw-r--r--@ 1 ashajain  staff  220747955 Nov 14 18:26 /Users/ashajain/skin-base-cells-flights/flights/d050__base-off.state.pkl
+7c7103f27748dade77094e284cd42207d2fd3fc2a6e3bfe30d73579e11b2a7fb  /Users/ashajain/skin-base-cells-flights/flights/d050__base-off.state.pkl

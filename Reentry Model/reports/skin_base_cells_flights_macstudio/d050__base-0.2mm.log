@@ -1,0 +1,29 @@
+start 2026-11-14 16:01:10 Now drawing from 'AC Power'
+resuming /Users/ashajain/skin-base-cells-flights/states/d050__handdown-off.state.pkl (saved at 178.5 s, step 357) to 186.5 s: dt_continuum 0.0125, seed saved random state, frames every 0, slurry spray off, spread limit off, part count from moves, hand-down off, sideways heat height, size feedback initial, leeward test facing, geometry stop off, rheology bridge, skin base cell 0.2 mm, spray gates before, slip band off, dispersion table, save state at 182.5 s; files /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm
+d050__base-0.2mm (seed 12345): t_max at t = 186.5 s, final V 7.1960 km/s, Kn 0.0562 -> 0.0387, 15140 RHS evaluations in 48532.2 s
+  thermal: peak surface T 963 K at t = 186 s, peak mean T 903 K, integrated heat 1.74e+05 J, energy balance residual -9.9e-11, 924 macro steps, 2.6 Newton iterations/step
+  skins: 2367 columns, removed 0 kg, drawn 0.08289 kg, 15 rebuilds, 615 interface repeats, 4 base faults (60 by the bottom cell alone); wall time 66060 s in the skins, 702 s in the 3D solve
+  spraying: released 0.00022 kg as 0.0184 droplets in 2 source rows (particles.npz, particles_summary.csv, size_distribution.csv)
+  csv  -> /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm.csv
+  json -> /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm.json
+  end state -> /Users/ashajain/skin-base-cells-flights/flights/d050__base-0.2mm.end.state.pkl
+    50354.14 real     40895.01 user      7621.01 sys
+          6200557568  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+            75626041  page reclaims
+                 136  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                 220  voluntary context switches
+             6265429  involuntary context switches
+     646736787062236  instructions retired
+     162880215615037  cycles elapsed
+          1114869888  peak memory footprint
+exit 0
+end 2026-11-15 06:00:24 Now drawing from 'AC Power'
