@@ -2,8 +2,8 @@
 sensitivity set, and the supporting tables."""
 import concurrent.futures, csv, filecmp, glob, json, math, os
 import pytest
-from reentry_model.parent_follower_separation_interactions import scenarios
-from reentry_model.parent_follower_separation_interactions.analysis import plots, sensitivity, sweep, tables
+from reentry_model.wake_residence import scenarios
+from reentry_model.wake_residence.analysis import plots, sensitivity, sweep, tables
 
 ARGS = ["--diameters", "10", "--altitudes", "60", "--thetas", "90", "180", "--bounds", "low",
         "--wake-flow", "off", "--workers", "1"]
@@ -361,7 +361,7 @@ def test_table_contents_are_physically_consistent(tmp_path):
 
 
 def test_crossover_rows_read_the_lag_one_second_after_release(tmp_path):
-    from reentry_model.parent_follower_separation_interactions.scenarios import ScenarioSettings, run_name
+    from reentry_model.wake_residence.scenarios import ScenarioSettings, run_name
     (tmp_path / "runs").mkdir()
     lags = {10.0: 3.0, 100.0: 0.5, 200.0: -2.0}
     rows = []

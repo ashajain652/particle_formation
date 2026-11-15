@@ -1,5 +1,5 @@
 import numpy as np, pytest
-from reentry_model.parent_follower_separation_interactions.track import Track
+from reentry_model.wake_residence.track import Track
 
 FLOW_KEYS = ("rho", "T", "p", "mu", "mfp", "d", "cda", "r0")
 
@@ -244,7 +244,7 @@ def test_from_callable_rejects_bad_window_and_non_finite_output():
 
 
 def test_track_module_imports_none_of_the_forbidden_modules():
-    import reentry_model.parent_follower_separation_interactions.track as m, re
+    import reentry_model.wake_residence.track as m, re
     src = open(m.__file__).read()
     for name in ("trajectory", "droplet_reentry", "parent_trajectory", "body", "aero", "atmosphere"):
         assert not re.search(rf"^\s*(from|import)\s+\S*\b{name}\b", src, re.M)

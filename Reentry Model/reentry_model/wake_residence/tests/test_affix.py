@@ -1,7 +1,7 @@
 import math, numpy as np, pytest
-from reentry_model.parent_follower_separation_interactions.affix import (affix_regime, theta_inn, theta_bif, AffixSettings,
+from reentry_model.wake_residence.affix import (affix_regime, theta_inn, theta_bif, AffixSettings,
     release_offset, far_wake_offset)
-from reentry_model.parent_follower_separation_interactions.laws import EmissionState, sutherland_mu
+from reentry_model.wake_residence.laws import EmissionState, sutherland_mu
 
 E = EmissionState(rho=1.85e-5, T=199.0, p=1.05, mu=sutherland_mu(199.0), mfp=4e-3, U=7600.0, d=2.813,
                   cda=5.5, r0=1.4065)          # roughly the Generic Spacecraft at 80 km

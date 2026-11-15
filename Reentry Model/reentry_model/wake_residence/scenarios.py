@@ -56,17 +56,17 @@ from reentry_model.droplet_reentry.model import T_RELEASE, VOLATILE, WE_CRIT, Dr
 from reentry_model.droplet_reentry.particle_trajectory import drag_coefficient as composed_drag_coefficient
 from reentry_model.gas import EquilibriumAir
 from reentry_model.wake_column.run import _clean, _git_commit, _git_dirty
-from reentry_model.parent_follower_separation_interactions.adapters import (
+from reentry_model.wake_residence.adapters import (
     WakeAtmosphere, dense_solve, parent_collision_event, rarefied_sphere_simulator, shock_layer_exit,
     solution_track, sphere_parent_track, sphere_simulator, state_from_ecef, twin_parent)
-from reentry_model.parent_follower_separation_interactions.affix import (
+from reentry_model.wake_residence.affix import (
     AffixSettings, affix_regime, far_wake_offset, release_offset)
-from reentry_model.parent_follower_separation_interactions.laws import (
+from reentry_model.wake_residence.laws import (
     LawSettings, classify, knudsen, plume_radius, pressure_parameter, reynolds)
-from reentry_model.parent_follower_separation_interactions.overlap import Plume, residence
-from reentry_model.parent_follower_separation_interactions.shock_layer import (
+from reentry_model.wake_residence.overlap import Plume, residence
+from reentry_model.wake_residence.shock_layer import (
     FreeStream, ShockLayerField, ShockLayerSettings)
-from reentry_model.parent_follower_separation_interactions.wake_gas import check_mode
+from reentry_model.wake_residence.wake_gas import check_mode
 
 AFFIX_STATUS = {"continuum": "governing", "transitional": "indicative", "free_molecular": "not_applicable"}
 RELEASES = ("far_wake", "escape", "surface", "shock_band", "trapped", "no_law", "centroid")

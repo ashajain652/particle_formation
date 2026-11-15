@@ -1,9 +1,9 @@
 """Followers in the wake (Task 6, spec 4.3 and 4.3a): the WakeAtmosphere wrapper, sphere followers and sphere parents."""
 import time, numpy as np, pytest
 from reentry_model.atmosphere import US76TableAtmosphere
-from reentry_model.parent_follower_separation_interactions.adapters import (WakeAtmosphere, sphere_simulator, dense_solve, release_state)
-from reentry_model.parent_follower_separation_interactions.overlap import Plume
-from reentry_model.parent_follower_separation_interactions.laws import LawSettings
+from reentry_model.wake_residence.adapters import (WakeAtmosphere, sphere_simulator, dense_solve, release_state)
+from reentry_model.wake_residence.overlap import Plume
+from reentry_model.wake_residence.laws import LawSettings
 
 def release(twin, h_km=60.0):
     t_r = twin.t_at_altitude(h_km); return t_r, release_state(twin.track, t_r, twin.epoch)
@@ -42,7 +42,7 @@ def test_timing_of_one_wake_run_is_recorded(twin, capsys):
 def test_wake_gas_velocity_is_added_to_the_wind_in_east_north_up(twin):
     from reentry_model import earth
     from reentry_model.atmosphere import StaticProfileWind
-    from reentry_model.parent_follower_separation_interactions.wake_gas import Ambient
+    from reentry_model.wake_residence.wake_gas import Ambient
     t_r = twin.t_at_altitude(70.0)
     base = US76TableAtmosphere(wind=StaticProfileWind())
     plume = Plume(twin.track)
@@ -83,7 +83,7 @@ def test_bad_mode_and_time_beyond_the_parent_raise(twin):
 
 
 def test_solution_track_is_the_run_on_the_parent_clock(twin):
-    from reentry_model.parent_follower_separation_interactions.adapters import solution_track
+    from reentry_model.wake_residence.adapters import solution_track
     t_r, st = release(twin)
     run = dense_solve(sphere_simulator(st, 0.05, US76TableAtmosphere()), 1.0)
     tr = solution_track(run, t_r)
@@ -96,7 +96,7 @@ def test_solution_track_is_the_run_on_the_parent_clock(twin):
 
 def test_sphere_parent_track_carries_the_spheres_own_drag(twin):
     from reentry_model import aero, earth
-    from reentry_model.parent_follower_separation_interactions.adapters import sphere_parent_track
+    from reentry_model.wake_residence.adapters import sphere_parent_track
     t_r, st = release(twin)
     atm = US76TableAtmosphere()
     sim = sphere_simulator(st, 0.05, atm)
@@ -119,8 +119,8 @@ def test_sphere_parent_track_carries_the_spheres_own_drag(twin):
 def test_ten_mm_sphere_in_a_forward_wake_falls_behind_then_reaches_the_parent_at_0p79_s(twin, capsys):
     # Task 6b: with wake_flow "both" a 10 mm sphere released at 60 km falls up to about 1.3 m behind the parent, is
     # carried forward by the wake and reaches the parent's front plane at about 0.790 s (measured 0.7898 s)
-    from reentry_model.parent_follower_separation_interactions.adapters import solution_track
-    from reentry_model.parent_follower_separation_interactions.overlap import residence
+    from reentry_model.wake_residence.adapters import solution_track
+    from reentry_model.wake_residence.overlap import residence
     t_r, st = release(twin)
     w = WakeAtmosphere(US76TableAtmosphere(), Plume(twin.track), t_r, "both")
     run = dense_solve(sphere_simulator(st, 0.01, w), min(2.0, w.follower_t_max))

@@ -1,9 +1,9 @@
 """The plots (spec 2 goal 6 and spec 5, Task 10), read back from the files of the sweep and the tables:
 
-    "$PY" -m reentry_model.parent_follower_separation_interactions.analysis.plots [--out DIR] [--theta DEG] [--bound low|high]
+    "$PY" -m reentry_model.wake_residence.analysis.plots [--out DIR] [--theta DEG] [--bound low|high]
         [--trajectory-wake-flow MODE]
 
-`--out` is the folder `sweep` and `tables` wrote to (default `parent_follower_separation_interactions.OUTPUT`); the
+`--out` is the folder `sweep` and `tables` wrote to (default `wake_residence.OUTPUT`); the
 pictures go to `<out>/plots/`. Nothing is integrated here: the plots read summary.csv, runs/<name>.csv|json,
 plume_size.csv, ballistic_coefficient.csv and affix_regimes.csv. Prints how many runs summary.csv holds and which
 plots it wrote or skipped.
@@ -45,9 +45,9 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Patch, Rectangle
 
 from reentry_model import DRAMA_DIR, earth
-from reentry_model.parent_follower_separation_interactions import OUTPUT
-from reentry_model.parent_follower_separation_interactions.adapters import PARENT_FRONTAL_AREA
-from reentry_model.parent_follower_separation_interactions.wake_gas import WAKE_FLOW_MODES
+from reentry_model.wake_residence import OUTPUT
+from reentry_model.wake_residence.adapters import PARENT_FRONTAL_AREA
+from reentry_model.wake_residence.wake_gas import WAKE_FLOW_MODES
 
 sys.path.insert(0, os.path.join(DRAMA_DIR, "analysis"))           # plot_style lives with the sweep plots
 try:
@@ -557,9 +557,9 @@ def rebuild_shock_curve(out, name, h_km):
     try:
         cfg = load_case_json(out, name)["config"]["settings"]
         R = 0.5 * math.sqrt(4.0 * cfg["frontal_area"] / math.pi)
-        from reentry_model.parent_follower_separation_interactions import scenarios
-        from reentry_model.parent_follower_separation_interactions.analysis.sweep import get_twin
-        from reentry_model.parent_follower_separation_interactions.shock_layer import (
+        from reentry_model.wake_residence import scenarios
+        from reentry_model.wake_residence.analysis.sweep import get_twin
+        from reentry_model.wake_residence.shock_layer import (
             FreeStream, ShockLayerField, ShockLayerSettings)
         rel = scenarios._release(get_twin(cfg["frontal_area"], cfg["beta_scale"]), h_km)
         e = rel.e

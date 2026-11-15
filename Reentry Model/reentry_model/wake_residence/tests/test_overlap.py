@@ -6,10 +6,10 @@ Taylor's unless a test says otherwise. Taylor's radius behind this parent is abo
 a 6 km/s parent, which sets the lateral speeds the hand-computed cases use.
 """
 import ast, importlib, inspect, math, numpy as np, pytest
-from reentry_model.parent_follower_separation_interactions import overlap
-from reentry_model.parent_follower_separation_interactions.overlap import Plume, residence
-from reentry_model.parent_follower_separation_interactions.track import Track
-from reentry_model.parent_follower_separation_interactions.laws import LawSettings, taylor_radius
+from reentry_model.wake_residence import overlap
+from reentry_model.wake_residence.overlap import Plume, residence
+from reentry_model.wake_residence.track import Track
+from reentry_model.wake_residence.laws import LawSettings, taylor_radius
 
 U = 6000.0
 TURB = dict(rho=1e-2, T=250.0, p=300.0, mu=1.6e-5, mfp=1e-5, d=2.813, cda=5.5, r0=1.4065)
@@ -23,7 +23,7 @@ def follower(t, r):
 
 @pytest.mark.parametrize("modname", ["overlap", "laws", "track", "wake_gas", "affix"])
 def test_engine_imports_nothing_physical(modname):
-    mod = importlib.import_module("reentry_model.parent_follower_separation_interactions." + modname)
+    mod = importlib.import_module("reentry_model.wake_residence." + modname)
     tree = ast.parse(inspect.getsource(mod))
     names = {a.name for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
              for a in n.names} | {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
@@ -31,7 +31,7 @@ def test_engine_imports_nothing_physical(modname):
         assert not any(bad in x.split(".") for x in names), (modname, bad)
 
 def test_regime_functions_take_no_altitude():
-    from reentry_model.parent_follower_separation_interactions import laws
+    from reentry_model.wake_residence import laws
     for fn in (laws.classify, laws.plume_radius, overlap.Plume.margin):
         assert not any("alt" in p or p in ("h", "h_km") for p in inspect.signature(fn).parameters)
 
@@ -184,7 +184,7 @@ def test_fast_margin_matches_bruteforce_on_a_long_track_with_a_capped_tree():
 
 # ---- Task 6b (controller ruling): the plume and its wake gas end at the parent's front plane ----
 
-from reentry_model.parent_follower_separation_interactions.wake_gas import Ambient, R_AIR, gas_state
+from reentry_model.wake_residence.wake_gas import Ambient, R_AIR, gas_state
 R0 = TURB["r0"]
 AMB = Ambient(p=300.0, T=250.0, rho=300.0 / (R_AIR * 250.0))
 

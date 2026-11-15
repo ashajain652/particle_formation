@@ -1,6 +1,6 @@
 """The supporting tables (spec 5, Task 9), all from the twin and the laws, with no follower integrated:
 
-    "$PY" -m reentry_model.parent_follower_separation_interactions.analysis.tables [--out DIR]
+    "$PY" -m reentry_model.wake_residence.analysis.tables [--out DIR]
 
   plume_size.csv           per release altitude: the parent's plume regime, Knudsen number, Reynolds number on its
                            diameter, Taylor's pressure parameter, and r_b (low and high bound) at s = 10 ... 30,000 m
@@ -27,17 +27,17 @@ from scipy.optimize import minimize_scalar
 
 from reentry_model import aero, body, earth
 from reentry_model.droplet_reentry import parent_trajectory
-from reentry_model.parent_follower_separation_interactions import OUTPUT
-from reentry_model.parent_follower_separation_interactions.adapters import twin_vs_drama
-from reentry_model.parent_follower_separation_interactions.affix import far_wake_offset
-from reentry_model.parent_follower_separation_interactions.analysis.sweep import (
+from reentry_model.wake_residence import OUTPUT
+from reentry_model.wake_residence.adapters import twin_vs_drama
+from reentry_model.wake_residence.affix import far_wake_offset
+from reentry_model.wake_residence.analysis.sweep import (
     DEFAULT_ALTITUDES, DEFAULT_BOUNDS, DEFAULT_DIAMETERS, DEFAULT_THETAS, get_twin, kept_altitudes, write_csv)
-from reentry_model.parent_follower_separation_interactions.laws import (
+from reentry_model.wake_residence.laws import (
     LawSettings, classify, knudsen, plume_radius, pressure_parameter, reynolds)
-from reentry_model.parent_follower_separation_interactions.overlap import Plume
-from reentry_model.parent_follower_separation_interactions.scenarios import (
+from reentry_model.wake_residence.overlap import Plume
+from reentry_model.wake_residence.scenarios import (
     ScenarioSettings, _base_atmosphere, _drag_tables, _release, classify_release)
-from reentry_model.parent_follower_separation_interactions.wake_gas import Ambient
+from reentry_model.wake_residence.wake_gas import Ambient
 
 PLUME_DISTANCES_M = (10.0, 100.0, 1000.0, 3000.0, 10000.0, 30000.0)
 REGISTER_DRAG_RATIO = 0.14           # Register et al. 2020: the follower's drag in the wake relative to free stream

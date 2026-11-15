@@ -1,5 +1,10 @@
 # Sphere Wake Residence Implementation Plan
 
+> **Moved to main, 2026-11-14 (Asha):** the package now lives at `reentry_model/wake_residence/`. On its build branch
+> (`wake-residence`) it was called `parent_follower_separation_interactions` from commit 8cae32a to 43ffee2, and the
+> commit messages of that period use the old name; this plan has been updated to the new one. Still open at the move:
+> the wake-gas decision (the core-temperature and drag-ratio checks), Task 11 (documentation) and the final review.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A general parent-plume / follower overlap engine, and the sweep it was built for: how long a solid AA7075
@@ -57,8 +62,8 @@ cites its sections as §n).
 - Run names encode diameter, release altitude, bound, wake_flow, law and every non-default setting (§3).
 - Summary JSON records `git_commit`, `git_dirty` (reuse `wake_column.run._git_commit` / `_git_dirty`) and the
   SHA-256 of the parent file (`ParentTrajectory.sha256`).
-- Outputs under `output/parent_follower_separation_interactions_output/` (`parent_follower_separation_interactions.OUTPUT`), git-ignored by the existing `output/` rule.
-- Commit messages: a scope prefix and a sentence describing the behaviour (`parent_follower_separation_interactions: ...`), ending with
+- Outputs under `output/wake_residence_output/` (`wake_residence.OUTPUT`), git-ignored by the existing `output/` rule.
+- Commit messages: a scope prefix and a sentence describing the behaviour (`wake_residence: ...`), ending with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
 ## Review Focus
@@ -79,7 +84,7 @@ cites its sections as §n).
 ## File Structure
 
 ```
-reentry_model/parent_follower_separation_interactions/
+reentry_model/wake_residence/
   __init__.py        package docstring (module map), OUTPUT path
   laws.py            EmissionState, LawSettings, regime criteria, Park / Taylor / Feldman radii, plume_radius()
   track.py           Track: interpolated path, path length, per-sample flow state, interpolation error
@@ -109,10 +114,10 @@ Modify: pytest.ini (testpaths), docs/model_assumptions.md (new section 10), READ
 ### Task 1: Package skeleton, plume laws and regime selection
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/__init__.py`, `reentry_model/parent_follower_separation_interactions/laws.py`,
-  `reentry_model/parent_follower_separation_interactions/tests/__init__.py`, `reentry_model/parent_follower_separation_interactions/tests/conftest.py`,
-  `reentry_model/parent_follower_separation_interactions/tests/test_laws.py`
-- Modify: `pytest.ini` (append `reentry_model/parent_follower_separation_interactions/tests` to `testpaths`)
+- Create: `reentry_model/wake_residence/__init__.py`, `reentry_model/wake_residence/laws.py`,
+  `reentry_model/wake_residence/tests/__init__.py`, `reentry_model/wake_residence/tests/conftest.py`,
+  `reentry_model/wake_residence/tests/test_laws.py`
+- Modify: `pytest.ini` (append `reentry_model/wake_residence/tests` to `testpaths`)
 
 **Interfaces:**
 - Produces (in `laws.py`):
@@ -138,7 +143,7 @@ Modify: pytest.ini (testpaths), docs/model_assumptions.md (new section 10), READ
   - `plume_radius(x, s, settings, bound) -> RadiusResult` — `bound` is `"low"` or `"high"`; laminar → min/max of
     Feldman at T_axis = s.T and T_axis = settings.T_axis_hot; transitional → min/max of those two and the
     turbulent law; turbulent → the turbulent law; rarefied → fallback law if set, else NaN; too_slow → NaN.
-- Produces (in `__init__.py`): `OUTPUT = os.path.join(OUTPUT_DIR, "parent_follower_separation_interactions_output")`.
+- Produces (in `__init__.py`): `OUTPUT = os.path.join(OUTPUT_DIR, "wake_residence_output")`.
 - `tests/conftest.py`: copy the pattern of `reentry_model/wake_column/tests/conftest.py` (project root on
   `sys.path`, a session `parent` fixture).
 
@@ -146,7 +151,7 @@ Modify: pytest.ini (testpaths), docs/model_assumptions.md (new section 10), READ
 
 ```python
 import math, pytest
-from reentry_model.parent_follower_separation_interactions.laws import (EmissionState, LawSettings, classify, park_radius, taylor_radius,
+from reentry_model.wake_residence.laws import (EmissionState, LawSettings, classify, park_radius, taylor_radius,
     feldman_radius, plume_radius, sutherland_mu, pressure_parameter)
 
 def state(**kw):
@@ -220,8 +225,8 @@ def test_speed_and_distance_flags():
 
 - [ ] **Step 2: Run them to confirm they fail**
 
-Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_laws.py -q`
-Expected: collection error (`ModuleNotFoundError: reentry_model.parent_follower_separation_interactions`).
+Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_laws.py -q`
+Expected: collection error (`ModuleNotFoundError: reentry_model.wake_residence`).
 
 - [ ] **Step 3: Implement** `__init__.py`, `laws.py`, `tests/__init__.py`, `tests/conftest.py`, and add the test path
 to `pytest.ini`. Each law's coefficient comes from `LawSettings`; the module docstring cites the three sources
@@ -230,16 +235,16 @@ to `pytest.ini`. Each law's coefficient comes from `LawSettings`; the module doc
 
 - [ ] **Step 4: Run them to confirm they pass**
 
-Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_laws.py -q`
+Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_laws.py -q`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add pytest.ini reentry_model/parent_follower_separation_interactions/__init__.py reentry_model/parent_follower_separation_interactions/laws.py \
-  reentry_model/parent_follower_separation_interactions/tests/__init__.py reentry_model/parent_follower_separation_interactions/tests/conftest.py \
-  reentry_model/parent_follower_separation_interactions/tests/test_laws.py
-git commit -m "parent_follower_separation_interactions: plume laws (Taylor, Park, Feldman bounds) and regime selection from Kn, Re_d and Taylor's pressure parameter, never altitude"
+git add pytest.ini reentry_model/wake_residence/__init__.py reentry_model/wake_residence/laws.py \
+  reentry_model/wake_residence/tests/__init__.py reentry_model/wake_residence/tests/conftest.py \
+  reentry_model/wake_residence/tests/test_laws.py
+git commit -m "wake_residence: plume laws (Taylor, Park, Feldman bounds) and regime selection from Kn, Re_d and Taylor's pressure parameter, never altitude"
 ```
 
 ---
@@ -247,7 +252,7 @@ git commit -m "parent_follower_separation_interactions: plume laws (Taylor, Park
 ### Task 2: Track
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/track.py`, `reentry_model/parent_follower_separation_interactions/tests/test_track.py`
+- Create: `reentry_model/wake_residence/track.py`, `reentry_model/wake_residence/tests/test_track.py`
 
 **Interfaces:**
 - Consumes: `laws.EmissionState`.
@@ -271,7 +276,7 @@ git commit -m "parent_follower_separation_interactions: plume laws (Taylor, Park
 
 ```python
 import numpy as np, pytest
-from reentry_model.parent_follower_separation_interactions.track import Track
+from reentry_model.wake_residence.track import Track
 
 def circle(n):
     t = np.linspace(0, 10, n); R, w = 6.4e6, 7500 / 6.4e6
@@ -309,14 +314,14 @@ def test_emission_state_interpolates_flow():
     assert s.rho == pytest.approx(2.0) and s.U == pytest.approx(1.0)
 ```
 
-- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_track.py -q`. Expected: ImportError.
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_track.py -q`. Expected: ImportError.
 - [ ] **Step 3: Implement `track.py`** to the interface above.
 - [ ] **Step 4: Run them to confirm they pass.** Same command. Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/track.py reentry_model/parent_follower_separation_interactions/tests/test_track.py
-git commit -m "parent_follower_separation_interactions: Track, an interpolated path with path length, per-sample flow state and an interpolation-error estimate"
+git add reentry_model/wake_residence/track.py reentry_model/wake_residence/tests/test_track.py
+git commit -m "wake_residence: Track, an interpolated path with path length, per-sample flow state and an interpolation-error estimate"
 ```
 
 ---
@@ -324,7 +329,7 @@ git commit -m "parent_follower_separation_interactions: Track, an interpolated p
 ### Task 3: Overlap engine (margin and residence)
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/overlap.py`, `reentry_model/parent_follower_separation_interactions/tests/test_overlap.py`
+- Create: `reentry_model/wake_residence/overlap.py`, `reentry_model/wake_residence/tests/test_overlap.py`
 
 **Interfaces:**
 - Consumes: `Track`, `LawSettings`, `plume_radius`, `RadiusResult`, `classify`.
@@ -362,10 +367,10 @@ git commit -m "parent_follower_separation_interactions: Track, an interpolated p
 
 ```python
 import ast, inspect, math, numpy as np, pytest
-from reentry_model.parent_follower_separation_interactions import overlap
-from reentry_model.parent_follower_separation_interactions.overlap import Plume, residence
-from reentry_model.parent_follower_separation_interactions.track import Track
-from reentry_model.parent_follower_separation_interactions.laws import LawSettings, taylor_radius
+from reentry_model.wake_residence import overlap
+from reentry_model.wake_residence.overlap import Plume, residence
+from reentry_model.wake_residence.track import Track
+from reentry_model.wake_residence.laws import LawSettings, taylor_radius
 
 U = 6000.0
 TURB = dict(rho=1e-2, T=250.0, p=300.0, mu=1.6e-5, mfp=1e-5, d=2.813, cda=5.5, r0=1.4065)
@@ -379,7 +384,7 @@ def follower(t, r):
 
 @pytest.mark.parametrize("modname", ["overlap", "laws", "track", "wake_gas"])
 def test_engine_imports_nothing_physical(modname):
-    mod = __import__("reentry_model.parent_follower_separation_interactions." + modname, fromlist=[modname])
+    mod = __import__("reentry_model.wake_residence." + modname, fromlist=[modname])
     tree = ast.parse(inspect.getsource(mod))
     names = {a.name for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
              for a in n.names} | {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
@@ -387,7 +392,7 @@ def test_engine_imports_nothing_physical(modname):
         assert not any(bad in x.split(".") for x in names), (modname, bad)
 
 def test_regime_functions_take_no_altitude():
-    from reentry_model.parent_follower_separation_interactions import laws
+    from reentry_model.wake_residence import laws
     for fn in (laws.classify, laws.plume_radius, overlap.Plume.margin):
         assert not any("alt" in p or p in ("h", "h_km") for p in inspect.signature(fn).parameters)
 
@@ -473,14 +478,14 @@ def test_validity_record_is_populated():
     assert v.regimes == {"turbulent"} and v.kn and v.re_d and v.p_param and "taylor" in v.laws
 ```
 
-- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_overlap.py -q`. Expected: ImportError.
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_overlap.py -q`. Expected: ImportError.
 - [ ] **Step 3: Implement `overlap.py`** to the interface and algorithms above.
-- [ ] **Step 4: Run them to confirm they pass.** Same command, then the whole package: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions -q`. Expected: all pass.
+- [ ] **Step 4: Run them to confirm they pass.** Same command, then the whole package: `"$PY" -m pytest reentry_model/wake_residence -q`. Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/overlap.py reentry_model/parent_follower_separation_interactions/tests/test_overlap.py
-git commit -m "parent_follower_separation_interactions: overlap engine -- union-of-balls margin with a k-d tree search checked against brute force, every inside interval, censoring and a per-interval validity record"
+git add reentry_model/wake_residence/overlap.py reentry_model/wake_residence/tests/test_overlap.py
+git commit -m "wake_residence: overlap engine -- union-of-balls margin with a k-d tree search checked against brute force, every inside interval, censoring and a per-interval validity record"
 ```
 
 ---
@@ -488,8 +493,8 @@ git commit -m "parent_follower_separation_interactions: overlap engine -- union-
 ### Task 4: Wake gas state
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/wake_gas.py`, `reentry_model/parent_follower_separation_interactions/tests/test_wake_gas.py`
-- Modify: `reentry_model/parent_follower_separation_interactions/overlap.py` (add `Plume.wake_state`)
+- Create: `reentry_model/wake_residence/wake_gas.py`, `reentry_model/wake_residence/tests/test_wake_gas.py`
+- Modify: `reentry_model/wake_residence/overlap.py` (add `Plume.wake_state`)
 
 **Interfaces:**
 - Consumes: `EmissionState`, `MarginResult`.
@@ -518,8 +523,8 @@ mode "density": u = 0; mode "velocity": T, rho ambient; beyond cutoff * max(r_b,
 ```python
 import math, numpy as np, pytest
 from scipy.integrate import quad
-from reentry_model.parent_follower_separation_interactions.wake_gas import gas_state, Ambient, CP_AIR, R_AIR
-from reentry_model.parent_follower_separation_interactions.laws import EmissionState, sutherland_mu
+from reentry_model.wake_residence.wake_gas import gas_state, Ambient, CP_AIR, R_AIR
+from reentry_model.wake_residence.laws import EmissionState, sutherland_mu
 
 E = EmissionState(rho=3e-4, T=240.0, p=20.0, mu=sutherland_mu(240.0), mfp=1e-4, U=4000.0, d=2.813, cda=5.5, r0=1.4065)
 AMB = Ambient(p=20.0, T=240.0, rho=20.0 / (R_AIR * 240.0)); X = np.array([1.0, 0, 0])
@@ -554,16 +559,16 @@ def test_modes_switch_one_effect_each():
     assert v.T == AMB.T and v.u[0] > 0 and d.T > AMB.T and not d.u.any()
 ```
 
-- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_wake_gas.py -q`. Expected: ImportError.
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_wake_gas.py -q`. Expected: ImportError.
 - [ ] **Step 3: Implement `wake_gas.py` and `Plume.wake_state`.** If the conservation test needs r_b larger so no cap
   binds, change the test's r_b, not the tolerance, and say so in the commit message.
-- [ ] **Step 4: Run them to confirm they pass**, then the package: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions -q`.
+- [ ] **Step 4: Run them to confirm they pass**, then the package: `"$PY" -m pytest reentry_model/wake_residence -q`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/wake_gas.py reentry_model/parent_follower_separation_interactions/overlap.py \
-  reentry_model/parent_follower_separation_interactions/tests/test_wake_gas.py
-git commit -m "parent_follower_separation_interactions: wake gas state -- forward gas velocity and hot, thin core from the parent's momentum and drag work, Gaussian profiles, caps and the four wake_flow modes"
+git add reentry_model/wake_residence/wake_gas.py reentry_model/wake_residence/overlap.py \
+  reentry_model/wake_residence/tests/test_wake_gas.py
+git commit -m "wake_residence: wake gas state -- forward gas velocity and hot, thin core from the parent's momentum and drag work, Gaussian profiles, caps and the four wake_flow modes"
 ```
 
 ---
@@ -571,8 +576,8 @@ git commit -m "parent_follower_separation_interactions: wake gas state -- forwar
 ### Task 5: Twin parent from the DRAMA file
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/adapters.py` (first part), `reentry_model/parent_follower_separation_interactions/tests/test_twin.py`
-- Modify: `reentry_model/parent_follower_separation_interactions/tests/conftest.py` (session fixture `twin`)
+- Create: `reentry_model/wake_residence/adapters.py` (first part), `reentry_model/wake_residence/tests/test_twin.py`
+- Modify: `reentry_model/wake_residence/tests/conftest.py` (session fixture `twin`)
 
 **Interfaces:**
 - Consumes: `parent_trajectory.load_parent`, `ParentTrajectory` (`.rows`, `.branch`, `.path`, `.epoch`,
@@ -611,8 +616,8 @@ git commit -m "parent_follower_separation_interactions: wake gas state -- forwar
 
 ```python
 import numpy as np, pytest
-from reentry_model.parent_follower_separation_interactions.adapters import drama_beta_table, release_state, twin_vs_drama
-from reentry_model.parent_follower_separation_interactions.overlap import Plume
+from reentry_model.wake_residence.adapters import drama_beta_table, release_state, twin_vs_drama
+from reentry_model.wake_residence.overlap import Plume
 
 def test_beta_table_matches_builder_check(parent):
     b = drama_beta_table(parent)
@@ -638,7 +643,7 @@ def test_altitude_outside_track_raises(twin):
         twin.t_at_altitude(130.0)
 ```
 
-- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_twin.py -q -s`. Expected: ImportError.
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_twin.py -q -s`. Expected: ImportError.
 - [ ] **Step 3: Implement** the adapters above and the `twin` session fixture.
 - [ ] **Step 4: Run them.** Same command. Expected: pass, and the printed worst difference is at most 0.01.
   **If the 1 percent test fails**: do not loosen it. Add `DramaColumnAtmosphere(parent)` to `adapters.py`
@@ -649,9 +654,9 @@ def test_altitude_outside_track_raises(twin):
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/adapters.py reentry_model/parent_follower_separation_interactions/tests/test_twin.py \
-  reentry_model/parent_follower_separation_interactions/tests/conftest.py
-git commit -m "parent_follower_separation_interactions: twin of the DRAMA parent integrated by the repository's own integrator with DRAMA's altitude-dependent ballistic coefficient; reproduces DRAMA's speed to <worst> above 60 km"
+git add reentry_model/wake_residence/adapters.py reentry_model/wake_residence/tests/test_twin.py \
+  reentry_model/wake_residence/tests/conftest.py
+git commit -m "wake_residence: twin of the DRAMA parent integrated by the repository's own integrator with DRAMA's altitude-dependent ballistic coefficient; reproduces DRAMA's speed to <worst> above 60 km"
 ```
 (Replace `<worst>` with the measured figure.)
 
@@ -660,8 +665,8 @@ git commit -m "parent_follower_separation_interactions: twin of the DRAMA parent
 ### Task 6: Followers in the wake (WakeAtmosphere, sphere follower, sphere parent)
 
 **Files:**
-- Modify: `reentry_model/parent_follower_separation_interactions/adapters.py`
-- Create: `reentry_model/parent_follower_separation_interactions/tests/test_follower.py`
+- Modify: `reentry_model/wake_residence/adapters.py`
+- Create: `reentry_model/wake_residence/tests/test_follower.py`
 
 **Interfaces:**
 - Consumes: `Plume.wake_state`, `Ambient`, `atmosphere.Freestream`, `earth.enu_basis`, `earth.geodetic_to_ecef`,
@@ -686,9 +691,9 @@ git commit -m "parent_follower_separation_interactions: twin of the DRAMA parent
 ```python
 import time, numpy as np, pytest
 from reentry_model.atmosphere import US76TableAtmosphere
-from reentry_model.parent_follower_separation_interactions.adapters import (WakeAtmosphere, sphere_simulator, dense_solve, release_state)
-from reentry_model.parent_follower_separation_interactions.overlap import Plume
-from reentry_model.parent_follower_separation_interactions.laws import LawSettings
+from reentry_model.wake_residence.adapters import (WakeAtmosphere, sphere_simulator, dense_solve, release_state)
+from reentry_model.wake_residence.overlap import Plume
+from reentry_model.wake_residence.laws import LawSettings
 
 def release(twin, h_km=60.0):
     t_r = twin.t_at_altitude(h_km); return t_r, release_state(twin.track, t_r, twin.epoch)
@@ -720,7 +725,7 @@ def test_timing_of_one_wake_run_is_recorded(twin, capsys):
     assert w.n_calls > 0
 ```
 
-- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_follower.py -q -s`. Expected: ImportError.
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_follower.py -q -s`. Expected: ImportError.
 - [ ] **Step 3: Implement** the adapters above.
 - [ ] **Step 4: Run them.** Same command. Expected: pass; report the printed timing to the controller. If one
   second of flight costs more than about 30 s, profile `Plume.margin` and speed it up (cache the k-d tree query
@@ -732,8 +737,8 @@ def test_timing_of_one_wake_run_is_recorded(twin, capsys):
 - [ ] **Step 6: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/adapters.py reentry_model/parent_follower_separation_interactions/tests/test_follower.py
-git commit -m "parent_follower_separation_interactions: WakeAtmosphere feeds the wake gas to any follower through the atmosphere's state() call; sphere followers and sphere parents built as cli.py builds a --thermal none run"
+git add reentry_model/wake_residence/adapters.py reentry_model/wake_residence/tests/test_follower.py
+git commit -m "wake_residence: WakeAtmosphere feeds the wake gas to any follower through the atmosphere's state() call; sphere followers and sphere parents built as cli.py builds a --thermal none run"
 ```
 
 ---
@@ -741,8 +746,8 @@ git commit -m "parent_follower_separation_interactions: WakeAtmosphere feeds the
 ### Task 7: Release classifier (Register et al. 2020, AFFIx)
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/affix.py`, `reentry_model/parent_follower_separation_interactions/tests/test_affix.py`
-- Modify: `reentry_model/parent_follower_separation_interactions/tests/test_overlap.py` (add `affix` to the import-purity parametrisation)
+- Create: `reentry_model/wake_residence/affix.py`, `reentry_model/wake_residence/tests/test_affix.py`
+- Modify: `reentry_model/wake_residence/tests/test_overlap.py` (add `affix` to the import-purity parametrisation)
 
 **Interfaces:**
 - Consumes: `laws.EmissionState`, `laws.LawSettings.kn_continuum` (pass the value in, do not import settings
@@ -778,9 +783,9 @@ git commit -m "parent_follower_separation_interactions: WakeAtmosphere feeds the
 
 ```python
 import math, numpy as np, pytest
-from reentry_model.parent_follower_separation_interactions.affix import (affix_regime, theta_inn, theta_bif, AffixSettings,
+from reentry_model.wake_residence.affix import (affix_regime, theta_inn, theta_bif, AffixSettings,
     release_offset, far_wake_offset)
-from reentry_model.parent_follower_separation_interactions.laws import EmissionState, sutherland_mu
+from reentry_model.wake_residence.laws import EmissionState, sutherland_mu
 
 E = EmissionState(rho=1.85e-5, T=199.0, p=1.05, mu=sutherland_mu(199.0), mfp=4e-3, U=7600.0, d=2.813,
                   cda=5.5, r0=1.4065)          # roughly the Generic Spacecraft at 80 km
@@ -831,15 +836,15 @@ def test_release_offsets():
     assert np.linalg.norm(release_offset(135.0, 2.813, v, up)) == pytest.approx(1.4065)
 ```
 
-- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_affix.py -q`. Expected: ImportError.
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_affix.py -q`. Expected: ImportError.
 - [ ] **Step 3: Implement `affix.py`** and add `"affix"` to the import-purity parametrisation in `test_overlap.py`.
-- [ ] **Step 4: Run them to confirm they pass**, then `"$PY" -m pytest reentry_model/parent_follower_separation_interactions -q`.
+- [ ] **Step 4: Run them to confirm they pass**, then `"$PY" -m pytest reentry_model/wake_residence -q`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/affix.py reentry_model/parent_follower_separation_interactions/tests/test_affix.py \
-  reentry_model/parent_follower_separation_interactions/tests/test_overlap.py
-git commit -m "parent_follower_separation_interactions: Register et al. (2020) release classifier -- trapped, far wake, shock band or escape from the size ratio and release angle, with the interaction time and a validity record"
+git add reentry_model/wake_residence/affix.py reentry_model/wake_residence/tests/test_affix.py \
+  reentry_model/wake_residence/tests/test_overlap.py
+git commit -m "wake_residence: Register et al. (2020) release classifier -- trapped, far wake, shock band or escape from the size ratio and release angle, with the interaction time and a validity record"
 ```
 
 ---
@@ -850,9 +855,9 @@ Added 2026-10-29 after Asha chose option 1 (an engineering shock-layer model). R
 fix every formula below, including Lighthill's conditions and the sign of the r^4 coefficient.
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/shock_layer.py`, `reentry_model/parent_follower_separation_interactions/tests/test_shock_layer.py`,
-  `reentry_model/parent_follower_separation_interactions/tests/test_rarefied_follower.py`
-- Modify: `reentry_model/parent_follower_separation_interactions/adapters.py` (WakeAtmosphere option, pressure gradient, rarefied simulator,
+- Create: `reentry_model/wake_residence/shock_layer.py`, `reentry_model/wake_residence/tests/test_shock_layer.py`,
+  `reentry_model/wake_residence/tests/test_rarefied_follower.py`
+- Modify: `reentry_model/wake_residence/adapters.py` (WakeAtmosphere option, pressure gradient, rarefied simulator,
   collision event, exit classification)
 
 **Interfaces:**
@@ -916,7 +921,7 @@ fix every formula below, including Lighthill's conditions and the sign of the r^
 ```python
 import math, numpy as np, pytest
 from reentry_model.gas import EquilibriumAir
-from reentry_model.parent_follower_separation_interactions.shock_layer import (ShockLayerSettings, FreeStream, oblique_jump, lighthill,
+from reentry_model.wake_residence.shock_layer import (ShockLayerSettings, FreeStream, oblique_jump, lighthill,
     lighthill_standoff_approx, billig_standoff, billig_vertex_radius, ShockShape, ShockLayerField)
 
 R, R0 = 1.4065, 1.4065
@@ -1023,12 +1028,12 @@ def test_no_altitude_argument():
 import math, numpy as np, pytest
 from reentry_model import aero
 from reentry_model.droplet_reentry import particle_trajectory as pt
-from reentry_model.parent_follower_separation_interactions.adapters import (WakeAtmosphere, rarefied_sphere_simulator, dense_solve,
+from reentry_model.wake_residence.adapters import (WakeAtmosphere, rarefied_sphere_simulator, dense_solve,
     parent_collision_event, shock_layer_exit, release_state)
-from reentry_model.parent_follower_separation_interactions.overlap import Plume
-from reentry_model.parent_follower_separation_interactions.laws import LawSettings
-from reentry_model.parent_follower_separation_interactions.shock_layer import ShockLayerSettings, ShockLayerField, FreeStream
-from reentry_model.parent_follower_separation_interactions.affix import release_offset
+from reentry_model.wake_residence.overlap import Plume
+from reentry_model.wake_residence.laws import LawSettings
+from reentry_model.wake_residence.shock_layer import ShockLayerSettings, ShockLayerField, FreeStream
+from reentry_model.wake_residence.affix import release_offset
 
 def _setup(twin, h_km=90.0, theta=180.0, dv=0.0, settings=ShockLayerSettings(), d=1e-4, clearance=0.0):
     # build: t_r = twin.t_at_altitude(h_km); FreeStream from the twin's flow at t_r; field; WakeAtmosphere with the
@@ -1070,19 +1075,19 @@ def test_grid_halving_changes_exit_time_by_under_one_percent(twin):
 
   (The exact `dense_solve` end-reason string for an event follows Task 5's `DenseRun.end_reason`; use it.)
 
-- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_shock_layer.py reentry_model/parent_follower_separation_interactions/tests/test_rarefied_follower.py -q`. Expected: ImportError.
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_shock_layer.py reentry_model/wake_residence/tests/test_rarefied_follower.py -q`. Expected: ImportError.
 - [ ] **Step 3: Implement `shock_layer.py`**, then the `adapters.py` additions. Compute the field on the (phi, eta) grid
   with phi from 0 to 90 degrees; at phi = 0 use the axis limit. For y > 0 the frame's e_y is the lateral unit vector;
   on the axis w_y = 0 by symmetry. Report in the commit message and the task report: epsilon, Lighthill's and
   Billig's standoffs at 80 km, the build time of one field, and the wall time of the 20 s follower run.
-- [ ] **Step 4: Run them to confirm they pass**, then `"$PY" -m pytest reentry_model/parent_follower_separation_interactions -q` (the Task 6
+- [ ] **Step 4: Run them to confirm they pass**, then `"$PY" -m pytest reentry_model/wake_residence -q` (the Task 6
   WakeAtmosphere tests must pass unchanged).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/shock_layer.py reentry_model/parent_follower_separation_interactions/adapters.py \
-  reentry_model/parent_follower_separation_interactions/tests/test_shock_layer.py reentry_model/parent_follower_separation_interactions/tests/test_rarefied_follower.py
-git commit -m "parent_follower_separation_interactions: the parent's shock-layer flow (Billig shape with a Lighthill standoff, equilibrium oblique-shock and Newtonian surface states, Lighthill nose velocities) fed to rarefied followers through WakeAtmosphere, with the composed drag law, a pressure-gradient force and the parent as an obstacle"
+git add reentry_model/wake_residence/shock_layer.py reentry_model/wake_residence/adapters.py \
+  reentry_model/wake_residence/tests/test_shock_layer.py reentry_model/wake_residence/tests/test_rarefied_follower.py
+git commit -m "wake_residence: the parent's shock-layer flow (Billig shape with a Lighthill standoff, equilibrium oblique-shock and Newtonian surface states, Lighthill nose velocities) fed to rarefied followers through WakeAtmosphere, with the composed drag law, a pressure-gradient force and the parent as an obstacle"
 ```
 
 ---
@@ -1090,8 +1095,8 @@ git commit -m "parent_follower_separation_interactions: the parent's shock-layer
 ### Task 8: Scenarios, run names and case output
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/scenarios.py`, `reentry_model/parent_follower_separation_interactions/tests/test_scenarios.py`
-- Modify: `reentry_model/parent_follower_separation_interactions/adapters.py` (add `state_from_ecef`)
+- Create: `reentry_model/wake_residence/scenarios.py`, `reentry_model/wake_residence/tests/test_scenarios.py`
+- Modify: `reentry_model/wake_residence/adapters.py` (add `state_from_ecef`)
 
 **Interfaces:**
 - Consumes: everything above (Tasks 1-7b, and the 6b front-plane change: `ResidenceResult.reason` values include
@@ -1178,9 +1183,9 @@ git commit -m "parent_follower_separation_interactions: the parent's shock-layer
 
 ```python
 import json, math, numpy as np, pytest
-from reentry_model.parent_follower_separation_interactions.scenarios import (ScenarioSettings, run_name, sphere_in_spacecraft_plume,
+from reentry_model.wake_residence.scenarios import (ScenarioSettings, run_name, sphere_in_spacecraft_plume,
     droplet_in_sphere_plume, write_case, classify_release)
-from reentry_model.parent_follower_separation_interactions.laws import LawSettings
+from reentry_model.wake_residence.laws import LawSettings
 
 def test_run_names_differ_for_every_setting():
     base = run_name("sphere", d_mm=50, h_km=80, settings=ScenarioSettings())
@@ -1204,7 +1209,7 @@ def test_far_wake_case_runs_and_writes(twin, tmp_path):
     assert gap == pytest.approx(2 * 2 * math.sqrt(6.215 / math.pi), rel=1e-6)
 
 def test_follower_regime_thresholds():
-    from reentry_model.parent_follower_separation_interactions.scenarios import follower_regime, AFFIX_STATUS
+    from reentry_model.wake_residence.scenarios import follower_regime, AFFIX_STATUS
     assert [follower_regime(k, 0.01, 10.0) for k in (0.005, 0.5, 10.0)] == ["continuum", "transitional",
                                                                              "free_molecular"]
     assert [AFFIX_STATUS[r] for r in ("continuum", "transitional", "free_molecular")] == [
@@ -1245,16 +1250,16 @@ def test_droplet_in_sphere_plume_worked_examples(twin):
                        [h[0]["parent_x"], h[0]["parent_y"], h[0]["parent_z"]], atol=1e-3)
 ```
 
-- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_scenarios.py -q`. Expected: ImportError.
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_scenarios.py -q`. Expected: ImportError.
 - [ ] **Step 3: Implement `scenarios.py` and `state_from_ecef`.** If the (100, 60, 50) droplet is skipped by the Weber
   check, use a smaller droplet that is not, and note it in the commit message.
-- [ ] **Step 4: Run them to confirm they pass**, then `"$PY" -m pytest reentry_model/parent_follower_separation_interactions -q`.
+- [ ] **Step 4: Run them to confirm they pass**, then `"$PY" -m pytest reentry_model/wake_residence -q`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/scenarios.py reentry_model/parent_follower_separation_interactions/adapters.py \
-  reentry_model/parent_follower_separation_interactions/tests/test_scenarios.py
-git commit -m "parent_follower_separation_interactions: scenarios -- sphere in the spacecraft's plume, released by the follower's own regime (continuum: the AFFIx outcome, far wake on the axis two parent diameters behind or escape at the windward surface point; rarefied: the surface point, integrated through the shock layer) and a molten droplet in a solid sphere's plume, with configuration-encoding run names and case output"
+git add reentry_model/wake_residence/scenarios.py reentry_model/wake_residence/adapters.py \
+  reentry_model/wake_residence/tests/test_scenarios.py
+git commit -m "wake_residence: scenarios -- sphere in the spacecraft's plume, released by the follower's own regime (continuum: the AFFIx outcome, far wake on the axis two parent diameters behind or escape at the windward surface point; rarefied: the surface point, integrated through the shock layer) and a molten droplet in a solid sphere's plume, with configuration-encoding run names and case output"
 ```
 
 ---
@@ -1262,8 +1267,8 @@ git commit -m "parent_follower_separation_interactions: scenarios -- sphere in t
 ### Task 9: Sweep, sensitivity and tables
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/analysis/__init__.py`, `analysis/sweep.py`, `analysis/sensitivity.py`,
-  `analysis/tables.py`, `reentry_model/parent_follower_separation_interactions/tests/test_analysis.py`
+- Create: `reentry_model/wake_residence/analysis/__init__.py`, `analysis/sweep.py`, `analysis/sensitivity.py`,
+  `analysis/tables.py`, `reentry_model/wake_residence/tests/test_analysis.py`
 
 **Interfaces:**
 - Consumes: `scenarios.*`, `twin_parent`, `twin_vs_drama`, `drama_beta_table`, `plume_radius`, `classify`,
@@ -1272,7 +1277,7 @@ git commit -m "parent_follower_separation_interactions: scenarios -- sphere in t
   - `sweep.main(argv=None)` — options `--diameters` (default `1 5 10 25 50 100 200 400` mm), `--altitudes`
     (default `100 90 80 70 60 50` km; any outside the twin's range is dropped with a printed message), `--thetas`
     (default `90 120 135 145 160 180` degrees), `--bounds` (default `low high`), `--wake-flow` (default `off both`),
-    `--workers` (default CPU count less one), `--out` (default `parent_follower_separation_interactions.OUTPUT`). For each (diameter,
+    `--workers` (default CPU count less one), `--out` (default `wake_residence.OUTPUT`). For each (diameter,
     altitude, theta) decide the follower regime and classify; for continuum followers integrate the far-wake run
     once per (diameter, altitude, bound, wake_flow) and reuse it for every far-wake theta, integrate escape runs per
     theta, and do not integrate shock-band cases; integrate rarefied followers per theta from the surface (§4.3d);
@@ -1303,14 +1308,14 @@ git commit -m "parent_follower_separation_interactions: scenarios -- sphere in t
     - `<out>/wake_gas_sanity.csv` (spec §4.3a sanity checks: the model's core gas speed at 30 km behind the parent
       and core temperature 300 m behind, at each release altitude, next to the assumed values ~10 m/s and
       1,000-2,000 K).
-- Commands (from `Reentry Model/`): `"$PY" -m reentry_model.parent_follower_separation_interactions.analysis.sweep`,
+- Commands (from `Reentry Model/`): `"$PY" -m reentry_model.wake_residence.analysis.sweep`,
   `... .analysis.sensitivity`, `... .analysis.tables`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_analysis.py`:
 
 ```python
 import csv, filecmp, os, shutil
-from reentry_model.parent_follower_separation_interactions.analysis import sweep, tables
+from reentry_model.wake_residence.analysis import sweep, tables
 
 ARGS = ["--diameters", "10", "--altitudes", "60", "--thetas", "90", "180", "--bounds", "low",
         "--wake-flow", "off", "--workers", "1"]
@@ -1338,11 +1343,11 @@ def test_tables_report_regimes_as_outputs(tmp_path):
 (The `summary.csv` comparison requires that no wall-clock time is written into it; keep `runtime_s` in the
 per-case JSON only.)
 
-- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_analysis.py -q`. Expected: ImportError.
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_analysis.py -q`. Expected: ImportError.
 - [ ] **Step 3: Implement** the three scripts.
 - [ ] **Step 4: Run them to confirm they pass.** Same command.
 - [ ] **Step 5: Run the real thing** (in the background; report wall time and any failed case):
-  `"$PY" -m reentry_model.parent_follower_separation_interactions.analysis.tables`, then `... .sweep`, then `... .sensitivity`.
+  `"$PY" -m reentry_model.wake_residence.analysis.tables`, then `... .sweep`, then `... .sensitivity`.
   Expected: `summary.csv` with 8 × 6 × 6 × 2 × 2 = 1152 rows less any dropped altitudes; report to the controller
   the twin-vs-DRAMA figures, the regime at each release altitude, the AFFIx zone counts, the follower-regime counts,
   the shock-layer outcome counts for rarefied followers, the drag-ratio check, the wake-gas sanity values and the
@@ -1350,10 +1355,10 @@ per-case JSON only.)
 - [ ] **Step 6: Commit** (code and tests only; outputs are git-ignored)
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/analysis/__init__.py reentry_model/parent_follower_separation_interactions/analysis/sweep.py \
-  reentry_model/parent_follower_separation_interactions/analysis/sensitivity.py reentry_model/parent_follower_separation_interactions/analysis/tables.py \
-  reentry_model/parent_follower_separation_interactions/tests/test_analysis.py
-git commit -m "parent_follower_separation_interactions: resumable sweep over diameter, altitude and release angle (far-wake runs shared across angles), the sensitivity set, and the plume-size, ballistic-coefficient, twin-versus-DRAMA, AFFIx, drag-ratio and wake-gas tables"
+git add reentry_model/wake_residence/analysis/__init__.py reentry_model/wake_residence/analysis/sweep.py \
+  reentry_model/wake_residence/analysis/sensitivity.py reentry_model/wake_residence/analysis/tables.py \
+  reentry_model/wake_residence/tests/test_analysis.py
+git commit -m "wake_residence: resumable sweep over diameter, altitude and release angle (far-wake runs shared across angles), the sensitivity set, and the plume-size, ballistic-coefficient, twin-versus-DRAMA, AFFIx, drag-ratio and wake-gas tables"
 ```
 
 ---
@@ -1361,12 +1366,12 @@ git commit -m "parent_follower_separation_interactions: resumable sweep over dia
 ### Task 10: Plots
 
 **Files:**
-- Create: `reentry_model/parent_follower_separation_interactions/analysis/plots.py`; add a test to `tests/test_analysis.py`
+- Create: `reentry_model/wake_residence/analysis/plots.py`; add a test to `tests/test_analysis.py`
 
 **Interfaces:**
 - Consumes: the CSV and run files written by Task 9; `DRAMA Sphere Experiments/analysis/plot_style.py` the way
   `reentry_model/compare.py` imports it (fall back to plain matplotlib without it).
-- Produces: `plots.main(argv=None)` with `--out` (default `parent_follower_separation_interactions.OUTPUT`), writing to `<out>/plots/`:
+- Produces: `plots.main(argv=None)` with `--out` (default `wake_residence.OUTPUT`), writing to `<out>/plots/`:
   `plume_size.png` (r_b low/high against s and against time since passage, one line per release altitude,
   Taylor's 1200 (C_D A)^(1/2) and Park's 30 km limits marked, regime in the legend), `trajectories_<h>km.png`
   (twin and far-wake spheres, altitude against downrange, for each release altitude present), `margin_<h>km.png`
@@ -1382,7 +1387,7 @@ git commit -m "parent_follower_separation_interactions: resumable sweep over dia
 - [ ] **Step 1: Write the failing test** (append to `tests/test_analysis.py`):
 
 ```python
-from reentry_model.parent_follower_separation_interactions.analysis import plots
+from reentry_model.wake_residence.analysis import plots
 
 def test_plots_are_written_from_a_short_sweep(tmp_path):
     sweep.main(ARGS + ["--out", str(tmp_path)]); tables.main(["--out", str(tmp_path)])
@@ -1392,15 +1397,15 @@ def test_plots_are_written_from_a_short_sweep(tmp_path):
         assert (tmp_path / "plots" / name).stat().st_size > 0
 ```
 
-- [ ] **Step 2: Run it to confirm it fails.** Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_analysis.py -q -k plots`. Expected: ImportError.
+- [ ] **Step 2: Run it to confirm it fails.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_analysis.py -q -k plots`. Expected: ImportError.
 - [ ] **Step 3: Implement `plots.py`.**
-- [ ] **Step 4: Run it to confirm it passes**, then run `"$PY" -m reentry_model.parent_follower_separation_interactions.analysis.plots`
+- [ ] **Step 4: Run it to confirm it passes**, then run `"$PY" -m reentry_model.wake_residence.analysis.plots`
   on the real outputs and look at each image.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/analysis/plots.py reentry_model/parent_follower_separation_interactions/tests/test_analysis.py
-git commit -m "parent_follower_separation_interactions: plots of plume size, trajectories, distance-to-track against plume radius, the residence-time map and the AFFIx release zones"
+git add reentry_model/wake_residence/analysis/plots.py reentry_model/wake_residence/tests/test_analysis.py
+git commit -m "wake_residence: plots of plume size, trajectories, distance-to-track against plume radius, the residence-time map and the AFFIx release zones"
 ```
 
 ---
@@ -1412,11 +1417,11 @@ Newtonian theory puts the shoulder at p_inf and makes every theta = 90 release r
 changes `shock_layer.py` and adds keys downstream.
 
 **Files:**
-- Modify: `reentry_model/parent_follower_separation_interactions/shock_layer.py`
-- Modify: `reentry_model/parent_follower_separation_interactions/scenarios.py` (summary keys, step 2 of the sphere case)
-- Modify: `reentry_model/parent_follower_separation_interactions/analysis/sweep.py` (summary columns)
-- Modify: `reentry_model/parent_follower_separation_interactions/analysis/sensitivity.py` (rarefied variation)
-- Test: `reentry_model/parent_follower_separation_interactions/tests/test_shock_layer.py`, and any existing test whose
+- Modify: `reentry_model/wake_residence/shock_layer.py`
+- Modify: `reentry_model/wake_residence/scenarios.py` (summary keys, step 2 of the sphere case)
+- Modify: `reentry_model/wake_residence/analysis/sweep.py` (summary columns)
+- Modify: `reentry_model/wake_residence/analysis/sensitivity.py` (rarefied variation)
+- Test: `reentry_model/wake_residence/tests/test_shock_layer.py`, and any existing test whose
   premise was the thin shoulder gas (`test_scenarios.py::test_far_wake_case_runs_and_writes` says so in a comment:
   update the comment's numbers to what the new model gives, and keep the assertion's intent)
 
@@ -1499,7 +1504,7 @@ def test_modified_newtonian_keeps_the_previous_surface_state_and_thins_the_shoul
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_shock_layer.py -q -k "npm or shoulder or modified_newtonian"`
+Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_shock_layer.py -q -k "npm or shoulder or modified_newtonian"`
 Expected: FAIL (`newtonian_prandtl_meyer` not defined).
 
 - [ ] **Step 3: Implement `newtonian_prandtl_meyer` and wire it into `ShockLayerField`**
@@ -1534,7 +1539,7 @@ the measured value rather than loosening its tolerance.
 
 - [ ] **Step 5: Run the whole package's tests**
 
-Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions -q`
+Run: `"$PY" -m pytest reentry_model/wake_residence -q`
 Expected: all pass. Report the new 80 km values of `surface_match_phi_deg`, `shoulder_pressure_ratio`,
 `flux_mismatch`, `flux_iterations` and `build_time_s`, and Kn_f at theta = 90 for a 10 mm follower at 60 km under
 both models.
@@ -1542,8 +1547,8 @@ both models.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add reentry_model/parent_follower_separation_interactions/shock_layer.py reentry_model/parent_follower_separation_interactions/scenarios.py reentry_model/parent_follower_separation_interactions/analysis/sweep.py reentry_model/parent_follower_separation_interactions/analysis/sensitivity.py reentry_model/parent_follower_separation_interactions/tests/test_shock_layer.py reentry_model/parent_follower_separation_interactions/tests/test_scenarios.py
-git commit -m "parent_follower_separation_interactions: the parent's surface pressure is the Newtonian-Prandtl-Meyer method in equilibrium air (modified Newtonian to the matching point, a Prandtl-Meyer expansion to the shoulder), so the shoulder gas is about 60-75 times the free-stream pressure instead of equal to it; modified Newtonian kept as a sensitivity variation"
+git add reentry_model/wake_residence/shock_layer.py reentry_model/wake_residence/scenarios.py reentry_model/wake_residence/analysis/sweep.py reentry_model/wake_residence/analysis/sensitivity.py reentry_model/wake_residence/tests/test_shock_layer.py reentry_model/wake_residence/tests/test_scenarios.py
+git commit -m "wake_residence: the parent's surface pressure is the Newtonian-Prandtl-Meyer method in equilibrium air (modified Newtonian to the matching point, a Prandtl-Meyer expansion to the shoulder), so the shoulder gas is about 60-75 times the free-stream pressure instead of equal to it; modified Newtonian kept as a sensitivity variation"
 ```
 
 ---

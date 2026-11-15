@@ -2,7 +2,7 @@
 twin of the Generic Spacecraft, classified (AFFIx zone, the follower's own regime) and, where spec 4.3c-d integrates it,
 run by `scenarios.sphere_in_spacecraft_plume`.
 
-    "$PY" -m reentry_model.parent_follower_separation_interactions.analysis.sweep [--diameters mm ...] [--altitudes km ...]
+    "$PY" -m reentry_model.wake_residence.analysis.sweep [--diameters mm ...] [--altitudes km ...]
         [--thetas deg ...] [--bounds low high] [--wake-flow off both] [--workers N] [--out DIR] [--force]
 
 Work units. The far-wake integration is shared by every far-wake theta of one (diameter, altitude, bound, wake_flow)
@@ -10,7 +10,7 @@ through an in-process memo in `scenarios`, so one worker takes one such combinat
 another; the units go to a process pool (default: CPU count less one workers; one worker runs in this process).
 Each worker builds its own twin (`get_twin`, once per process).
 
-Files under `--out` (default `parent_follower_separation_interactions.OUTPUT`):
+Files under `--out` (default `wake_residence.OUTPUT`):
   runs/<run name>.json, .csv   one case each (`scenarios.write_case`). A case whose JSON exists is not run again, unless
                                that JSON was made by another commit or from a dirty working tree (a stale case: it is
                                rerun and a line is printed) or `--force` is given.
@@ -32,12 +32,12 @@ import os
 import sys
 from collections import Counter
 
-from reentry_model.parent_follower_separation_interactions import OUTPUT
-from reentry_model.parent_follower_separation_interactions.adapters import PARENT_FRONTAL_AREA, twin_parent
-from reentry_model.parent_follower_separation_interactions import scenarios
-from reentry_model.parent_follower_separation_interactions.scenarios import (
+from reentry_model.wake_residence import OUTPUT
+from reentry_model.wake_residence.adapters import PARENT_FRONTAL_AREA, twin_parent
+from reentry_model.wake_residence import scenarios
+from reentry_model.wake_residence.scenarios import (
     RELEASES, NO_THETA_RELEASES, ScenarioSettings, run_name, sphere_in_spacecraft_plume, write_case)
-from reentry_model.parent_follower_separation_interactions.wake_gas import WAKE_FLOW_MODES
+from reentry_model.wake_residence.wake_gas import WAKE_FLOW_MODES
 
 DEFAULT_DIAMETERS = (1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 200.0, 400.0)      # mm
 DEFAULT_ALTITUDES = (100.0, 90.0, 80.0, 70.0, 60.0, 50.0)                    # km

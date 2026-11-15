@@ -1,15 +1,15 @@
 """Scenarios, run names and case output (Task 8, spec 4.3b-4.4): a sphere in the spacecraft's plume, released by the
 follower's own regime, and a molten droplet in a solid sphere's plume."""
 import json, math, numpy as np, pytest
-from reentry_model.parent_follower_separation_interactions.scenarios import (ScenarioSettings, run_name, sphere_in_spacecraft_plume,
+from reentry_model.wake_residence.scenarios import (ScenarioSettings, run_name, sphere_in_spacecraft_plume,
     droplet_in_sphere_plume, write_case, classify_release)
-from reentry_model.parent_follower_separation_interactions.laws import LawSettings
+from reentry_model.wake_residence.laws import LawSettings
 
 def test_run_names_differ_for_every_setting():
     # far-wake names carry theta (fix round 1): one integration serves every far-wake theta, but each theta has its
     # own AFFIx record and so its own files
-    from reentry_model.parent_follower_separation_interactions.affix import AffixSettings
-    from reentry_model.parent_follower_separation_interactions.shock_layer import ShockLayerSettings
+    from reentry_model.wake_residence.affix import AffixSettings
+    from reentry_model.wake_residence.shock_layer import ShockLayerSettings
     base = run_name("sphere", d_mm=50, h_km=80, settings=ScenarioSettings(), theta_deg=120.0)
     others = [ScenarioSettings(bound="high"), ScenarioSettings(wake_flow="both"),
               ScenarioSettings(law=LawSettings(taylor_K=0.5)), ScenarioSettings(frontal_area=3.1),
@@ -45,7 +45,7 @@ def test_far_wake_case_runs_and_writes(twin, tmp_path):
     assert gap == pytest.approx(2 * 2 * math.sqrt(6.215 / math.pi), rel=1e-6)
 
 def test_follower_regime_thresholds():
-    from reentry_model.parent_follower_separation_interactions.scenarios import follower_regime, AFFIX_STATUS
+    from reentry_model.wake_residence.scenarios import follower_regime, AFFIX_STATUS
     assert [follower_regime(k, 0.01, 10.0) for k in (0.005, 0.5, 10.0)] == ["continuum", "transitional",
                                                                              "free_molecular"]
     assert [AFFIX_STATUS[r] for r in ("continuum", "transitional", "free_molecular")] == [
@@ -90,7 +90,7 @@ def test_droplet_in_sphere_plume_worked_examples(twin):
 
 def test_state_from_ecef_round_trips_through_the_simulator(twin):
     from reentry_model.atmosphere import US76TableAtmosphere
-    from reentry_model.parent_follower_separation_interactions.adapters import state_from_ecef, sphere_simulator
+    from reentry_model.wake_residence.adapters import state_from_ecef, sphere_simulator
     t = twin.t_at_altitude(70.0)
     r, v = twin.track.position(t), twin.track.velocity(t)
     y0 = sphere_simulator(state_from_ecef(r, v, twin.epoch), 0.01, US76TableAtmosphere()).initial_state_vector()
@@ -129,15 +129,15 @@ def test_a_twin_built_with_other_parent_settings_is_refused(twin):
 
 def test_t_fz_flag_follows_the_total_time_inside():
     # an escape release starts outside (residence_time 0) and may enter later: the flag compares total_inside
-    from reentry_model.parent_follower_separation_interactions.overlap import ResidenceResult
-    from reentry_model.parent_follower_separation_interactions.scenarios import _residence_exceeds_t_fz
+    from reentry_model.wake_residence.overlap import ResidenceResult
+    from reentry_model.wake_residence.scenarios import _residence_exceeds_t_fz
     later = ResidenceResult([(10.3, 15.1)], 0.0, 4.8, False, [], [], 0.0, "starts_outside")
     assert _residence_exceeds_t_fz(later, t_fz=1.0) and not _residence_exceeds_t_fz(later, t_fz=2.0)
     brief = ResidenceResult([(10.0, 10.5)], 5.0, 0.5, False, [], [], 0.0, "ok")
     assert not _residence_exceeds_t_fz(brief, t_fz=1.0)
 
 def test_far_wake_thetas_share_one_integration_and_write_their_own_files(twin, tmp_path, monkeypatch):
-    from reentry_model.parent_follower_separation_interactions import scenarios
+    from reentry_model.wake_residence import scenarios
     calls = []
     real = scenarios.dense_solve
     monkeypatch.setattr(scenarios, "dense_solve", lambda *a, **k: calls.append(1) or real(*a, **k))
@@ -155,7 +155,7 @@ def test_far_wake_thetas_share_one_integration_and_write_their_own_files(twin, t
                                                             rel=0, abs=1e-9)
 
 def test_layer_sampling_is_bounded():
-    from reentry_model.parent_follower_separation_interactions.scenarios import _layer_sample_times, LAYER_MAX_SAMPLES
+    from reentry_model.wake_residence.scenarios import _layer_sample_times, LAYER_MAX_SAMPLES
     ts = _layer_sample_times(np.array([0.0, 500.0, 1000.0]), 1000.0)     # held in the layer for 1000 s
     assert len(ts) <= LAYER_MAX_SAMPLES + 3 and ts[0] == 0.0 and ts[-1] == 1000.0
     assert len(_layer_sample_times([0.0, 0.01], 0.01)) == 101             # short stays keep the 0.1 ms grid
@@ -168,7 +168,7 @@ def test_a_release_with_no_flight_time_left_is_refused(twin):
         droplet_in_sphere_plume(100, h_end, 50, twin=twin)
 
 def test_weber_gate_comes_before_the_sphere_integration(twin, monkeypatch):
-    from reentry_model.parent_follower_separation_interactions import scenarios
+    from reentry_model.wake_residence import scenarios
     def refuse(*a, **k):
         raise AssertionError("nothing may be integrated for a droplet that breaks up at release")
     monkeypatch.setattr(scenarios, "dense_solve", refuse)

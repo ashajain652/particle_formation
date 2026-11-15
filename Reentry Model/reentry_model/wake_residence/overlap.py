@@ -82,10 +82,10 @@ import numpy as np
 from scipy.optimize import brentq, minimize_scalar
 from scipy.spatial import cKDTree
 
-from reentry_model.parent_follower_separation_interactions.laws import (EmissionState, LawSettings, RadiusResult, knudsen, plume_radius,
+from reentry_model.wake_residence.laws import (EmissionState, LawSettings, RadiusResult, knudsen, plume_radius,
                                                pressure_parameter, reynolds)
-from reentry_model.parent_follower_separation_interactions.track import Track
-from reentry_model.parent_follower_separation_interactions.wake_gas import Ambient, GasState, ambient_state, check_mode, gas_state
+from reentry_model.wake_residence.track import Track
+from reentry_model.wake_residence.wake_gas import Ambient, GasState, ambient_state, check_mode, gas_state
 
 K_NEAREST = 16                     # admissible samples refined per margin query (brief, Task 3)
 MAX_SPACING_M = 50.0               # tree sample spacing is min(r0 / 2, this) ...

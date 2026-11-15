@@ -22,5 +22,5 @@ def parent():
 def twin(parent):
     """The twin of the DRAMA parent (spec 4.3), integrated once per session from the branch top (about 111 km) down
     to 45 km; it takes some seconds, so every test that needs the parent track shares this one."""
-    from reentry_model.parent_follower_separation_interactions.adapters import twin_parent
+    from reentry_model.wake_residence.adapters import twin_parent
     return twin_parent(parent)

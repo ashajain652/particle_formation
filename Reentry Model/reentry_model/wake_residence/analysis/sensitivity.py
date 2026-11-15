@@ -1,6 +1,6 @@
 """The sensitivity set (spec 4.6): each variation of one parameter at a time against its baseline.
 
-    "$PY" -m reentry_model.parent_follower_separation_interactions.analysis.sensitivity [--diameters mm ...]
+    "$PY" -m reentry_model.wake_residence.analysis.sensitivity [--diameters mm ...]
         [--altitudes km ...] [--theta deg] [--bounds low high] [--parameters name ...] [--no-rarefied]
         [--workers N] [--out DIR] [--force]
 
@@ -28,11 +28,11 @@ import sys
 from dataclasses import dataclass
 from typing import Callable
 
-from reentry_model.parent_follower_separation_interactions import OUTPUT
-from reentry_model.parent_follower_separation_interactions.analysis.sweep import (
+from reentry_model.wake_residence import OUTPUT
+from reentry_model.wake_residence.analysis.sweep import (
     DEFAULT_BOUNDS, DEFAULT_DIAMETERS, get_twin, git_state, run_or_load, write_csv)
-from reentry_model.parent_follower_separation_interactions.laws import LawSettings
-from reentry_model.parent_follower_separation_interactions.scenarios import ScenarioSettings
+from reentry_model.wake_residence.laws import LawSettings
+from reentry_model.wake_residence.scenarios import ScenarioSettings
 
 REFERENCE_DIAMETERS = (10.0, 50.0, 200.0)       # mm
 REFERENCE_ALTITUDES = (80.0, 60.0)              # km
