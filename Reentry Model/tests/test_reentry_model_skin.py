@@ -845,6 +845,26 @@ def test_the_pressure_term_is_the_surface_flow_s_gradient_away_from_the_stagnati
     np.testing.assert_allclose(np.einsum("ij,ij->i", terms["pressure"], away), -dp_ds, rtol=1e-12, atol=1e-9)
 
 
+def test_the_push_without_a_meridian_is_the_earlier_one_to_the_last_bit_and_with_one_the_pressure_follows_it(
+        coarse_sphere_mesh):
+    """`push(..., meridian=None)` is the push along each base normal's own meridian, every array to the last bit; given
+    `meridian` ((n, 3) unit vectors) its pressure term is `-meridian * dp_ds`, and the other three terms are unchanged."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    H, g = np.full(col.n, 8e-4), 30.0 * V_HAT
+    dp_ds = -2.0 * 11e3 * np.linspace(0.0, 1.0, col.n) / 0.05
+    G0, t0 = skin.push(col, H, dp_ds, g, V_HAT, RHO_L, SIGMA)
+    G1, t1 = skin.push(col, H, dp_ds, g, V_HAT, RHO_L, SIGMA, meridian=None)
+    assert np.array_equal(G0, G1) and all(np.array_equal(t0[k], t1[k]) for k in t0)
+    np.testing.assert_array_equal(t0["pressure"], -skin.along_meridian(col.normal, V_HAT, dp_ds))
+    mer = np.random.default_rng(3).normal(size=(col.n, 3))
+    mer /= np.linalg.norm(mer, axis=1)[:, None]
+    G2, t2 = skin.push(col, H, dp_ds, g, V_HAT, RHO_L, SIGMA, meridian=mer)
+    np.testing.assert_array_equal(t2["pressure"], -mer * dp_ds[:, None])
+    assert all(np.array_equal(t0[k], t2[k]) for k in t0 if k != "pressure")
+    np.testing.assert_allclose(G2, G0 - t0["pressure"] + t2["pressure"], rtol=1e-12, atol=1e-9)
+
+
 def test_a_thicker_column_under_a_pull_out_of_the_surface_draws_the_metal_toward_it():
     """A flat layer thickening by 1 mm a metre under a pull of 100 m/s2 out of its surface: rho_l (g . n) grad H."""
     col, pts = regular_grid(21)

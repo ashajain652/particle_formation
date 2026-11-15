@@ -69,7 +69,10 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     "b_over_delta_m_median", "sheared_depth_over_delta_m_median",
                     "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg",
                     # the windward loads' nose radius (sub-plan 22 Task 5g, Asha 2026-11-10): the radius of the surface at the end of the step, which the next step's loads read, the
-                    # sphere fitted to the tops' cap, the reported bound, the corners fitted and 1 where the cap was concave
+                    # sphere fitted to the tops' cap, the reported bound, the corners fitted and 1 where the cap was concave --
+                    # under --windward-loads normals the 30-degree cap's fit; under `sphere` (the fitted-sphere loads, Asha
+                    # 2026-11-13) the sphere fitted to the exposed corners, the exposed corners counted and 1 where there was no
+                    # valid sphere, and skinbody.SPHERE_COLUMNS follow the two leeward columns below
                     "nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave",
                     # the leeward test (sub-plan 22 Task 5j, Asha 2026-11-10): the mass centroid's position along the flight
                     # direction relative to the 3D mesh's mean point [mm, positive forward], and the corners that face the flow
@@ -513,8 +516,9 @@ def write_vtk_frame(output_dir, k, body, loads):
 def write_skin_frame(output_dir, k, body, loads):
     """A frame of the layered-skin body (sub-plan 20, spec 10.2): field_<k>.vtu, the 3D model's nodal T on its current
     (moving) mesh; surface_<k>.vtp, the top surface with per-corner point data -- top temperature, convective flux,
-    liquid and flowing depths, skin thickness and cells, the base's position (the corner on the 3D mesh) and the top
-    cell's speed (sub-plan 21 Task 6c)."""
+    liquid and flowing depths, skin thickness and cells, the base's position (the corner on the 3D mesh), the top
+    cell's speed (sub-plan 21 Task 6c), the angle the windward loads read [deg] and, under the sphere rule, whether the
+    corner is sheltered (the fitted-sphere loads design, Asha 2026-11-13)."""
     import pyvista as pv
     mesh, sk, mat = body.mesh, body.skins, body.material
     cells = np.hstack([np.full((mesh.n_elements, 1), 4), mesh.tets]).ravel()
@@ -531,4 +535,9 @@ def write_skin_frame(output_dir, k, body, loads):
     poly.point_data["flowing_depth"] = sk.depth_above(mat.T_rigid) if mat.melts else np.zeros(sk.n)
     poly.point_data["base_position"] = body.columns.points
     poly.point_data["top_speed"] = np.where(sk.count > 0, np.linalg.norm(sk.U[:, 0], axis=1), 0.0)
+    # the angle each corner's windward loads read [deg] (`load_angles`), and under the sphere rule whether the corner is
+    # sheltered (1) or not (0), so that the shelter test can be inspected in ParaView
+    poly.point_data["load_angle_deg"] = np.degrees(body.load_angles())
+    if body.windward_loads == "sphere":
+        poly.point_data["sheltered"] = body.sphere_fit.sheltered.astype(float)
     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
