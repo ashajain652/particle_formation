@@ -21,7 +21,9 @@ marker owning its centroid. Each column's volume is the trapezoid integral of it
 each piece of metal (`levelset.pieces`) are then scaled by one factor so that its columns' volumes sum to its layer's
 volume, inside_volumes(phi) - inside_volumes(phi + H). The factor's departure from one is the closure measure of design
 section 21.8 item 5; more than DIVISION_TOL fails a step's check, which is the caller's (the body records it; the tests
-raise on it).
+raise on it). The layer's volume is summed exactly (`math.fsum`) because a running sum (`np.bincount`) rounds the same
+way at every addition over many equal cells, was about 2e-12 of the layer too large on the stage 3 box, and the fill then
+filled the columns to that total while the books measure the layer exactly (Task 7d, ruling T7d-a).
 
 Pieces (the controller's ruling T1-i, Task 1's fix round 1). Two pieces of metal are parted by gas, so ownership never
 crosses from one to the other: the level triangles of a piece, and its cells, are divided among that piece's markers
@@ -113,6 +115,7 @@ at the cell's centroid, and the piece's factor applied as to the areas. Linear b
 moment's integral over a depth span over the area's is the column's centroid there.
 
 Numbers here are numerical settings; no physics."""
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -386,7 +389,7 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
 
     # closure, piece by piece (docstring)
     inside = label >= 0
-    layer_volume = np.bincount(label[inside], exact[inside], minlength=n_pieces)
+    layer_volume = np.array([math.fsum(exact[inside & (label == p)]) for p in range(n_pieces)])
     counted = piece >= 0
     columns = np.bincount(piece[counted], (area @ w)[counted], minlength=n_pieces)
     with np.errstate(divide="ignore", invalid="ignore"):

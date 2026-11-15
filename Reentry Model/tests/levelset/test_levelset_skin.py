@@ -631,6 +631,31 @@ def test_a_measured_profile_holds_a_spherical_shell():
     assert sk.thickness()[0] == pytest.approx(DEPTH, rel=1e-12)
 
 
+@pytest.mark.parametrize("preset", ["dev", "production"])
+def test_a_regridded_column_moved_by_round_off_regrids_to_the_same_cells(preset):
+    """A full column under a measured profile (narrowing to half its top's cross-section at H), filled in equal cells of
+    the fine size: the fill puts a cell exactly on the merge threshold (the cell whose top is fine_zone + 10 cells deep,
+    0.6 mm in the development preset, 0.5 mm in production, is half its target there), so the regrid's decision on it
+    is round-off's. Regridded, then its metal scaled by 1 +- 1e-12 (its volume moved by 1e-12 of itself, about what the
+    division's closure moves a column by between two regrids, Task 7d), a second regrid changes no cell. (Task 7d round
+    2, measured once: before REGRID_RTOL the +1e-12 column regridded from 43 cells to 42 in the development preset and
+    from 72 to 71 in production.)"""
+    from reentry_model.levelset.skin import MERGE_BELOW
+    mat = LinearMeltMaterial()
+    area = AREA * (1.0 - 0.5 * LEVELS / DEPTH)
+    for nudge in (1.0 + 1e-12, 1.0 - 1e-12):
+        sk = profiled(mat, area, settings=SkinSettings(cell=SKIN_PRESETS[preset]))
+        sk.fill(sk.density(np.array([890.0])) * sk.column_volume(), 890.0)
+        tie = np.abs(sk.dz() / (MERGE_BELOW * sk.targets()) - 1.0)[sk.valid]
+        assert tie.min() <= 1e-13                                # the fill leaves a cell on the threshold
+        sk.regrid()
+        sk.m *= nudge
+        sk.H *= nudge
+        count, m = sk.count.copy(), sk.m.copy()
+        sk.regrid()
+        assert np.array_equal(sk.count, count) and np.array_equal(sk.m, m)
+
+
 def test_a_column_that_pinches_fills_exactly_to_its_pinch():
     """A column whose cross-section falls linearly to zero at 0.8 mm (beside a convex edge, it meets the column across
     the edge there): zero below the pinch and beyond H; 0.3 mm of metal at its top, filled at its base by the exchange

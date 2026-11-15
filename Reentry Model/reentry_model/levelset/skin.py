@@ -44,7 +44,13 @@ top 0.4 mm, then the continuous form of "each cell 10 % thicker than the one abo
 MERGE_BELOW of its target into a neighbour and splits one above SPLIT_ABOVE in two, exactly in mass, enthalpy and
 momentum, for at most REGRID_PASSES rounds. Merges pair cells (in a run of small cells every other one takes the cell
 below it; a small bottom cell joins the cell above), so a run of thin cells coarsens by halving rather than collapsing
-into one cell to be split again.
+into one cell to be split again. A cell within REGRID_RTOL of either threshold counts as beyond it (the amendment of
+plan 03b Task 7d, round 2): a column filled in equal cells of the fine size puts a cell exactly on the merge threshold
+(the one whose top is fine_zone + 10 cells deep, 0.6 mm in the development preset, is half its target there), and the
+merges that pair such cells put more on it deeper down, so that without the margin round-off of 1e-15 of the threshold
+decided whether those cells merged, and a column moved by 1e-12 of its volume between two regrids (as the division's
+closure moves it) regridded to other cells. With the margin, every cell a regrid keeps lies inside the band by at least
+REGRID_RTOL of its thresholds, and the skyscrapers' band [MERGE_BELOW, SPLIT_ABOVE] of the target still holds.
 
 Every physical property comes from the material passed in (the shared `reentry_model.shared.material.Material` or a
 test material with its interface), read through a `PropertyTable` of it built once per Skins (Task 4: h, cp_eff, k and
@@ -97,6 +103,11 @@ from .properties import PropertyTable
 SKIN_PRESETS = {"production": 10.0e-6, "dev": 20.0e-6}   # m, the fine cell of each preset (design 20.6; skyscrapers 6.2)
 MERGE_BELOW = 0.5          # a cell thinner than this times its target joins a neighbour (skyscrapers' rule)
 SPLIT_ABOVE = 1.5          # a cell thicker than this times its target is split in two (skyscrapers' rule)
+REGRID_RTOL = 1e-9         # a cell within this share of MERGE_BELOW or SPLIT_ABOVE times its target counts as beyond it
+                           # (module docstring; Task 7d round 2): about 1e5 times the round-off at which the fill's cells
+                           # meet the merge threshold (at most 9e-15 of it, measured once) and about 400 times the
+                           # largest error of the division's closure (2.3e-12 of the stage 3 box's layer, Task 7d's
+                           # diagnosis), while it moves where a cell merges or splits by a billionth of its target
 REGRID_PASSES = 64         # merge-or-split rounds of one regrid at most (skyscrapers' rule)
 NEWTON_TOL = 1.0e-6        # K: a heat sub-step has converged when no cell moves by more than this (skyscrapers' value)
 NEWTON_MAX = 40            # Newton iterations of a heat sub-step at most (skyscrapers' value)
@@ -799,15 +810,16 @@ class Skins:
 
     # -- regrid -----------------------------------------------------------------------------------------------------
     def regrid(self):
-        """Merge cells below MERGE_BELOW of their target, else split those above SPLIT_ABOVE, until none qualifies.
-        Under a measured profile a cell splits at its mid-depth (module docstring), unless one of its halves would be
-        empty or small enough to merge straight back (`_splits_settle`): then it is left whole."""
+        """Merge cells below MERGE_BELOW of their target, else split those above SPLIT_ABOVE, until none qualifies; a
+        cell within REGRID_RTOL of a threshold counts as beyond it (module docstring). Under a measured profile a cell
+        splits at its mid-depth (module docstring), unless one of its halves would be empty or small enough to merge
+        straight back (`_splits_settle`): then it is left whole."""
         for _ in range(REGRID_PASSES):
             valid = self.valid
             dz = self.dz()
             t = self.targets(dz)
-            small = valid & (dz < MERGE_BELOW * t) & (self.count >= 2)[:, None]
-            big = valid & (dz > SPLIT_ABOVE * t)
+            small = valid & (dz < MERGE_BELOW * (1.0 + REGRID_RTOL) * t) & (self.count >= 2)[:, None]
+            big = valid & (dz > SPLIT_ABOVE * (1.0 - REGRID_RTOL) * t)
             if small.any():
                 self._merge(np.flatnonzero(small.any(axis=1)), small)
                 continue
@@ -855,12 +867,12 @@ class Skins:
 
     def _splits_settle(self, rows, dz, upper):
         """Which cells (len(rows), K) of a profiled column may split at their mid-depth: those whose two halves, by
-        the depths their volumes would hold (`_depth_of`), are each at least MERGE_BELOW of their targets. Beside an edge
-        a column's measured cross-section is jagged and may be zero over a band (plan 03b Task 5, on the test cube); a
-        cell over such a band split at its mid-depth leaves one half within the band, small, merged straight back, and
-        the regrid would never settle; or an empty half (`upper` (len(rows), K), each cell's share above its
-        mid-depth, at 0 or 1). A mid-depth inside such a band is never a split's (the depth a volume reaches there is
-        either end of the band, by round-off)."""
+        the depths their volumes would hold (`_depth_of`), are each too thick to merge (`regrid`'s rule, its margin
+        REGRID_RTOL included). Beside an edge a column's measured cross-section is jagged and may be zero over a band
+        (plan 03b Task 5, on the test cube); a cell over such a band split at its mid-depth leaves one half within the
+        band, small, merged straight back, and the regrid would never settle; or an empty half (`upper` (len(rows), K),
+        each cell's share above its mid-depth, at 0 or 1). A mid-depth inside such a band is never a split's (the depth
+        a volume reaches there is either end of the band, by round-off)."""
         d = dz[rows]
         z0 = np.cumsum(d, axis=1) - d
         V0, V1 = self._volume_at(z0, rows), self._volume_at(z0 + d, rows)
@@ -869,7 +881,8 @@ class Skins:
         target = lambda z: s.cell + (s.growth - 1.0) * np.maximum(z - s.fine_zone, 0.0)
         inside = self._section(z0 + 0.5 * d, rows, extend=True) > 0.0      # a mid-depth within a band of no
         return (inside & (upper > END_SLACK) & (upper < 1.0 - END_SLACK)        # cross-section is no place to split
-                & (zs - z0 >= MERGE_BELOW * target(z0)) & (z0 + d - zs >= MERGE_BELOW * target(zs)))
+                & (zs - z0 >= MERGE_BELOW * (1.0 + REGRID_RTOL) * target(z0))
+                & (z0 + d - zs >= MERGE_BELOW * (1.0 + REGRID_RTOL) * target(zs)))
 
     def _upper_halves(self, rows, dz):
         """Each cell's share (len(rows), K) of its volume above its mid-depth, under the profile, from the thicknesses

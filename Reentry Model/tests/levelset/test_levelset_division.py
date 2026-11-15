@@ -5,6 +5,7 @@ at every depth, the same-side rule, metal thinner than twice the skin depth, and
 Every phi here is a body's exact signed distance sampled at the nodes of a box mesh refined through the layer, so its
 level surfaces down to the skin depth are well defined."""
 import functools
+import math
 import time
 
 import numpy as np
@@ -64,6 +65,22 @@ def _seeded_box(lo, hi, base):
     mesh = _layer_mesh(base, sdf)
     phi = sdf(mesh.points)
     return mesh, phi, seeded(mesh, phi, DESIGN_SPACING, base.lo)
+
+
+def test_the_columns_sum_to_the_layer_to_round_off():
+    """A 6 mm cube (0.13 mm off the grid, 0.35 mm cells through the layer, markers seeded as the body seeds them), whose
+    layer is mostly full cells of one size: the columns' summed volume, `d.volume.sum()`, equals the layer's volume summed
+    exactly (`math.fsum`) to within 1e-14 of it, a hundredth of the stage 3 cases' mass tolerance. The closure's sum of
+    the layer must not be a running sum: on many equal cells that rounds the same way at every addition, and the
+    columns carried its error (measured once on this fixture, 1.0e-13 of the layer too small with `np.bincount`, 4.7e-16
+    with an exact sum; Task 7d, ruling T7d-a)."""
+    side = np.full(3, 6e-3)
+    lo = np.full(3, OFF - 3e-3)
+    base = BoxBase.around((-3e-3 - BOX_H0,) * 3, (3e-3 + BOX_H0,) * 3, BOX_H0)
+    mesh, phi, mk = _seeded_box(lo, lo + side, base)
+    exact = math.fsum(inside_volumes(mesh, phi) - inside_volumes(mesh, phi + H))
+    d = divide(mesh, phi, H, mk.x, mk.normal)
+    assert abs(d.volume.sum() - exact) <= 1e-14 * exact
 
 
 def test_a_flat_slab_divides_into_prisms():
