@@ -98,20 +98,17 @@ def test_areas_sum_to_the_surface_area():
 
 def test_rigid_motion_leaves_skins_unchanged():
     """Markers carried with a rigid motion of phi keep their skins bit for bit -- the cells, the areas, the curvatures
-    and the measured profile (plan 03b Task 5: every skin's cross-section is the division's) -- and the division of the
-    moved layer gives each column the cross-sections it had: to 1e-10 for a translation by whole base cells, where the
-    mesh-relative geometry is the same, as the areas are."""
-    from reentry_model.levelset.division import divide
+    and the measured profile (plan 03b Task 5: every skin's cross-section is a measured one; here each column narrowing
+    by 30 % to H, so that the rows are not all alike) -- and their areas follow phi. (The division's own invariance is
+    Task 1's to test: dividing this 25 mm sphere's thousands of markers took half an hour of the unit tier.)"""
     mat = LinearMeltMaterial()
     mesh = _mesh(half=33e-3)
     phi = _sphere(mesh)
     mk = Markers.create(mesh, phi, None, material=mat, settings=SETTINGS)
     _filled(mk, mat, np.random.default_rng(3))
     mk.tessellate(mesh, phi)
-    d0 = divide(mesh, phi, SETTINGS.depth, mk.x, mk.normal)
-    area = np.zeros((mk.skins.n, len(d0.levels)))
-    area[mk.skin_index] = d0.area
-    mk.skins.set_profile(d0.levels, area)
+    levels = np.linspace(0.0, SETTINGS.depth, 25)
+    mk.skins.set_profile(levels, mk.skins.area[:, None] * (1.0 - 0.3 * levels / SETTINGS.depth)[None, :])
     A0, skins0 = mk.area.copy(), _arrays(mk.skins)
     # translation by whole base cells: the mesh-relative geometry is identical
     shift = np.array([2 * H0, -H0, 3 * H0])
@@ -122,8 +119,6 @@ def test_rigid_motion_leaves_skins_unchanged():
     for a, b in zip(skins0, _arrays(mk.skins)):
         assert np.array_equal(a, b)
     assert np.abs(mk.area / A0 - 1.0).max() < 1e-10
-    d1 = divide(mesh, phi_t, SETTINGS.depth, mk.x, mk.normal)
-    np.testing.assert_allclose(d1.area, d0.area, rtol=1e-10, atol=1e-10 * d0.area.max())
     assert (mk.splits, mk.merges, mk.trapped) == (0, 0, 0)
     # a rotation about the centre (phi unchanged): a Kuhn mesh is not rotation-symmetric, so 1 % on the areas (the areas
     # of phi each marker owns, Task 11's fix round 1, C1: 0.50 % at most measured once, 0.31 % for the tangent-plane cells)

@@ -1,6 +1,7 @@
 """The derived surfaces: the skin base beta from the gas surface phi and the skin depth (design §21.4), and the
 molten-rigid surface psi from the temperature, keeping only rigid metal connected to the core (crusts float). (The outer
-surface phi built from beta and the skins' thickness, design §20.3, was retired by plan 03b Task 5: phi is evolved.)"""
+surface phi built from beta and the skins' thickness, design §20.3, is retired by plan 03b Task 5: phi is evolved;
+`outer_surface` stays only for stage 1's timing script.)"""
 import numpy as np
 
 from .levelset import pieces, redistance
@@ -22,6 +23,13 @@ def skin_base(mesh, phi, depth, band=None):
         raise ValueError("the skin base needs phi a distance beyond the depth {:.3e} m into the metal, but the band is "
                          "{:.3e} m".format(depth, band))
     return redistance(mesh, np.asarray(phi, dtype=float) + depth, band=band, keep=True)
+
+
+def outer_surface(mesh, beta, thickness, band=None):
+    """phi = the zero contour of beta moved outward by the nodal skin thickness (m), reset to a distance (design §20.3,
+    superseded by §21.4). The body no longer builds phi so (plan 03b Task 5, which was to delete this); it is kept only
+    because stage 1's timing script `analysis/levelset/measure_geometry.py` imports it, a file that task may not edit."""
+    return redistance(mesh, beta - thickness, band=band)
 
 
 def molten_rigid_surface(mesh, phi, T, T_rigid, core_point=None, band=None):

@@ -4,7 +4,7 @@ import pytest
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import inside_volumes, patches
 from reentry_model.levelset.levelset import redistance
-from reentry_model.levelset.surfaces import molten_rigid_surface, skin_base
+from reentry_model.levelset.surfaces import molten_rigid_surface, outer_surface, skin_base
 from reentry_model.shared.material import Material
 
 from cases import box_corners, box_sdf, edge_length, rounding_volume, stage3_box, volume_between
@@ -19,6 +19,15 @@ BASE_BAND = 3.0e-3         # m: the distance reset's band in the skin base's tes
 
 def _mesh(h=0.0625e-3):
     return build(BoxBase.around((0, 0, 0), (3e-3, 3e-3, 3e-3), h))
+
+
+def test_the_outer_surface_stands_the_skin_thickness_outside_the_base():
+    """`outer_surface`, kept for stage 1's timing script only (plan 03b Task 5 retired its use by the body)."""
+    m = _mesh(0.125e-3)
+    r = np.linalg.norm(m.points - C, axis=1)
+    phi = outer_surface(m, redistance(m, r - 0.9e-3), np.full(len(r), 0.2e-3))
+    radius = np.linalg.norm(patches(m, phi).centroid - C, axis=1)
+    assert np.abs(radius - 1.1e-3).max() < 0.02e-3
 
 
 def test_a_radial_temperature_gives_the_rigid_sphere_of_the_analytic_radius():
