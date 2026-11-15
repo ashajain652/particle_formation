@@ -115,8 +115,11 @@ Controller's reading of the decisions (ledger rulings of this plan):
 - [ ] **Step 5: Document.** In `docs/model_assumptions.md` 14.1, replace the known-limitation bullet with the new rule
   (Daniels & Schwartzentruber below Mach 3.5, anchored; linear blend to Mach 5; the joined law above), with measured
   numbers from a short scratch script at the 30 km state: the Mach 2 and 3 shear from 80 to 94 degrees before and after
-  (Step 1's states), the stagnation heat flux change at Mach 4 and 4.25 (expected about -3 % and -2 %), and the note that
-  Daniels & Schwartzentruber validated their model against CFD at Mach 0.37, 2, 3, 4, 7 and 10. In 14.9 remove the
+  (Step 1's states), the stagnation heat flux change at Mach 4 and 4.25 (expected about -3 % and -2 %), and what is known
+  of the low-Mach validation: their abstract reports the continuum model compared with CFD of air at subsonic,
+  supersonic and hypersonic conditions, and the research note (`research_notes/Film separation at a convex
+  shoulder/hypersonic_shoulder_gas_flow.md`) records the shear comparisons at Mach 0.37, 2, 3, 4, 7 and 10; the Mach
+  numbers of their pressure comparisons have not been read from the paper. In 14.9 remove the
   limitation and add what remains (the blend is a choice, not a fitted law; the trajectories cross Mach 5 to 3.5 in about
   8 s). Update the README line and add the design amendment line (date 2026-11-14, Asha's decision 1).
 - [ ] **Step 6: Commit** (`reentry_model: ...` for the code and tests, `docs: ...` for the documents).
