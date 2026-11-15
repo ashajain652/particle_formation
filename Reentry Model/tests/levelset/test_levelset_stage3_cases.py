@@ -332,15 +332,14 @@ def test_hot_plate_at_half_second_steps(preset):
 
 BOX_FAILS = ("the 2 mm markers do not resolve the sharp heated edge (diagnosis D1, the controller's ruling T7-j; design "
              "21.10's finer markers near edges are the remedy): markers on the side faces own the heated face's outer "
-             "strip, which does not recede. Measured 2026-11-15 on plan 03b Task 7c's code (92f4424), the thin-metal "
-             "stop's spurious pairs gone (ruling T7-k): the first step (0.5 s, nothing yet melting) keeps the face "
-             "flat and the books exact; the second completes, but its mass books miss by 1.19e-11 of the stored mass "
-             "(MASS_TOL 1e-12) and the face centre has receded 0.888 mm at 1.0 s against the reference's 0.789 (12.6 % "
-             "ahead, past RECESSION_TOL); the third accepts 56 parts in 1973 s and stops on a piece of phi with layer "
-             "but no marker (ruling T7-g; 4.08e-14 m3 at (1.631, -4.294, -2.425) mm, 0.6 mm inside the -y face, at "
-             "the rim's depth), so 1.5 and 2.0 s are not reached. As the stop left it, the face centre had receded "
-             "2.18 mm, the inner 7 by 7 points of the 9 by 9 grid 1 mm apart 1.94 to 2.49 mm and the outer ring 1.35 "
-             "to 2.35 mm (median 1.92)")
+             "strip, which does not recede. Measured 2026-11-15 on plan 03b Task 7d's code (73b5a9a), the division's "
+             "closure summed exactly (ruling T7d-a): the first step (0.5 s, nothing yet melting) keeps the face flat "
+             "and the books exact; the second now closes its books (mass -8.2e-15 of the stored mass, against MASS_TOL "
+             "1e-12), but the face centre has receded 0.889 mm at 1.0 s against the reference's 0.789 (12.7 % ahead, "
+             "past RECESSION_TOL); the third step, from 1.0 s, had not ended after 115 minutes, when its one run was "
+             "stopped at the two-hour limit on a laptop run (with the regrid's margin of ruling T7d-b off, the same "
+             "step accepted 13 parts in about 40 minutes and reached 0.44 s of its 0.5 s, its parts split down to 1/64 "
+             "of the step), so 1.5 and 2.0 s are not reached")
 
 
 @pytest.mark.reference
@@ -363,14 +362,14 @@ def test_q6p_box():
     assert out["passes"]
 
 
-SHOULDER_FAILS = ("measured 2026-11-15 on plan 03b Task 7b's code (bfb6344), the segment built 0.13 mm off the mesh's "
-                  "planes of nodes (ruling T7-h): the steps to 1.0 s close their books (mass 5.2e-14, enthalpy 3.7e-16) "
-                  "and their divisions within DIVISION_TOL (closure 3.65e-5 and 3.98e-4), and at 1.0 s a deposit of "
-                  "7.8 mg lies past the heat's end, all of it rigid, its centroid 1.18 mm past (the pushed plate: 1.05 "
-                  "mm), 6.1 % of it past 5 mm (the pushed plate: 3.0 %); the step from 1.0 s accepts 1012 parts in "
-                  "4230 s and then stops: the skins' sideways heat solve did not converge in 1000 GMRES iterations "
-                  "(residual 6.05e-12 of the right-hand side, against skin.SIDE_RTOL 1e-12), so 2.0 s, where the deposit "
-                  "is judged, is not reached")
+SHOULDER_FAILS = ("measured 2026-11-15 on plan 03b Task 7d's code (73b5a9a), the segment built 0.13 mm off the mesh's "
+                  "planes of nodes (ruling T7-h): the steps to 1.0 s close their books (mass 8.3e-16, enthalpy 2.5e-16) "
+                  "and their divisions within DIVISION_TOL (closure 3.65e-5 and 4.68e-4), and at 1.0 s a deposit of "
+                  "7.8 mg lies past the heat's end, all of it rigid, its centroid 1.24 mm past (the pushed plate: 1.05 "
+                  "mm), 6.7 % of it past 5 mm (the pushed plate: 3.0 %); the step from 1.0 s accepts 23 parts in 384 s "
+                  "and then stops on the move's own check: its groups swept 4.27e-10 m3 where phi's volume changed by "
+                  "2.67e-10 m3, more than stepend.MOVE_SUM_RTOL (1e-12 of the body's volume) apart, so 2.0 s, where the "
+                  "deposit is judged, is not reached")
 
 
 @pytest.mark.reference
@@ -383,7 +382,7 @@ def test_shoulder_runoff_freezes_a_deposit():
     DEPOSIT_RIGID_SHARE of it is rigid at 2.0 s and at most the pushed plate's 3.0 % of it lies past DEPOSIT_FAR (the
     controller's ruling on the review's I2; the farthest reach of non-rigid metal is reported, not judged). The
     deposit's centroid past the heat's end is recorded against the skyscrapers' pushed plate's 1.05 mm. It fails
-    (SHOULDER_FAILS): measured 2026-11-15 on bfb6344, it stops in its third step."""
+    (SHOULDER_FAILS): measured 2026-11-15 on 73b5a9a, it stops in its third step."""
     c = _cases()
     out = c.shoulder("dev")
     assert out["failure"] is None
