@@ -1150,7 +1150,10 @@ measurement behind it; Asha's decisions are dated as in the design.
   - Saving and resuming. A saved state keeps the held solution and its flight time (the key cache and the Cantera
     objects are still dropped), so a flight saved inside a window resumes on the solution the unbroken flight holds;
     `resume` has no option for the hold, which is the saved `--dt`. A state saved before the hold existed has no hold
-    and resumes solving at every new key, as it flew.
+    and resumes solving at every new key, as it flew. A resume on the similarity loads records the loaded provider's
+    hold as `settings.gas_loads_hold_s`, as `run` does: null for a provider saved before the hold, and null for a
+    flight whose objects hold no provider (SESAM's heating on the element model that does not melt, whose `run` records
+    its `--dt` because it builds a provider that nothing reads).
   - **(verified)** `tests/test_reentry_model_gas_loads.py` (`test_hold_returns_the_held_solution_within_the_window`,
     `test_no_hold_without_time_or_hold`, `test_pickle_keeps_the_held_solution`,
     `test_state_pickled_before_the_hold_solves_every_key`);
@@ -1158,7 +1161,9 @@ measurement behind it; Asha's decisions are dated as in the design.
     (the melting skins' test flight at `--dt 0.025` to 0.0625 s: five rows and three solves, at 0, 0.025 and 0.05 s,
     where it solved five times before the hold, one a row) and
     `test_a_flight_resumed_inside_a_hold_window_matches_the_unbroken_flight` (saved at 0.025 s, the resumed step to
-    0.0375 s solves nothing and the resumed rows are the unbroken flight's to the last bit);
+    0.0375 s solves nothing and the resumed rows are the unbroken flight's to the last bit) and
+    `test_a_state_whose_provider_has_no_hold_resumes_solving_every_step_and_records_none` (Review Focus 4 on the resume
+    command);
     `tests/test_reentry_model_cli.py::test_build_thermal_gives_the_surface_flow_and_the_heating_one_provider_and_classic_builds_what_it_built`
     (the hold is `--dt`, recorded; none on `classic`).
 - Pressure (Asha, 2026-11-12, design A4, the join at the shoulder). Up to 90 degrees the model's own windward law,
