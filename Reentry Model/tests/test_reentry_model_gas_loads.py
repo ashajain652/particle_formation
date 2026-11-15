@@ -334,6 +334,24 @@ def test_hold_returns_the_held_solution_within_the_window(counted):
     assert c is not b and len(counted) == 3
 
 
+def test_a_call_at_the_held_time_goes_to_the_key_cache_and_replaces_the_held_solution(counted):
+    """Ruling P10: the hold serves only calls strictly later than the held time. A second call at the held time with
+    another wall temperature (the element model's surface flow, after the thermal step, beside the heating's call before
+    it) solves its own solution, returns it and holds it in place of the first; a third, at the first key, finds the
+    first solution in the key cache, returns it and holds it again. `held_loads` at the held time is None, and the
+    window's later calls get the solution held last."""
+    g = gas_loads.GasLoads(hold_s=0.5)
+    a = g.meridian(at_time(1.007e-4, 0.0), RADIUS, T_W)
+    assert g.held_loads(at_time(1.007e-4, 0.0)) is None
+    b = g.meridian(at_time(1.007e-4, 0.0), RADIUS, 1400.0)
+    assert b is not a and b.T_wall == 1400.0 and counted == [0.0, 0.0]
+    assert g._held is b and g._held_t == 0.0
+    assert g.meridian(at_time(1.007e-4, 0.0), RADIUS, T_W) is a and len(counted) == 2       # the key cache's
+    assert g._held is a and g._held_t == 0.0
+    assert g.meridian(at_time(1.1e-4, 0.2), 0.9 * RADIUS, 1300.0) is a and g.held_loads(at_time(1.1e-4, 0.2)) is a
+    assert len(counted) == 2
+
+
 def test_no_hold_without_time_or_hold(counted):
     """Without a hold (`hold_s` None, the default), or with one but a state that carries no flight time (`t` None), the
     provider behaves as the key cache does (as in `test_cache_shared`): the same key returns the same solution, another

@@ -1,9 +1,11 @@
 """The interim gas-loads provider: pressure, wall shear and similarity heat flux round the whole body (0-180 degrees
 from the stagnation point) for the surface flow and the heating, solved at most once per --dt of flight and shared.
 With a hold (`GasLoads(hold_s=...)`, the run command's --dt) a solution is held from the flight time of its solve
-(`AeroState.t`) for hold_s and returned to every call within that window, whatever the freestream, nose radius and wall
-temperature, so after the continuum switch (steps of --dt-continuum) the boundary layer is solved once per --dt and not
-at every step; a flight whose step is --dt throughout solves at every step, as before.
+(`AeroState.t`) for hold_s and returned to every later call within that window, whatever the freestream, nose radius
+and wall temperature, so after the continuum switch (steps of --dt-continuum) the boundary layer is solved once per --dt
+and not at every step. Calls at the held time itself go to the key cache as without a hold (on the element model the
+heating and the surface flow call at the same time at different wall temperatures and solve separately), and the last
+of them is held; a flight whose step is --dt throughout therefore solves exactly as before.
 
 Pressure, by the perfect-gas free-stream Mach number M (`daniels_schwartzentruber.condition(...).mach_inf`): at and
 above M = 5 the model's windward `surface_flow.wall_pressure` (modified Newtonian plus Prandtl-Meyer) to 90 degrees; past
@@ -148,10 +150,12 @@ class GasLoads:
 
     def held_loads(self, state):
         """The held solution, if `state` falls within its window: a hold is set, `state.t` is not None, a solution is held
-        and 0 <= state.t - (its flight time) < hold_s (1 - HOLD_TOL); otherwise None."""
+        and 0 < state.t - (its flight time) < hold_s (1 - HOLD_TOL); otherwise None. A call at the held time itself is
+        not served (ruling P10 of the 2026-11-14 plan): it goes to the key cache, so two calls at one flight time at
+        different keys (the element model's heating and surface flow) solve separately, as without a hold."""
         if self.hold_s is None or state.t is None or self._held is None:
             return None
-        if 0.0 <= state.t - self._held_t < self.hold_s * (1.0 - HOLD_TOL):
+        if 0.0 < state.t - self._held_t < self.hold_s * (1.0 - HOLD_TOL):
             return self._held
         return None
 
@@ -159,7 +163,8 @@ class GasLoads:
         """The loads at `state` (freestream, speed, flight time), nose radius `radius` [m] and stagnation-patch wall
         temperature `T_wall` [K]: the held solution within a hold window (`held_loads`); otherwise the cached solution
         at the same key (density, temperature, speed, radius, wall temperature) or a new solve. With a hold and a flight
-        time, a solution returned outside a window is held from `state.t`."""
+        time, a solution returned that way (outside a window, or at the held time itself) is held from `state.t`,
+        replacing the one held before."""
         held = self.held_loads(state)
         if held is not None:
             return held
