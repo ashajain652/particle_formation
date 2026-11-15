@@ -1418,7 +1418,10 @@ measurement behind it; Asha's decisions are dated as in the design.
   past 90 degrees (90 degrees plus a microradian), which would now carry shoulder-level loads. Corners whose normals
   face away from the flow keep their true angle and get the lee loads up to separation. On the coarse test sphere 3 of
   2254 corners are sheltered (ruling R15). The `facing` test gives every corner its true angle. **(assumed)**; Asha's
-  follow-up: revisit this rule when the fitted-sphere loading bug is taken up again.
+  follow-up: revisit this rule when the fitted-sphere loading bug is taken up again. This bullet describes the skins'
+  earlier rule, `--windward-loads normals`; under `--windward-loads sphere`, the default since the merge with the
+  fitted-sphere loads on 2026-11-15, the sheltered corners are those the ray test shelters, and section 15 (15.5) says
+  which corners are sheltered there and what each reads on these loads.
 - `--gas-loads similarity|classic` (`run`, with `--thermal fem`). `similarity` is the default for every thermal run of
   both bodies: the skins' and the element model's surface flow and, with `--heating physics`, the heating; the
   non-melting element run's heating too (ruling R16). `classic` builds the objects as they were (`PhysicsHeating`, a
@@ -1498,7 +1501,10 @@ Each item below was measured once, on the flights named; none is a sweep.
     from 88 to 92 degrees) 130 Pa against 21 Pa (6.1 times); on the lee 95 Pa at 100 degrees, 44 Pa at 120 and 4.8 Pa
     at 150, against zero. The pressure gradient at the shoulder is -30 kPa/m against -16 kPa/m.
   - On the skins, the metal released by 0.125 s fell from 1.33 g to 0.024 g, and the deepest liquid on the surface at
-    0.125 s from 0.081 mm to zero; the element flight releases nothing on either loads.
+    0.125 s from 0.081 mm to zero; the element flight releases nothing on either loads. These skin figures were measured
+    on main, under the earlier windward rule, now `--windward-loads normals`; on the sphere rule, the skins' default since
+    the merge of 2026-11-15, the same flight released 0.0326 g against 0.0228 g under `normals` on the merged tree (15.5,
+    one run each).
 - The two mechanism tests' flights (ruling R17, measured on 2026-11-14 on each test's own flight):
   - 71 km, 893 K melting skins, one 0.1 s step: the nose holds no liquid at 0.1 s on the interim loads (0.030 mm on the
     classic loads), so the continuum step's "melting" latch is not reached; the stagnation flux is 2.893 against
@@ -1633,9 +1639,318 @@ Each item below was measured once, on the flights named; none is a sweep.
 - Part B of the design (shoulder melt loss, metal leaving the surface at the shoulder) is a separate, open design and is
   not built.
 
-## 16. The skins' cells at their base (`--skin-base-cell`, skyscrapers)
+## 15. The skins' windward loads: the fitted sphere and the shelter test
 
-(Numbered 16 because the branch `fitted-sphere-loads`, not yet on main, adds section 15.)
+Added on 2026-11-13 on the branch `fitted-sphere-loads` (design: `superpowers/specs/2026-11-13-fitted-sphere-loads-design.md`,
+approved by Asha the same day), and merged with the interim gas loads (section 14) on 2026-11-15, after they had landed on
+main. This section describes how the layered skins read the loads of the gas on their windward corners: the heating,
+the surface flow that pushes the melt, the spray plan (Girin's shear modes and the Rayleigh-Taylor mode) and the wet
+statistics. A top corner is the top of one column of a skin. Where this section says **(verified)** it names the pytest test
+or the report that supports the entry; where it says **(assumed)** nothing in the repository measures it. Every number is
+from the task reports kept with the build (`.superpowers/sdd/2026-11-13-fitted-sphere-loads/`, git-ignored), from the
+analysis script `analysis/fitted_sphere_check.py` or from the design. The element model is not changed (15.6). The interim
+gas loads are section 14; which corners they read in the separated wake under this rule is in 15.5.
+
+### 15.1 The rule
+
+Before this change each corner read the angle of its own surface normal from the flight direction, and a sphere was fitted
+only to the corners within 30 degrees of the flow, contributing its radius alone. On a deformed body that let local features
+of the shape set their own loads. The rule now is (Asha, 2026-11-13):
+
+1. **Candidates.** The top corners ahead of the plane through the body's mass centroid, at right angles to the flight
+   direction.
+2. **Shelter.** Each candidate casts one ray from a twentieth of its cell outward along its normal (the cell size is the
+   square root of the corner's area), upstream along the direction of motion. If the ray crosses any triangle of the top
+   surface, the corner is sheltered; its own triangles count too. A corner whose normal faces away is still exposed if its
+   ray crosses nothing, as at the top of a crest (Asha: "Yes, heat them").
+3. **The sphere.** The sphere's centre and radius are fitted by unweighted least squares to the exposed corners.
+4. **The radius cap (Asha: keep it).** The radius the loads read is the smaller of the fitted radius and the flat-face bound,
+   1.67 times the windward transverse radius (`NOSE_CAP_FACTOR` in `skyscrapers/body.py`, unchanged). Angles are still measured
+   from the fitted centre.
+5. **The angle.** An exposed corner's load angle is the angle between the flight direction and the ray from the fitted
+   centre through the corner; past 90 degrees it is leeward through the angle itself.
+6. **Leeward corners.** On the classic loads (`--gas-loads classic`) sheltered corners and corners behind the plane take
+   no heating, no shear and no spraying, as corners behind the plane did before. On the interim gas loads' provider
+   (section 14; the default since the merge of 2026-11-15, 15.5) a corner the ray test shelters, and a corner behind the
+   plane whose own normal faces the flow, reads 180 degrees, the separated wake: the base pressure and its gradient, no
+   heating, and no shear below the shear switch at Kn_body 0.05 (almost none above it, 14.5). A corner behind the plane
+   whose normal faces away takes the provider's lee loads at its own angle, as an exposed corner past 90 degrees does at
+   its ray angle. On either loads no corner past 90 degrees sprays.
+7. **Who reads it.** Every consumer reads it through `load_angles` and `nose_radius`, whose interfaces are unchanged.
+
+The shelter ray is cast against the tops, the interpolated surface through the corners, and not against the fitted sphere
+(Asha, 2026-11-13); the design's reason is that the sphere runs through the middle of the corners, so a test against it
+would shelter most of the face. The direction of the push (15.3) is
+the builder's call, not Asha's. The ray offset of a twentieth of a cell is the level-set design's offset (section 20.8
+there), taken over.
+
+**(verified)** On an untouched coarse sphere (4 mm surface elements, 1,125 candidates) no candidate is sheltered, the fit is
+50.05 mm against the mesh radius of 50 mm (within 0.1 %), the fitted centre is within 0.02 micrometres of the origin, and
+each exposed corner's ray angle is within 0.0517 radians (2.96 degrees) of its normal's angle. The largest gap sits at one
+corner 87.6 degrees from the flow, where the coarse mesh's facets tilt the normal; within 80 degrees of the flow the largest
+gap is 0.0105 radians (0.60 degrees). The tests are
+`test_an_untouched_sphere_fits_its_own_sphere_and_reads_its_normals_angles` and
+`test_moved_tops_move_the_sphere_s_centre_and_scaled_tops_scale_its_radius` in `tests/test_reentry_model_skinbody.py`, each
+measured once. On a sphere with a raised ring of columns (6 mm high, 104 corners), 105 corners are sheltered and 1,020
+exposed, and the 24 crest corners whose own normals face away (90.3 to 97.3 degrees from the flow) read ray angles of 50.6 to
+53.3 degrees and are heated (`test_a_sheltered_corner_is_leeward_and_a_crest_facing_away_reads_its_ray_angle`;
+`tests/test_reentry_model_shelter.py` tests the shelter test alone). **(assumed)** that a crest top which nothing shelters
+should be heated by the angle of its ray from the fitted centre is Asha's decision; no measurement or CFD result in the
+repository supports it.
+
+### 15.2 The shelter test, its cost and its straight-line shadow
+
+The test runs on a grid laid on the plane across the flight direction, so each ray tests only the triangles in its own cell
+(`skyscrapers/shelter.py`, `upstream_hits`); `upstream_hits_plain` is the search over every triangle, kept as the reference.
+**(verified)** The two return the same answer on the ringed and on a jittered test body (`tests/test_reentry_model_shelter.py`).
+On the saved 100 mm body (9,417 corners, 4,737 candidates) the grid took 0.018 s against 1.226 s for the plain search
+(best of three), and on the saved 50 mm body (2,367 corners, 1,255 candidates) 0.004 s against 0.084 s
+(`analysis/fitted_sphere_check.py`, Task 5). The design's target was under 0.25 s on the 100 mm body, which was the builder's
+call. The test runs lazily, once per surface refresh.
+
+A body need not be deformed for `sheltered_corners` to be non-zero. Where the plane through the mass centroid lies behind
+the tops' widest section (their equator), the candidates include corners on the rear half, whose normals face away from
+the flow, and their rays up the flow cross the body's own front, so they are sheltered: the body shelters its own rear
+corners. **(verified)** With the tops of the undeformed test sphere moved 5 mm forward along the flight direction (the
+centroid's plane does not move with them), 5 corners are sheltered and every one of them faces away from the flow
+(`test_moved_tops_move_the_sphere_s_centre_and_scaled_tops_scale_its_radius`; Task 2 report). On the classic loads such
+corners are leeward under the earlier rule too, since their normals face away, so on a convex body this changes the count,
+not the loads those corners take. On the interim gas loads' provider, the default since the merge of 2026-11-15, it changes
+their loads. The earlier rule (`normals`) reads each at its own normal's angle, just past 90 degrees, where the provider
+gives lee heating and shear; the sphere rule reads it at 180 degrees, in the separated wake, with no heating and no shear
+below the shear switch (15.1 item 6, 15.5). **(verified, one run)** On the same moved tops the 5 sheltered corners face
+95.2 to 95.8 degrees from the flow; on the provider `normals` reads them at those angles and `sphere` at 180 degrees (a
+check script of the merge's review, 2026-11-15, re-run by the merge's implementer; the forward-moved shape of
+`test_under_the_sphere_rule_on_the_provider_sheltered_corners_read_the_wake_and_corners_facing_away_their_angle` asserts
+the 180 degrees). So on the default loads a body whose centroid's plane lies behind its widest section has a band just
+behind the widest section, between it and the plane, that takes no lee heating or shear, while the corners behind the
+plane keep theirs; the band's width moves with the centroid. **(inferred, not measured)** From the counts in 15.4, 167 of
+the 100 mm body's 568 sheltered corners and 199 of the 50 mm body's 233 face away from the flow (568 minus the 401 that
+were windward under `normals`, and 233 minus 34; a sheltered corner lies ahead of the plane, so one that was not windward
+under `normals` faces away). Whether they are the body's own rear corners or the back slopes of crests was not measured.
+**(assumed)** That the body's own rear corners, and not only the back slopes behind raised features, belong in the wake on
+the provider is the merge's ruling, taken on Asha's behalf (15.5); she has not confirmed this case.
+
+**(assumed)** The shadow is a straight line: a ray up the flow that meets metal shelters the corner, and the corner then takes
+the leeward loads. This is a Newtonian shadow. It leaves out the heating from gas that reattaches behind a step or a rim, so
+a corner just behind a raised feature may be heated less here than it would be by reattached gas. Nothing in the repository
+measures how large that difference is.
+
+**(assumed)** The back slope beside a heated crest is under-resolved. A crest top that nothing shelters is heated, while the
+corners on its back slope are sheltered and take no heating, so the loads change sharply over a few corners; the surface
+mesh is too coarse to resolve that step, and how the melt behaves across it was not measured.
+
+### 15.3 The direction of the push (the builder's call)
+
+Under the sphere rule, the pressure gradient and the shear on the melt point along the fitted sphere's own meridian, away
+from its stagnation point, laid onto each base's tangent plane (`SkinBody.load_meridian`, used by `push` in `skyscrapers/skin.py` and by the
+shear in `_advance_part`); `normals` keeps the meridian of each base normal. **(verified)** On the coarse 4 mm sphere the
+largest angle between the two directions is 1.86 degrees over the exposed corners more than 5 degrees from the nose, measured
+once (`test_the_load_meridian_of_an_untouched_sphere_is_the_normals_meridian_and_none_under_normals` and
+`test_the_load_meridian_points_away_from_the_moved_stagnation_point` in `tests/test_reentry_model_skinbody.py`); an undeformed sphere has its fitted centre at the origin, so it does not show
+the case where the two differ most. **(assumed)** The fitted meridian is taken to be the better direction on a deformed
+face; the choice is the builder's, and it is not Asha's decision.
+
+The push keeps its full magnitude along that direction. The fitted sphere's unit meridian is projected onto the base's
+tangent plane and made a unit vector again: the design lays the direction "onto each base's tangent plane" (its item 8,
+the builder's call) and its plan (`superpowers/plans/2026-11-13-fitted-sphere-loads.md`) has it "projected onto the base's
+tangent plane and normalised", as `along_meridian` already treats a base normal tilted from the radial line under
+`normals`. Where a base is tilted against the fitted sphere the projection is shorter than the unit meridian, and
+renormalising restores the full push along it; where the projection is short the direction is set by little and is
+ill-conditioned. **(verified)** On the saved bodies (`analysis/fitted_sphere_check.py`, one run each) the projection keeps
+at least 0.945 of the unit meridian's length over the 4,169 exposed corners of the 100 mm body, and at least 0.663 over the
+1,022 of the 50 mm body (the next shortest 0.690 and 0.712); none falls below 0.5 on either, and every exposed corner of
+both has a ray angle below 90 degrees, so the push acts on all of them. The tilt is therefore small on the 100 mm body and
+moderate at worst on the 50 mm body, where two corners keep less than 0.7 of the length. **(assumed, not
+measured)** A steep rim, whose base faces nearly along the fitted meridian, would shorten the projection toward zero and
+make the push's direction there ill-conditioned while its magnitude stays full; no such body has been measured.
+
+### 15.4 What was measured on the saved bodies
+
+The analysis script `analysis/fitted_sphere_check.py` reads the two saved states, which lie outside the repository (1.3 GB and
+0.26 GB), and reproduces the investigation. The saved bodies are the 100 mm sphere at 32.5 s and the 50 mm sphere at 178.5 s
+of the comparison flights of 2026-11-09 (the times are as the design records them). Each was measured once.
+
+Every number in this subsection -- the radii, the heating and pressure-gradient ratios and the resumed flights of
+2026-11-14 -- was measured on the classic loads (the loads of `--gas-loads classic`, section 14.5), before this branch
+was merged with the interim gas loads on 2026-11-15. The radii and the corner counts are geometry and do not depend on the
+loads; the ratios use the classic stagnation heating's scaling with the radius, and the resumed flights flew the classic
+heating and surface flow. The sphere rule's effect on the provider's loads, the default since the merge, is not measured.
+
+| | 100 mm body | 50 mm body |
+|---|---|---|
+| Corners on the top surface | 9,417 | 2,367 |
+| Candidates (ahead of the plane) | 4,737 | 1,255 |
+| Sheltered | 568 | 233 |
+| Exposed | 4,169 | 1,022 |
+| Fitted radius | 50.89 mm | 49.03 mm |
+| Flat-face bound | 83.80 mm | 58.11 mm |
+| Radius the loads read | 50.89 mm | 49.03 mm |
+| Fitted centre, along the flight direction from the mesh's coordinate origin | -1.57 mm | -31.59 mm |
+| Root-mean-square misfit of the exposed corners | 2.579 mm | 0.736 mm |
+| Earlier rule (`normals`): its 30-degree cap's fitted radius | 104.28 mm (1,590 corners) | 54.81 mm (773 corners) |
+| Earlier rule (`normals`): radius the loads would read | 83.80 mm (the cap fit, capped at the bound) | 54.81 mm |
+| Corners windward under `normals` and sheltered under `sphere` | 401 | 34 |
+| Corners leeward under `normals` and exposed under `sphere` | 158 | 66 |
+
+Neither fit reaches the bound, so on both bodies the radius the loads read is the fitted one; the cap does not limit the
+heating here. The centre is measured along the flight direction from the mesh's coordinate origin, as `skinbody.py` does,
+which is not the body's first centre once the metal has moved. **(assumed)** The 31.59 mm of the 50 mm body is read as how
+far its front has receded from the first shape; Task 5 measured only the centre's position. A misfit of 2.579 mm on the
+100 mm body, against 0.736 mm on the 50 mm body, means its exposed corners lie further from one sphere. **(assumed)** A rim
+and a flattened face are taken to cause this; it was not tested. The heat input of each
+body under the new rule against the old one, and the direction gaps on these bodies, were measured in the investigation
+(`output/shape_feedback/report.md` of the main checkout, git-ignored) and are not repeated here, because the task reports
+of this build do not carry them.
+
+**(verified)** The last four rows compare the earlier rule on the same bodies (`analysis/fitted_sphere_check.py`, extended in
+the final review's fix wave, one run each). The script sets `windward_loads` to `normals` with the `--size-feedback` and
+`--leeward-test` that a `run --windward-loads normals` takes by default (`current` and `centroid`, resolved through the
+command line's own parser and helpers), so the earlier rule's radius is that of its 30-degree cap fit, capped at the same
+flat-face bound. On the 100 mm body it would read 83.80 mm, its cap fit of 104.28 mm being flatter than the bound, against
+the sphere rule's 50.89 mm; on the 50 mm body 54.81 mm against 49.03 mm. The stagnation heating scales as one over the
+square root of the nose radius and the scale of the pressure gradient that pushes the melt as one over the radius, so on
+the 100 mm body the sphere rule's stagnation heating is 1.2832 times the earlier rule's (28 % more) and its pressure-gradient
+scale 1.6467 times (65 % more); on the 50 mm body 1.0573 times (6 % more) and 1.1179 times (12 % more). These compare the
+two rules on one saved shape each, not on a flight: how the difference would grow or shrink once the shape answered to it
+is not known.
+
+The two rules also load different corners. A corner windward under `normals` (its own normal at most 90 degrees from the
+flow and ahead of the centroid's plane: its `windward_corners()`) that is sheltered under `sphere` loses its heating, shear
+and spraying: 401 on the 100 mm body and 34 on the 50 mm body. A corner leeward under `normals` that is exposed under
+`sphere` is one whose own normal faces away from the flow, such as a crest top; on both bodies every one of them has a ray
+angle of at most 90 degrees from the fitted centre, so it is newly heated: 158 and 66. Whether these moved loads, with the
+sharp step in heating where exposed corners meet sheltered ones (15.2), make refused mesh moves more likely on a deformed
+body was then measured on short resumed flights.
+
+**(verified, one run of each rule on each body)** On 2026-11-14 both saved bodies were resumed under each rule, the earlier
+rule at today's `run` defaults (`--size-feedback current --leeward-test centroid`); the report is
+`output/shape_feedback/resume_check/report.md` of the main checkout (git-ignored). The 50 mm body flew four macro steps of
+0.5 s, from 178.5 s to 180.5 s. Each rule had two refused mesh moves, each cured by one rebuild, and no move was refused
+after a rebuild; the first refusal came at the same instant (178.75 s) under both rules, so it belongs to the shape and the
+mesh at that moment, not to the rule, and the worst radius ratio of a kept move was 0.052 under both. Its sheltered corners
+fell from 116 to 4 over the four steps. The 100 mm body flew 80 macro steps of 0.0125 s, from 32.5 s to 33.5 s, with no
+refused move and no rebuild under either rule; the smallest radius ratio of each step's last move fell steadily from 0.118
+to 0.085 under `sphere` and to 0.089 under `normals`, so the new rule brought the mesh a little closer to the 0.05 limit
+(a decline of 0.033 against 0.029 over the second), and its sheltered corners rose from 568 to 700. Every flight exited 0
+at its end time. Over these spans the new rule did not make refused moves more frequent; on the 100 mm body it would bring
+the next rebuild somewhat earlier. **(verified, same runs)** The new rule melts both bodies faster. The metal drawn from the
+3D model into the skins was 12.9 g against 8.9 g on the 50 mm body (45 % more) and 5.8 g against 3.3 g on the 100 mm body
+(74 % more), while on the 100 mm body the whole-body convective heating was only about 5 % higher (16.0 against 15.2 kW,
+averaged over the second) and the stagnation heating 25 % higher (2.62 against 2.10 MW/m^2, from the radii 50.9 and
+83.8 mm). **(assumed)** The heat concentrated at the smaller nose radius is taken to be why the melting rises far more than
+the total heating; this was not tested. No metal was released as droplets in any of these flights, so how the spray
+responds to the rule is not measured.
+
+### 15.5 The interface, and what it was checked against
+
+The following are the builder's calls (the design marks them "my call"); Asha decided the rule, not these.
+
+- `run` and `resume` take `--windward-loads sphere|normals`, `sphere` by default for skin runs. `normals` is the earlier
+  rule exactly, and its runs are named with `_windward-normals`. Under `sphere`, `--leeward-test` and `--size-feedback` are
+  refused (exit 2), because the rule fixes both. A state saved before the option resumes on `normals`, and
+  `resume --windward-loads` switches it. A run's JSON records the rule as `settings.skin.windward_loads` and a resume's as
+  `settings.windward_loads`. The library's `SkinBody` constructor also defaults to `sphere`.
+- Under `sphere` the history's nose columns (`nose_radius_mm`, `fitted_nose_radius_mm`, `nose_bound_mm`, `nose_cap_points`,
+  `nose_cap_concave`) carry the new fit, and three columns follow the leeward ones: `sheltered_corners`, `sphere_centre_mm`
+  and `sphere_fit_rms_mm`. Each skin frame gains `load_angle_deg` and, under `sphere`, `sheltered`, so the shelter test can be
+  inspected in ParaView.
+- Where there is no valid sphere (fewer than 4 exposed corners, a radius that is not finite and positive, corners coplanar to
+  rounding, or a centre on the flow side of the corners' mean point), each exposed corner reads its own normal's angle and the
+  radius is the flat-face bound (the mesh radius where there is no bound); `nose_cap_concave` marks it. A flat or dished
+  front is then heated as a flat face. Under `sphere` such a step records nan as the fitted radius
+  (`fitted_nose_radius_mm`), the sphere's centre and its misfit, so a dished front's own radius is not in the history, where
+  the earlier rule recorded the concave cap's fit. **(verified)** on hand-shaped tops, not on a real flight:
+  `test_a_flat_exposed_face_falls_back_to_normal_angles_at_the_bound` (a flat and a dished front, and no bound),
+  `test_fewer_than_four_exposed_corners_are_no_sphere_and_read_their_normals_at_the_bound` and
+  `test_a_valid_sphere_with_no_bound_is_used_as_fitted`, whose fit is used uncapped.
+- On the interim gas loads' provider (`--gas-loads similarity`, the default; section 14), as built at the merge of
+  2026-11-15 (a ruling of the merge, taken on Asha's behalf and following ruling R15 of the interim gas loads): an exposed corner
+  keeps the angle of its ray from the fitted centre even past 90 degrees (its own normal's angle where there is no valid
+  sphere), so a ray angle past 90 degrees takes the provider's lee loads; a corner the ray test shelters reads 180 degrees
+  (pi, `skinbody.SHELTER_WAKE`, the rear of the separated wake: the base pressure, no heating and almost no shear)
+  whichever way its normal faces; and a corner behind the centroid's plane reads its own normal's angle where that is past
+  90 degrees (it faces away from the flow, and takes the provider's lee loads, as under R15) and 180 degrees where it faces
+  the flow. On the classic loads the rule is as in 15.1, every sheltered or behind-the-plane corner at the larger of its
+  own angle and 90 degrees plus a microradian, bit for bit as before the merge. Under `normals` the corners follow
+  section 14.5 exactly. **(verified)** on hand-shaped tops, not on a flight:
+  `test_under_the_sphere_rule_on_the_provider_sheltered_corners_read_the_wake_and_corners_facing_away_their_angle` and
+  `test_under_the_sphere_rule_the_provider_reads_the_sphere_rule_s_radius` in `tests/test_reentry_model_skinbody.py`.
+  **(assumed)** that a sheltered corner whose normal faces away from the flow lies in the separated wake, rather than
+  taking the lee loads at its own angle, is that ruling's choice; nothing in the repository measures it.
+
+**(verified)** `normals` is today's rule: `analysis/skyscrapers_port/same_results.py`, run on this branch with
+`--windward-loads normals` against main at 4e857e1, differs in exactly one place for the skins case, the new key
+`settings.skin.windward_loads` in the run's JSON, and the same holds for a resume of 0.25 s from main's saved state (0.125 s
+of flight added, 19 macro steps; the runbook's 22.6 s was not run), whose one difference is the new key
+`settings.windward_loads` in the resume's JSON. The element and non-melting cases show no difference. **(verified)** On the
+smoke flight of `Reentry Model/CLAUDE.md` (the `skins` case, nine macro steps, one run each) both rules exited 0. The sphere
+rule drew 0.01417 kg of metal from the 3D model into the skins (the `drawn` mass the run prints, `drawn_mass_kg`: the rigid
+metal that a column below its minimum takes from the 3D model) and sprayed 0.001359 kg; `normals` drew 0.01462 kg and
+sprayed 0.001329 kg. A run seeds numpy's generator at its start (`cmd_run` in `cli.py`; pyamg's draws are the only random
+ones), so two runs of one build agree bit for bit and these differences are not noise: against `normals`, the skins under
+`sphere` drew 3.1 % less metal and sprayed 2.3 % more on that one short flight, which is the rule's effect there. The two
+cost the same within one run's wall-time noise (32.1 s and 32.8 s). That flight is far too short and too early to say how
+the rule changes a real flight; it says only that the rule runs. Those numbers are on the classic loads, before the merge.
+
+**(verified, one run of each)** After the merge with the interim gas loads (2026-11-15) the comparison was repeated
+against main at 70deee0, on the similarity loads that both sides fly by default: the merged tree under
+`--windward-loads normals` differs from main in exactly one place on the skins case, the key `settings.skin.windward_loads`,
+the element, non-melting and non-melting element cases are identical, and a resume of main's saved skins state from
+0.125 s to 0.25 s differs only in `settings.windward_loads`. The smoke flight on the merged tree, now on the similarity
+loads, exited 0 at its end time under both rules. The sphere rule drew 0.02548 kg of metal into the skins and sprayed
+3.264e-05 kg (2,679 droplets); `normals` drew 0.02578 kg and sprayed 2.279e-05 kg (1,610 droplets), so on that one short
+flight the sphere rule drew 1.2 % less metal and sprayed 43 % more, the sprayed masses being only a few hundredths of a gram.
+The ray test sheltered no corner at any step; the corners behind the centroid's plane that face the flow, which the
+provider reads at 180 degrees, numbered none from the first step to 0.075 s and then 40, 52, 47 and 39 under `sphere`
+(29, 52, 51 and 40 under `normals`). The wall times were 127.6 s and 124.8 s, measured with the unit tier running beside
+them, so they say only that the two rules cost about the same. Both rules spray 40 to 60 times less than the same flight
+on the classic loads above (1.359 and 1.329 g), which is a difference between the two loads (section 14.7), not between the
+rules.
+
+The resume test of `tests/test_reentry_model_restart.py`
+(`test_resume_windward_loads_keeps_the_saved_rule_switches_it_and_reads_an_old_state_as_normals`) and three tests in
+`tests/test_reentry_model_cli.py` check the interface:
+`test_the_windward_loads_are_sphere_by_default_reach_the_body_and_mark_only_normals_in_the_name` (the default, the body's
+rule and the run name), `test_the_windward_loads_option_is_refused_where_it_cannot_apply` (the refusals) and
+`test_a_skin_run_records_its_windward_loads_and_the_sphere_columns` (the JSON and the history's columns).
+**(verified, on the classic loads)** A body with sheltered corners flies under the default rule:
+`test_a_ringed_body_flies_a_macro_step_with_its_sheltered_corners_unloaded_and_its_books_closed` in
+`tests/test_reentry_model_skinbody.py` advances the ringed test sphere one macro step on the classic loads (a surface flow
+with no provider and a cosine heating, as before the merge) with the flow and a spray model on, at
+a modest heating chosen to stay clear of the coarse mesh's rear margin (15.7). Its mass, energy and momentum books close,
+the corners sheltered at the step's start take no heat flux, pressure gradient or gas shear in any part of the step, and the
+ring's crest corners whose own normals face away from the flow are heated (the counts are in the final fix wave's report,
+`final-fix-report.md` with the task reports; one run). On the provider a sheltered corner takes the base pressure's
+gradient at 180 degrees, so the "no pressure gradient" part of that result is the classic loads' only.
+**(verified, one run, on the provider)**
+`test_under_the_sphere_rule_on_the_provider_sheltered_corners_take_no_heat_or_shear_and_exposed_ones_past_90_the_lee_loads`
+evaluates the ringed sphere's surface flow and similarity heating once on a provider, through `flow_forcing` and
+`CoupledRun.loads_at`: its 105 ray-sheltered corners (55 facing the flow, 50 facing away) take no heat flux and no shear
+and the provider's base pressure, and its 38 exposed corners past 90 degrees by their ray angle (at most 91.9 degrees)
+take the provider's lee heating and shear and are not windward. It does not advance the body.
+
+### 15.6 The element model is unchanged
+
+The element model (`--surface-model elements`) keeps its own 30-degree cap fit and its own windward test. It refuses
+`--windward-loads` (exit 2), as it refuses `--geometry-stop`. **(verified)** The element and non-melting cases of
+`same_results.py` are identical between main at 4e857e1 and this branch, apart from the one JSON key in the skins case
+described above, and again between main at 70deee0 and the tree merged with the interim gas loads (15.5).
+
+### 15.7 What to watch in real flights
+
+**(assumed)** The mesh-quality margin at the rear of a coarse body is thin, and it predates this change. Task 3 found that the
+test `test_a_profile_skin_body_sprays_and_keeps_its_books` (a 4 mm sphere at 3 MW/m^2, 890 K, spray profile) raised a
+moving-mesh error under the sphere rule with the new push direction. The failing corners were on the rear half, none
+exposed, and their push direction was unchanged (0.00 degrees gap). The corner move that breaks the mesh, about 0.99 mm of
+base melt-back on 4 mm elements, is the same size in every variant, including the one already at the old push direction
+(commit 345fa6a), where the smallest radius ratio of the touched elements was 0.0439 against the 0.05 limit and the move was
+refused, and the retry on the rebuilt mesh passed at 0.1451. Under `normals` the same move has a ratio of 0.0667. The test is
+pinned to `normals` for that reason. This was one coarse mesh, one gas state, two steps and one run per variant. A real
+spraying flight on the sphere default should be watched for refused rear moves; the short resumed flights of 15.4 are the
+only deformed-body flights on it so far, and none of them sprayed.
+
+## 16. The skins' cells at their base (`--skin-base-cell`, skyscrapers)
 
 A skin's cells are sized by a target: the fine cell (10 um in production) within the fine zone, the top 0.4 mm, growing
 by 10 % per cell below it (`--skin-growth 1.10`); a cell is split above 1.5 times its target and merged below half of it.

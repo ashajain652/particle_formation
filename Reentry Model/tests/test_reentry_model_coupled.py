@@ -207,6 +207,28 @@ def test_surface_frames_carry_the_conjugate_depth_per_patch(coarse_sphere_mesh, 
     assert np.isfinite(nr).any() and (nr[np.isfinite(nr)] >= 0.0).all()
 
 
+def test_the_frame_carries_the_load_angle_and_the_shelter(coarse_sphere_mesh, tmp_path):
+    """A skin body's surface frame carries each corner's load angle [deg] (`load_angles`, with either rule) and, under the
+    sphere rule, whether the corner is sheltered (1.0) or not (0.0), so that the shelter test can be inspected in ParaView
+    (fitted-sphere loads design, Asha 2026-11-13). The tops carry the shelter test's raised ring, so some corners are
+    sheltered."""
+    pv = pytest.importorskip("pyvista")
+    from test_reentry_model_skinbody import make, ringed
+    for how in ("sphere", "normals"):
+        b = make(coarse_sphere_mesh, windward_loads=how)
+        ringed(b)
+        out = os.path.join(str(tmp_path), how)
+        coupled.write_vtk_frame(out, 0, b, heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0))
+        poly = pv.read(os.path.join(out, "surface_0.vtp"))
+        np.testing.assert_array_equal(np.asarray(poly.point_data["load_angle_deg"]), np.degrees(b.load_angles()))
+        if how == "sphere":
+            sheltered = np.asarray(poly.point_data["sheltered"])
+            np.testing.assert_array_equal(sheltered, b.sphere_fit.sheltered.astype(float))
+            assert sheltered.sum() > 0
+        else:
+            assert "sheltered" not in poly.point_data
+
+
 def test_demise_ends_the_run(coarse_sphere_mesh):
     """The lumped instant-removal device with a 60 % demise fraction: the loop stops with end_reason demise."""
     m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))

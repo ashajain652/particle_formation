@@ -173,6 +173,19 @@ def flown(tmp_path_factory):
     return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
 
 
+@pytest.fixture(scope="module")
+def flown_normals(tmp_path_factory):
+    """The same flight under `--windward-loads normals`, the earlier rule (the one whose nose radius and leeward test are options):
+    (the flight's directory, its history rows as text, its droplet records, the saved state's path)."""
+    pytest.importorskip("cantera")
+    out = str(tmp_path_factory.mktemp("flown_normals"))
+    assert cli.main(FLIGHT_ON + ["--windward-loads", "normals", "--t-max", "0.2125", "--outdir", out, "--name", "f",
+                                 "--save-state-at", "0.1875"]) == 0
+    rows = rows_of(os.path.join(out, "f.csv"))
+    assert len(rows) == 17
+    return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
+
+
 def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_files(tmp_path):
     """`resume` on the state saved at 0.1875 s, with nothing changed: it writes the files `run` writes under its own name
     -- the history, the JSON, the droplet files -- the history starting with the saved step's row and repeating the
@@ -469,13 +482,13 @@ def test_resuming_with_height_pairing_sets_it_on_the_body_and_records_it(flown, 
     assert "--sideways-heat height needs a saved flight of skins" in capsys.readouterr().err
 
 
-def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, tmp_path, capsys):
+def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown_normals, tmp_path, capsys):
     """`--size-feedback` on a resume (sub-plan 22 Task 5g, Asha 2026-11-10). The test flight is `current` by default (its
     JSON says so in the skins' settings); a resume keeps that, names it in the line before the flight and records it in
     the JSON's settings, and `initial` asked of it flies the mesh's 50 mm radius, recorded in what was changed with no
     settings key, and is kept by the state it saves. A state saved before Task 5g (no setting, no fit, no nose columns on
     its row) resumes as `initial` with the nose columns filled, and `current` asked of it fits the cap at the first load."""
-    out, flight, records, state_path = flown
+    out, flight, records, state_path = flown_normals
     assert json.load(open(os.path.join(out, "f.json")))["settings"]["skin"]["size_feedback"] == "current"
     assert all(k in flight[0] for k in ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points",
                                         "nose_cap_concave")) and float(flight[-1]["nose_radius_mm"]) != 50.0
@@ -520,6 +533,62 @@ def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, 
         cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
                   "--size-feedback", "current"])
     assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
+
+
+def test_resume_windward_loads_keeps_the_saved_rule_switches_it_and_reads_an_old_state_as_normals(flown, flown_normals, tmp_path, capsys):
+    """`--windward-loads` on a resume (fitted-sphere loads, Task 4). The test flight flies `sphere`: a resume keeps it, names it
+    in the line before the flight, records it in the JSON's settings and keeps the three sphere columns in its history;
+    `normals` asked of it drops them (one header) and is recorded in what was changed, and `sphere` asked of that state
+    adds them again. A state whose body lost the attribute (saved before the option) resumes as `normals`, with the
+    history header of a `normals` run, and refuses the earlier rule's options under `sphere`. An explicit --size-feedback or
+    --leeward-test under `sphere` exits 2; the element model's saved flight refuses the option."""
+    out, flight, records, state_path = flown
+    assert all(k in flight[0] for k in skinbody.SPHERE_COLUMNS)
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
+    assert "windward loads sphere" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "same.json")))
+    assert doc["settings"]["windward_loads"] == "sphere" and doc["resumed_from"]["changed"] == {}
+    assert all(k in rows_of(str(tmp_path / "same.csv"))[0] for k in skinbody.SPHERE_COLUMNS)
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "n", "--windward-loads", "normals",
+                     "--save-state-at", "0.2"]) == 0
+    assert "windward loads normals" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "n.json")))
+    assert doc["resumed_from"]["changed"] == {"--windward-loads": "normals", "--save-state-at": 0.2}
+    assert doc["settings"]["windward_loads"] == "normals"
+    header = open(str(tmp_path / "n.csv")).readline().strip().split(",")
+    assert not any(k in header for k in skinbody.SPHERE_COLUMNS)
+    assert header == open(os.path.join(flown_normals[0], "f.csv")).readline().strip().split(",")
+    assert restart.load(str(tmp_path / "n.state.pkl"))["run"].body.windward_loads == "normals"
+    back = str(tmp_path / "n.end.state.pkl")
+    assert cli.main(["resume", back, "--outdir", str(tmp_path), "--name", "s", "--windward-loads", "sphere", "--t-max", "0.3"]) == 0
+    assert all(k in rows_of(str(tmp_path / "s.csv"))[0] for k in skinbody.SPHERE_COLUMNS)
+    # the saved header, the `normals` one, with the three sphere columns at its end (cli.cmd_resume adds them to the saved row)
+    assert open(str(tmp_path / "s.csv")).readline().strip().split(",") == header + list(skinbody.SPHERE_COLUMNS)
+    # a state saved before the option
+    state = restart.load(state_path)
+    del vars(state["run"].body)["windward_loads"]
+    for key in skinbody.SPHERE_COLUMNS:
+        del state["row"][key]
+    state["run"].body._sphere_raw = None
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    assert "windward loads normals" in capsys.readouterr().out
+    assert open(str(tmp_path / "o.csv")).readline() == open(os.path.join(flown_normals[0], "f.csv")).readline()
+    assert json.load(open(str(tmp_path / "o.json")))["settings"]["windward_loads"] == "normals"
+    for argv in (["--size-feedback", "initial"], ["--leeward-test", "facing"]):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["resume", state_path, "--outdir", str(tmp_path / "x"), "--name", "r"] + argv)
+        assert exc.value.code == 2 and "applies only with --windward-loads normals" in capsys.readouterr().err
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o2", "--size-feedback", "initial"]) == 0     # the old state flies normals
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o3"), "--name", "r",
+                  "--windward-loads", "normals"])
+    assert exc.value.code == 2 and "--windward-loads needs a saved flight of skins" in capsys.readouterr().err
 
 
 def test_resume_rheology(flown, tmp_path, capsys):
@@ -595,13 +664,13 @@ def test_resume_skin_base_cell(flown, tmp_path, capsys):
     assert exc.value.code == 2 and "--skin-base-cell needs a saved flight of skins" in capsys.readouterr().err
 
 
-def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_an_old_state_as_facing(flown, tmp_path, capsys):
+def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_an_old_state_as_facing(flown_normals, tmp_path, capsys):
     """`--leeward-test` on a resume (sub-plan 22 Task 5j, Asha 2026-11-10). The test flight is `centroid` by default; a resume
     keeps it, names it in the line before the flight and records it in the settings, and `facing` asked of it is recorded in
     what was changed and kept by the state it saves. A state saved before Task 5j (no setting on its body, no leeward
     columns on its row) resumes as `facing` with the two columns filled, and `centroid` asked of it is applied. The element
     model's saved flight refuses it (exit 2)."""
-    out, flight, records, state_path = flown
+    out, flight, records, state_path = flown_normals
     assert json.load(open(os.path.join(out, "f.json")))["settings"]["skin"]["leeward_test"] == "centroid"
     assert all(k in flight[0] for k in ("centroid_offset_mm", "leeward_corners"))
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0

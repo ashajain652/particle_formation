@@ -406,8 +406,8 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
                          "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off",
-                         "size_feedback": "current",                  # always recorded: the default changed (Task 5g)
-                         "leeward_test": "centroid",                  # always recorded: new, centroid by default (Task 5j)
+                         "windward_loads": "sphere",                  # always recorded: new, and sphere by default; under it
+                                                                      # size_feedback and leeward_test are not written
                          "rheology": "composite", "internal_solid_fraction": 0.5,       # always recorded (Asha, 2026-11-12)
                          "base_cell_mm": 0.2,                         # always recorded: new (open item 7, 2026-11-14)
                          "part_count_from": "melting", "hand_down": "off"}   # and these, whose defaults changed (Task 5h)
@@ -986,7 +986,7 @@ def test_the_size_feedback_is_current_by_default_for_the_skins_and_reaches_the_b
     def built(*args, **kwargs):
         raise _Built(kwargs)
     monkeypatch.setattr(skinbody, "SkinBody", built)
-    dry = SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    dry = SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path), "--windward-loads", "normals"]
     melt = dry + ["--melt", "on"]
     for argv, source in ((dry, "current"), (dry + ["--size-feedback", "initial"], "initial"), (melt, "current"),
                          (melt + ["--size-feedback", "initial"], "initial"), (melt + ["--size-feedback", "current"], "current")):
@@ -1001,7 +1001,7 @@ def test_the_skins_record_their_size_feedback_and_the_nose_columns(tmp_path):
     mesh's 50 mm under `initial` (sub-plan 22 Task 5g)."""
     for source, name in (("current", "cur"), ("initial", "ini")):
         argv = SKINS + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
-                          "--outdir", str(tmp_path), "--name", name]
+                          "--outdir", str(tmp_path), "--name", name, "--windward-loads", "normals"]
         if source == "initial":
             argv += ["--size-feedback", "initial"]
         assert cli.main(argv) == 0
@@ -1038,7 +1038,7 @@ def test_the_leeward_test_is_centroid_by_default_reaches_the_body_and_is_refused
     def built(*args, **kwargs):
         raise _Built(kwargs)
     monkeypatch.setattr(skinbody, "SkinBody", built)
-    dry = SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    dry = SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path), "--windward-loads", "normals"]
     melt = dry + ["--melt", "on"]
     for argv, how in ((dry, "centroid"), (dry + ["--leeward-test", "facing"], "facing"), (melt, "centroid"),
                       (melt + ["--leeward-test", "facing"], "facing"), (melt + ["--leeward-test", "centroid"], "centroid")):
@@ -1056,7 +1056,7 @@ def test_the_skins_record_their_leeward_test_and_the_two_history_columns(tmp_pat
     `leeward_corners` with either setting, a few tenths of a millimetre and none on the unmelted sphere."""
     for how, name in (("centroid", "cen"), ("facing", "fac")):
         argv = SKINS + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
-                          "--outdir", str(tmp_path), "--name", name]
+                          "--outdir", str(tmp_path), "--name", name, "--windward-loads", "normals"]
         if how == "facing":
             argv += ["--leeward-test", "facing"]
         assert cli.main(argv) == 0
@@ -1064,6 +1064,62 @@ def test_the_skins_record_their_leeward_test_and_the_two_history_columns(tmp_pat
         rows = list(csv.DictReader(open(tmp_path / (name + ".csv"))))
         assert all(k in rows[0] for k in ("centroid_offset_mm", "leeward_corners"))
         assert abs(float(rows[-1]["centroid_offset_mm"])) < 1.0 and float(rows[-1]["leeward_corners"]) == 0.0
+
+
+def test_the_windward_loads_are_sphere_by_default_reach_the_body_and_mark_only_normals_in_the_name(tmp_path, monkeypatch):
+    """--windward-loads sphere|normals (fitted-sphere loads, Task 4): `sphere` by default, handed to the body as it is
+    given; `normals`, the earlier rule, marks the run name `_windward-normals`, after the leeward test's mark. The body is
+    not built: its arguments are."""
+    from reentry_model import skinbody
+    p = cli.build_parser()
+    assert cli.skin_windward_loads_of(p.parse_args(THERMAL)) == "sphere" and p.parse_args(THERMAL).windward_loads is None
+    assert cli.skin_windward_loads_of(p.parse_args(THERMAL + ["--windward-loads", "normals"])) == "normals"
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    dry = SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    for argv, how in ((dry, "sphere"), (dry + ["--windward-loads", "sphere"], "sphere"),
+                      (dry + ["--windward-loads", "normals"], "normals")):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        assert got.value.args[0]["windward_loads"] == how
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
+    assert name(SKINS) == name(SKINS + ["--windward-loads", "sphere"]) == base
+    assert name(SKINS + ["--windward-loads", "normals"]) == base + "_windward-normals"
+    assert (name(SKINS + ["--leeward-test", "facing", "--windward-loads", "normals", "--seed", "7"])
+            == base + "_leeward-facing_windward-normals_seed-7")
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, windward_loads="normals") == "_windward-normals"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+
+
+def test_the_windward_loads_option_is_refused_where_it_cannot_apply(tmp_path):
+    """Exit 2: with the element model, with an unknown rule, and the earlier rule's own options (--leeward-test, --size-feedback)
+    given with the skins under the default `sphere` (they apply only with --windward-loads normals)."""
+    for argv in (FEM + ["--windward-loads", "normals"], THERMAL + ["--windward-loads", "fitted"],
+                 SKINS + ["--leeward-test", "facing"], SKINS + ["--size-feedback", "initial"],
+                 SKINS + ["--windward-loads", "sphere", "--leeward-test", "centroid"],
+                 SKINS + ["--windward-loads", "sphere", "--size-feedback", "current"]):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(argv + ["--outdir", str(tmp_path)])
+        assert exc.value.code == 2
+
+
+def test_a_skin_run_records_its_windward_loads_and_the_sphere_columns(tmp_path):
+    """Under `sphere` the JSON has `settings.skin.windward_loads` and neither `leeward_test` nor `size_feedback`, and the
+    history ends its nose and leeward columns with the three sphere columns; under `normals` the JSON has all three
+    and the history has none of them."""
+    from reentry_model import skinbody
+    common = SKINS + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet", "--outdir", str(tmp_path)]
+    assert cli.main(common + ["--name", "sph"]) == 0
+    skin = json.load(open(tmp_path / "sph.json"))["settings"]["skin"]
+    assert skin["windward_loads"] == "sphere" and "leeward_test" not in skin and "size_feedback" not in skin
+    assert all(k in csv.DictReader(open(tmp_path / "sph.csv")).fieldnames for k in skinbody.SPHERE_COLUMNS)
+    assert cli.main(common + ["--name", "nor", "--windward-loads", "normals"]) == 0
+    skin = json.load(open(tmp_path / "nor.json"))["settings"]["skin"]
+    assert skin["windward_loads"] == "normals" and skin["leeward_test"] == "centroid" and skin["size_feedback"] == "current"
+    assert not any(k in csv.DictReader(open(tmp_path / "nor.csv")).fieldnames for k in skinbody.SPHERE_COLUMNS)
 
 
 def test_the_leeward_test_marks_the_run_s_name_only_for_facing():
@@ -1508,7 +1564,7 @@ def test_the_similarity_heating_without_cantera_exits_2_before_the_flight(tmp_pa
 
 # --- the --architecture flag (Task 6 of the combined refactor) ---
 
-BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--gas-loads', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-base-cell', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--dispersion', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--rheology', '--leeward-test', '--geometry-stop', '--particles', '--no-particles']
+BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--gas-loads', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-base-cell', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--dispersion', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--rheology', '--leeward-test', '--geometry-stop', '--windward-loads', '--particles', '--no-particles']
 
 
 def _run_parser():

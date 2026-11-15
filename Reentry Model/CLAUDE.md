@@ -94,14 +94,17 @@ after which they and their two test files were run again and pass). Main's figur
 about 35 minutes on a quiet machine. With the interim gas loads (branch `interim-gas-loads`, 2026-11-14) the unit tier has
 1056 tests: 1055 pass and 1 is skipped (the FEniCSx module), in 61 minutes on four processes with other runs on the machine.
 After the low-Mach pressure, the one-solve-per-`--dt` hold and the solve skip were added (2026-11-15) it has 1080 tests:
-1079 pass and 1 is skipped, in 57 minutes on four processes, run once with one-minute load averages of 2 to 14. The
+1079 pass and 1 is skipped, in 57 minutes on four processes, run once with one-minute load averages of 2 to 14. With
+the fitted-sphere loads merged in (branch `fitted-sphere-loads`, 2026-11-15) it has 1110 tests: 1109 pass and 1 is
+skipped, in 70 minutes on four processes, run once with one-minute load averages of about 6 to 17 and other runs on the
+machine (main had 1080 and the branch alone 1022; the merge adds two tests of its own). The
 droplet tests, `pytest reentry_model/droplet_reentry/tests`, are 35 and pass (40 s on 2026-11-15, 74 s before). The port's own tools have their tests in `analysis/skyscrapers_port/`, run
 explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 1080 tests, 1 skipped, ~35-71 min on four
+                                                          # the package's unit tier: 1110 tests, 1 skipped, ~35-71 min on four
                                                           # processes (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
@@ -211,7 +214,9 @@ elements`); their old paths (such as `reentry_model.skin`) are alias files too, 
 saved after this change pickle `reentry_model.skyscrapers.*` and cannot be loaded by a checkout from before it. A state saved
 under the composite viscosity law (fact 196) and resumed by a checkout from before that change (for example a Mac Studio checkout
 behind main, or the `kinked-dispersion` branch) silently flies the bridge law, because the old `SkinSettings` ignores the extra
-field and the old resume JSON does not record the law. `cli.py`,
+field and the old resume JSON does not record the law. A state saved under `--windward-loads sphere` pickles the body's
+`skinbody.SphereFit` (its fit of the saved step's tops), a class that a checkout from before the fitted-sphere loads (for
+example a Mac Studio checkout behind main) does not have, so that checkout fails to load the state at all. `cli.py`,
 `__main__.py` and `thermal/` stay at the top level. The skins and the backends are never shared between the architectures. The refactor changed no model behaviour (see
 `docs/model_assumptions.md`).
 
@@ -249,6 +254,7 @@ described from its own docstring. The layered-skin design (the "skyscrapers" arc
 - `skin` — a layered skin of cells on every corner column of the 3D mesh's surface (stage 2 heat only, then the flow).
 - `skinbody` — the body that couples the moving 3D mesh to those skins each macro step.
   A skin flight ends itself normally (exit 0, end reason `geometry`, `results["geometry_stop"]` = test, time, value, and a printed line) when the core's front passes the sphere's original centre or the column tops enclose more than 1.25 times the metal's volume, whichever first (open item 4, 2026-11-12); `--geometry-stop off` turns it off (named `_geomstop-off`), on `run` and `resume`; the element model has no columns and refuses the option (exit 2). The other end reasons are `t_max`, `ground`, `demise` and `escape` (exit 1), any of which on the same step wins over `geometry`, and `failed` (exit 1) and `stopped` (exit 143 or 130) for a flight that raised or was stopped by hand.
+  The skins' windward loads (heating, surface flow, spray plan) follow `--windward-loads sphere|normals` on `run` and `resume`, `sphere` by default (Asha, 2026-11-13; branch `fitted-sphere-loads`, merged with the interim gas loads on 2026-11-15). Under `sphere`, `skyscrapers/shelter.py` (`upstream_hits`, on a grid; `upstream_hits_plain` is the reference) shelters each corner ahead of the centroid plane whose ray up the flow crosses the tops; `SkinBody.sphere_fit` fits one sphere to the exposed corners, `load_angles()` gives each the angle of the ray from its centre, the radius is capped at `NOSE_CAP_FACTOR` times the windward transverse radius, and `load_meridian()` points the push along the fitted meridian. `normals` is the earlier rule exactly (named `_windward-normals`; a state saved before the option resumes on it); under `sphere` `--leeward-test` and `--size-feedback` are refused (exit 2), and the element model refuses `--windward-loads` as it refuses `--geometry-stop`. The history gains `sheltered_corners`, `sphere_centre_mm` and `sphere_fit_rms_mm`, the frames `load_angle_deg` and `sheltered`. On the default `--gas-loads similarity` a corner the ray test shelters reads pi (`SHELTER_WAKE`) whichever way it faces, a corner behind the centroid plane reads its own `theta` where it faces away (past 90 degrees) and pi where it faces the flow, and an exposed corner keeps its ray angle even past 90 degrees; on `classic` the rule is as before the merge, bit for bit. `analysis/fitted_sphere_check.py` measures the rule on the saved 100 mm and 50 mm states. Assumptions and limits: `docs/model_assumptions.md` section 15.
 - `columns` — the corner columns, each owning the dual cell of one corner of the surface triangulation.
 - `movemesh` — the moving 3D mesh: surface corners move by the metal crossing the rigid front, nodes in a deforming
   zone beneath follow, and the temperature field is remapped with the energy books closed exactly.
