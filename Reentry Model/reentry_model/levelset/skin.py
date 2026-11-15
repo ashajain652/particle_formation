@@ -361,15 +361,12 @@ class Skins:
     def dz(self, T=None):
         """Cell thicknesses [m] (n, K), 0 beyond each count: each cell's span holds its volume m/rho(T) under the
         column's cross-section (module docstring). ValueError for a skin deeper than its radius of curvature. With a
-        measured profile, the inverse of its piecewise-quadratic volume (`cell_section` below the column's end)."""
+        measured profile, the inverse of its piecewise-quadratic volume (`cell_section` below the column's end), and
+        ValueError for metal in a column with neither a profile volume nor a top area (`_depth_of`)."""
         valid = self.valid
         T = self.T() if T is None else T
         if self.profile is not None:
-            vol = np.zeros(self.m.shape)
-            vol[valid] = self.m[valid] / self.density(T[valid])
-            z_bot = self._depth_of(np.cumsum(vol, axis=1))
-            z_top = np.concatenate([np.zeros((self.n, 1)), z_bot[:, :-1]], axis=1)
-            return np.where(valid, z_bot - z_top, 0.0)
+            return self._profile_dz(T)
         flat = np.zeros(self.m.shape)
         flat[valid] = self.m[valid] / (self.density(T[valid]) * np.broadcast_to(self.area[:, None], self.m.shape)[valid])
         curved = np.any(self.kappa != 0.0, axis=1)
@@ -524,10 +521,16 @@ class Skins:
         """The depths [m] (r, ...) holding the volumes v [m3] (r, ...) from the top of each of the columns `rows` under
         the profile: in the band of levels holding v, the root of the quadratic W_k + A_k t + (A_k+1 - A_k) t^2 / 2h, in
         the form 2 r / (A_k + sqrt(A_k^2 + 2 s r)) that stays exact where the cross-section closes; at the column's end
-        for v within END_SLACK of its volume, and below it at `cell_section`'s cross-section beyond."""
+        for v within END_SLACK of its volume, and below it at `cell_section`'s cross-section beyond. ValueError for a
+        volume to place in a column with neither a profile volume nor a top area (no cross-section anywhere: Task 3 fix
+        round 1, where it gave NaN thicknesses)."""
         rows = self._rows(rows)
         flat = np.asarray(v, dtype=float).reshape(len(rows), int(np.prod(np.shape(v)[1:])))
         W, z_end, V, _, A_ext = self._ends(rows)
+        nowhere = np.any(flat > V[:, None], axis=1) & (A_ext <= 0.0)
+        if nowhere.any():
+            raise ValueError("{} column(s) hold metal but have neither a profile volume nor a top area to hold it "
+                             "(rows {})".format(int(nowhere.sum()), rows[nowhere][:8].tolist()))
         P, lv = self.profile[rows], self.profile_levels
         k = np.zeros(flat.shape, dtype=np.int64)
         for level in range(1, len(lv) - 1):                    # the band: the levels whose volume v reaches
@@ -539,9 +542,20 @@ class Skins:
         z = lv[k] + np.minimum(np.divide(2.0 * r, den, out=np.zeros_like(r), where=den > 0.0), h)
         excess = np.maximum(flat - V[:, None], 0.0)
         A = np.broadcast_to(A_ext[:, None], flat.shape)
-        below = np.divide(excess, A, out=np.where(excess > 0.0, np.inf, 0.0), where=A > 0.0)
+        below = np.divide(excess, A, out=np.zeros_like(excess), where=A > 0.0)
         full = flat >= V[:, None] * (1.0 - END_SLACK)
         return np.where(full, z_end[:, None] + below, z).reshape(np.shape(v))
+
+    def _profile_dz(self, T, rows=None):
+        """`dz` under the profile for the columns `rows` (all by default), at the temperatures T (n, K): each cell's
+        bottom the depth holding the volume m / rho(T) of it and all above (`_depth_of`), less its top."""
+        rows = self._rows(rows)
+        valid = self.valid[rows]
+        vol = np.zeros(valid.shape)
+        vol[valid] = self.m[rows][valid] / self.density(T[rows][valid])
+        z_bot = self._depth_of(np.cumsum(vol, axis=1), rows)
+        z_top = np.concatenate([np.zeros((len(rows), 1)), z_bot[:, :-1]], axis=1)
+        return np.where(valid, z_bot - z_top, 0.0)
 
     def _base_section(self, T, rows=None):
         """The cross-section [m2] at the bottom of each of the columns `rows` under the profile, from its cells' volume
@@ -999,21 +1013,29 @@ class Skins:
         return merged
 
     def _by_depth(self, keep, gone):
-        """`combine(..., by="depth")`'s merged cells, (m, H, P) per pair, before any column changes."""
+        """`combine(..., by="depth")`'s merged cells, (m, H, P) per pair, before any column changes. A gone column whose
+        own cross-section holds no volume (an all-zero profile row, whatever its top area, or no top area without a
+        profile: a marker left with no area, ruling 6) has no depths to remap, and its pair takes the by-mass rule
+        (`_by_mass`), which keeps its top metal at the keeper's top instead of putting it below the keeper's bottom
+        (Task 3 fix round 1). Only the keepers' depths are taken, so such a column's own depths are never asked for."""
         T = self.T()
-        dz = self.dz(T)
+        dz = self._profile_dz(T, keep) if self.profile is not None else self.dz(T)[keep]     # the keepers' alone
+        no_volume = self.column_volume()[gone] <= 0.0
         valid = self.valid
         vol = np.zeros(self.m.shape)
         vol[valid] = self.m[valid] / self.density(T[valid])
         merged = []
-        for a, b in zip(keep, gone):
+        for i, (a, b) in enumerate(zip(keep, gone)):
             ka, kb = self.count[a], self.count[b]
             m, H = self.m[a, :ka].copy(), self.H[a, :ka].copy()
             P = m[:, None] * self.U[a, :ka]
             if kb == 0:
                 merged.append((m, H, P))
                 continue
-            za = np.concatenate([[0.0], np.cumsum(dz[a, :ka])])           # the keeper's boundaries
+            if no_volume[i]:
+                merged.append(self._by_mass([a], [b])[0])
+                continue
+            za = np.concatenate([[0.0], np.cumsum(dz[i, :ka])])           # the keeper's boundaries
             Va = self._volume_at(za[None, :], [b])[0]                      # as volumes from the gone column's top
             vb = np.concatenate([[0.0], np.cumsum(vol[b, :kb])])
             lo = np.maximum(vb[:-1, None], Va[None, :-1])

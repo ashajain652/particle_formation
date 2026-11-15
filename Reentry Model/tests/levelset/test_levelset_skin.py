@@ -1008,3 +1008,64 @@ def test_an_overfull_column_continues_below_its_end():
     sk.exchange_base([0, 1], -extra)
     np.testing.assert_allclose(sk.cells_volume(), V, rtol=1e-12)
     assert abs(sk.thickness()[0] - DEPTH) <= 1e-12 and abs(sk.thickness()[1] - PINCH) <= 1e-12
+
+
+def test_a_column_left_with_no_area_combines_on_top_of_its_neighbour():
+    """Task 3 fix round 1 (ruling 6: a marker left with no area gives its skin to a neighbour by depth, not to the
+    volume). A full 1.2 mm skin, hot (900 K) over its top 0.3 mm and moving, whose profile row is then zeroed -- with no
+    top area, or with one -- is given by depth to a full flat keeper at 600 K. Its own cross-section holds no volume, so
+    it has no depths: the pair combines by the by-mass rule (bit for bit), mass, enthalpy and momentum add exactly, all
+    its heat lands in the keeper's top 0.6 mm (above H), the metal below H is the cold metal the next fill returns, and
+    no warning is raised."""
+    import warnings
+    mat = ConstMaterial()
+    flat = np.full(len(LEVELS), AREA)
+    rng = np.random.default_rng(23)
+    U = rng.normal(0.0, 0.1, (60, 3))
+    for top in (0.0, AREA):
+
+        def pair():
+            sk = profiled(mat, np.vstack([flat, flat]))
+            edges = np.linspace(0.0, DEPTH, 61)
+            stack(sk, [(edges, 600.0, U), (edges, np.where(edges[:-1] < 0.3e-3 - 1e-12, 900.0, 600.0), U[::-1])])
+            sk.profile[1] = 0.0                                  # its marker left with no area
+            sk.area[1] = top
+            return sk
+
+        sk, ref = pair(), pair()
+        M0, E0, P0 = books(sk)
+        scale = np.abs(sk.m[..., None] * sk.U).sum()
+        hot = (sk.H - sk.m * sk.props.enthalpy(600.0)).sum()     # the gone column's heat above 600 K
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            sk.combine([0], [1], by="depth")
+            ref.combine([0], [1])
+            dz = sk.dz()
+        for a, b in ((sk.m, ref.m), (sk.H, ref.H), (sk.U, ref.U), (sk.count, ref.count)):
+            assert np.array_equal(a, b)                          # the by-mass rule for this pair
+        M1, E1, P1 = books(sk)
+        assert M1 == pytest.approx(M0, rel=1e-14) and E1 == pytest.approx(E0, rel=1e-14)
+        assert np.abs(P1 - P0).max() <= 1e-14 * scale
+        assert sk.count[1] == 0 and np.all(np.isfinite(dz))
+        n = sk.count[0]
+        z_bot = np.cumsum(dz[0, :n])
+        excess = sk.H[0, :n] - sk.m[0, :n] * sk.props.enthalpy(600.0)
+        assert excess[z_bot <= 0.6e-3 * (1 + 1e-9)].sum() == pytest.approx(hot, rel=1e-12)
+        np.testing.assert_allclose(sk.T()[0, :n][z_bot - dz[0, :n] >= DEPTH], 600.0, atol=1e-9)
+        assert sk.thickness()[0] == pytest.approx(2 * DEPTH, rel=1e-12)   # overfull by the gone column's metal
+
+
+def test_metal_in_a_column_with_no_volume_and_no_area_has_no_depth():
+    """Task 3 fix round 1: a column holding metal whose profile holds no volume and whose top area is zero has nowhere
+    to put it, so its depths raise a clear ValueError instead of turning to NaN; with no metal it has none to place."""
+    mat = ConstMaterial()
+    sk = profiled(mat, np.vstack([np.full(len(LEVELS), AREA)] * 2))
+    sk.fill(mat.rho * sk.column_volume(), 600.0)
+    sk.profile[1] = 0.0
+    sk.area[1] = 0.0
+    with pytest.raises(ValueError, match="neither a profile volume nor a top area"):
+        sk.dz()
+    with pytest.raises(ValueError, match="neither a profile volume nor a top area"):
+        sk.base_area()
+    sk.take_top(np.array([1]), np.array([sk.count[1]]))
+    assert np.all(sk.dz()[1] == 0.0) and sk.thickness()[0] == pytest.approx(DEPTH, rel=1e-12)
