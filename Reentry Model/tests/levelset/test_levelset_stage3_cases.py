@@ -288,8 +288,9 @@ def test_cold_plate_at_half_second_steps(preset):
     sub-steps) at 0.5 s macro steps: the face's recession within 5 % of the one-dimensional references with the removal
     at T_feed (0.789, 2.712, 5.219 mm) and at the liquidus (0.837, 2.772, 5.298 mm) at 1.0, 1.5 and 2.0 s, and every
     step's mass to 1e-12 and enthalpy to 1e-8. Measured 2026-11-15 on the one skin depth with phi evolved (plan 03b
-    Task 7, 721efce): 0.800, 2.719 and 5.202 mm (dev; production 0.810, 2.724, 5.205), 1.4 and 0.25 % ahead of the first
-    and 0.33 % behind it (production 2.7, 0.44 % ahead, 0.27 % behind), and 4.4, 1.9 and 1.8 % behind the second
+    Task 7, 721efce; the same to every digit on Task 7b's bfb6344): 0.800, 2.719 and 5.202 mm (dev; production 0.810,
+    2.724, 5.205), 1.4 and 0.25 % ahead of the first and 0.33 % behind it (production 2.7, 0.44 % ahead, 0.27 %
+    behind), and 4.4, 1.9 and 1.8 % behind the second
     (production 3.2, 1.7, 1.8 %); books at most 5.4e-15 (mass) and 1.5e-14 (enthalpy). (2026-11-12, the old design:
     0.820, 2.762, 5.258 mm.)"""
     c = _cases()
@@ -312,10 +313,11 @@ def test_hot_plate_at_half_second_steps(preset):
     non-rigid depth passes the skin depth H = 1.2 mm from 1.0 s, so its melting front crosses the skin base (the risk of
     design 21.12); the volume's top beneath the skin is then above T_rigid by construction, so the skyscrapers' criterion
     on it (HOT_BASE_TOL_K, judged here from Task 11's fix, item 4, under design 20.6's full-depth skins, which design
-    21.13 retires) is reported, not judged. Measured 2026-11-15 on 721efce (dev; production within 0.7 % of it):
-    recession 0.760, 1.795, 2.894 mm against 0.789, 1.817, 2.917 (3.7 % behind, reported; 1.2 and 0.8 % behind);
-    non-rigid depth 1.489, 1.583, 1.683 mm against 1.487, 1.570, 1.674 (0.1, 0.8 and 0.5 % thicker); the base 1.75,
-    2.13 and 2.59 K above T_rigid (reported); books at most 1.6e-15 (mass) and 1.3e-14 (enthalpy)."""
+    21.13 retires) is reported, not judged. Measured 2026-11-15 on 721efce, the same to every digit on Task 7b's
+    bfb6344 (dev; production within 0.7 % of it): recession 0.760, 1.795, 2.894 mm against 0.789, 1.817, 2.917 (3.7 %
+    behind, reported; 1.2 and 0.8 % behind); non-rigid depth 1.489, 1.583, 1.683 mm against 1.487, 1.570, 1.674 (0.1,
+    0.8 and 0.5 % thicker); the base 1.75, 2.13 and 2.59 K above T_rigid (reported); books at most 1.6e-15 (mass) and
+    1.3e-14 (enthalpy)."""
     c = _cases()
     out = c.plate("hot", preset)
     assert out["failure"] is None and out["markers"] == 1
@@ -328,15 +330,15 @@ def test_hot_plate_at_half_second_steps(preset):
     assert out["passes"]
 
 
-BOX_FAILS = ("measured 2026-11-15 on the one skin depth with phi evolved (plan 03b Task 7, 721efce): the first step "
-             "(0.5 s, nothing yet melting) keeps the face flat and the books exact, but the second stops at its end on "
-             "stepend.THIN_METAL, 22 pairs of opposed columns at the heated face's edges, so no judged time is reached: "
-             "the face recedes into a trough 1.2 to 1.4 mm deep 1 to 2 mm inside its edges and leaves a rim along them "
-             "whose inner wall faces the side faces within twice the skin depth (lips at the -y and -z edges' "
-             "midpoints, radii -0.36 and -0.41 mm); the face centre had receded 0.907 mm against the reference's 0.789 "
-             "at 1.0 s (15 % ahead). The same step with "
-             "the liquid's surface tension zero stops alike (23 pairs, the face within 0.04 mm of it; the capillary push "
-             "on the face's flowing rows was about 1e2 N/m3), so the cause is not sharp-edge capillarity")
+BOX_FAILS = ("the 2 mm markers do not resolve the sharp heated edge (diagnosis D1, the controller's ruling T7-j; design "
+             "21.10's finer markers near edges are the remedy): markers on the side faces own the heated face's outer "
+             "strip, which does not recede. Measured 2026-11-15 on plan 03b Task 7b's code (bfb6344): the first step "
+             "(0.5 s, nothing yet melting) keeps the face flat and the books exact; the second stops at its end on "
+             "stepend.THIN_METAL, 4 pairs of opposed columns, the first between markers on the +z and -z side faces "
+             "10.1 mm apart (ruling T7-k's spurious kind), so no judged time is reached. As the stop left it, the "
+             "face's inner 7 by 7 points of the 9 by 9 grid 1 mm apart had receded 0.81 to 0.95 mm and its outer ring "
+             "-0.01 to 0.92 mm (median 0.60), the heated edges had lips at the -y and -z midpoints (radii -0.21 and "
+             "-0.22 mm), and the face centre had receded 0.888 mm against the reference's 0.789 at 1.0 s (12.6 % ahead)")
 
 
 @pytest.mark.reference
@@ -359,15 +361,14 @@ def test_q6p_box():
     assert out["passes"]
 
 
-SHOULDER_FAILS = ("measured 2026-11-15 on the one skin depth with phi evolved (plan 03b Task 7, 721efce): the steps to "
-                  "1.0 s close their books (mass 1.6e-13, enthalpy 3.5e-17) and at 1.0 s a deposit of 18.4 mg lies "
-                  "past the heat's end, all of it rigid, but 6.6 % of it past 5 mm (the pushed plate: 3.0 %), its "
-                  "centroid 2.16 mm past; the step from 1.0 s stops after 22 parts: the groups of phi's move swept "
-                  "4.0016e-9 m3 while phi's volume changed by 4.0081e-9 m3 (stepend.MOVE_SUM_RTOL: cells no marker "
-                  "may own changed), so 2.0 s is not reached (in that step a part that a split then undid ran all 12 "
-                  "passes and a sideways solve took 241 GMRES iterations; no accepted part took more than 4 passes or "
-                  "ended over INTERFACE_TOLERANCE, 6.1e-4 at most, Task 7's fix round 1). The division's closure "
-                  "factor was 3.7e-3 and 1.6e-3 from one in the two steps, against DIVISION_TOL 1e-3")
+SHOULDER_FAILS = ("measured 2026-11-15 on plan 03b Task 7b's code (bfb6344), the segment built 0.13 mm off the mesh's "
+                  "planes of nodes (ruling T7-h): the steps to 1.0 s close their books (mass 5.2e-14, enthalpy 3.7e-16) "
+                  "and their divisions within DIVISION_TOL (closure 3.65e-5 and 3.98e-4), and at 1.0 s a deposit of "
+                  "7.8 mg lies past the heat's end, all of it rigid, its centroid 1.18 mm past (the pushed plate: 1.05 "
+                  "mm), 6.1 % of it past 5 mm (the pushed plate: 3.0 %); the step from 1.0 s accepts 1012 parts in "
+                  "4230 s and then stops: the skins' sideways heat solve did not converge in 1000 GMRES iterations "
+                  "(residual 6.05e-12 of the right-hand side, against skin.SIDE_RTOL 1e-12), so 2.0 s, where the deposit "
+                  "is judged, is not reached")
 
 
 @pytest.mark.reference
@@ -380,7 +381,7 @@ def test_shoulder_runoff_freezes_a_deposit():
     DEPOSIT_RIGID_SHARE of it is rigid at 2.0 s and at most the pushed plate's 3.0 % of it lies past DEPOSIT_FAR (the
     controller's ruling on the review's I2; the farthest reach of non-rigid metal is reported, not judged). The
     deposit's centroid past the heat's end is recorded against the skyscrapers' pushed plate's 1.05 mm. It fails
-    (SHOULDER_FAILS): measured 2026-11-15 on 721efce, it stops in its third step."""
+    (SHOULDER_FAILS): measured 2026-11-15 on bfb6344, it stops in its third step."""
     c = _cases()
     out = c.shoulder("dev")
     assert out["failure"] is None
