@@ -1207,10 +1207,17 @@ def gas_loads_of_run(run):
     here, which flies the same; `cmd_resume` therefore labels a state by its saved arguments' `gas_loads` and calls this
     only for a state whose arguments have none (review T7-1)."""
     body = run.body
+    wake = isinstance(body, skinbody.SkinBody) and body.sheltered_angle != skinbody.SHELTER_CLASSIC
+    return "similarity" if wake or gas_loads_provider_of_run(run) is not None else "classic"
+
+
+def gas_loads_provider_of_run(run):
+    """The gas-loads provider a saved flight's objects hold -- its heating's, or its body's surface flow's (the skins'
+    `surface_flow`, the element model's `flow`); one per flight, shared -- or None if none of them holds one."""
+    body = run.body
     providers = (getattr(run.heating, "gas_loads", None), getattr(getattr(body, "surface_flow", None), "gas_loads", None),
                  getattr(getattr(body, "flow", None), "gas_loads", None))
-    wake = isinstance(body, skinbody.SkinBody) and body.sheltered_angle != skinbody.SHELTER_CLASSIC
-    return "similarity" if wake or any(p is not None for p in providers) else "classic"
+    return next((p for p in providers if p is not None), None)
 
 
 def cmd_resume(args, parser):
@@ -1444,6 +1451,10 @@ def cmd_resume(args, parser):
                                                          "skin_flow", "slurry_spray")}
     thermal_info.update({"macro_step_s": saved.dt, "frames_every": settings.frames_every, "dt_continuum_s": settings.dt_continuum})
     thermal_info["gas_loads"] = saved.gas_loads             # always, as `run` records it; classic for an older state
+    if saved.gas_loads == "similarity":
+        # the loaded provider's hold (s), as `run` records it: None for a provider saved before the hold, or for objects
+        # that hold no provider (SESAM's heating on the element model that does not melt)
+        thermal_info["gas_loads_hold_s"] = getattr(gas_loads_provider_of_run(run), "hold_s", None)
     if state_path is not None:
         thermal_info["save_state_at_s"] = args.save_state_at
     if skins and run.body.spread_limit is not None:

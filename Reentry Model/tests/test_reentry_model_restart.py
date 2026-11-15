@@ -173,12 +173,20 @@ def flown(tmp_path_factory):
     return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
 
 
-def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_files(flown, tmp_path):
+def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_files(tmp_path):
     """`resume` on the state saved at 0.1875 s, with nothing changed: it writes the files `run` writes under its own name
     -- the history, the JSON, the droplet files -- the history starting with the saved step's row and repeating the
     unbroken flight's from there in every column, the droplet records those of the flight after the save, to the last bit,
-    and the JSON naming the state it came from with nothing changed (sub-plan 22 Task 5b, Asha 2026-11-06)."""
-    out, flight, records, state_path = flown
+    and the JSON naming the state it came from with nothing changed (sub-plan 22 Task 5b, Asha 2026-11-06). The flight is
+    its own, `FLIGHT` (the defaults: the hand-down off, the part count by the melting) to 0.2125 s saved at 0.1875 s as
+    `flown` is, because on the gas loads' hold (one solve per --dt) the `flown` flight releases nothing after 0.1875 s and
+    this one does, so the records' check is not empty (ruling P6 of the 2026-11-14 gas-loads plan)."""
+    pytest.importorskip("cantera")
+    out = str(tmp_path / "flown")
+    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
+    flight, state_path = rows_of(os.path.join(out, "f.csv")), os.path.join(out, "f.state.pkl")
+    records = dict(np.load(os.path.join(out, "f", "particles.npz")))
+    assert len(flight) == 17
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r"]) == 0
     assert rows_of(str(tmp_path / "r.csv")) == flight[14:]
     after = records["time_s"] > 0.1875 + 1e-9        # the saved step's records carry its end: 0.1875 and a round-off
@@ -1248,7 +1256,8 @@ def test_a_flight_on_the_provider_saves_it_and_resumes_with_it(flown, tmp_path, 
     line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
     assert "gas loads similarity" in line
     assert rows_of(str(tmp_path / "r.csv")) == flight[14:]
-    assert json.load(open(str(tmp_path / "r.json")))["settings"]["gas_loads"] == "similarity"
+    settings = json.load(open(str(tmp_path / "r.json")))["settings"]
+    assert settings["gas_loads"] == "similarity" and settings["gas_loads_hold_s"] == 0.025      # the provider's hold, --dt
     again = restart.load(str(tmp_path / "r.state.pkl"))
     assert type(again["run"].heating) is heating.SimilarityHeating
     assert again["run"].body.surface_flow.gas_loads is again["run"].heating.gas_loads
@@ -1283,6 +1292,7 @@ def test_a_state_saved_before_the_gas_loads_resumes_on_the_classic_loads(tmp_pat
     assert len(flight) == 8 and rows_of(str(tmp_path / "r.csv")) == flight[state["step"]:]
     doc = json.load(open(str(tmp_path / "r.json")))
     assert doc["settings"]["gas_loads"] == "classic" and doc["resumed_from"]["changed"] == {"--save-state-at": 0.075}
+    assert "gas_loads_hold_s" not in doc["settings"]
     again = restart.load(str(tmp_path / "r.state.pkl"))
     assert again["run"].body.surface_flow.gas_loads is None and type(again["run"].heating) is heating.PhysicsHeating
     assert again["meta"]["args"]["gas_loads"] == "classic"
@@ -1311,7 +1321,8 @@ def test_a_resumed_state_keeps_the_gas_loads_its_arguments_name(tmp_path, capsys
     assert "gas loads similarity" in line
     flight, resumed = rows_of(os.path.join(out, "f.csv")), rows_of(str(tmp_path / "r.csv"))
     assert len(flight) == 5 and resumed == flight[-3:]
-    assert json.load(open(str(tmp_path / "r.json")))["settings"]["gas_loads"] == "similarity"
+    settings = json.load(open(str(tmp_path / "r.json")))["settings"]
+    assert settings["gas_loads"] == "similarity" and settings["gas_loads_hold_s"] is None       # no provider to hold
     assert restart.load(str(tmp_path / "r.end.state.pkl"))["meta"]["args"]["gas_loads"] == "similarity"
 
 
@@ -1394,3 +1405,30 @@ def test_a_flight_resumed_inside_a_hold_window_matches_the_unbroken_flight(tmp_p
     assert cli.main(["resume", str(tmp_path / "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
     assert solves == pytest.approx([0.05], abs=1e-12)           # the step to 0.0375 s flew on the held solution
     assert len(flight) == 5 and rows_of(str(tmp_path / "r.csv")) == flight[1:]
+
+
+def test_a_state_whose_provider_has_no_hold_resumes_solving_every_step_and_records_none(flown, tmp_path, monkeypatch):
+    """Review Focus 4 on the resume command (ruling P9): the `flown` state with its provider stripped of the hold's
+    attributes stands in for a state saved before the hold. Resumed, it solves at both steps from 0.1875 s (0.2 and
+    0.2125 s, 12.5 ms apart), where the state as saved solves at 0.2 s only, one --dt after its held solve at 0.175 s,
+    and holds that solution at 0.2125 s; its JSON records
+    `gas_loads_hold_s` as null, the loaded provider's (no) hold; the resume of the state as saved records 0.025 s
+    (`test_a_flight_on_the_provider_saves_it_and_resumes_with_it`)."""
+    from reentry_model.shared.gas_loads import GasLoads
+    out, flight, records, state_path = flown
+    state = restart.load(state_path)
+    provider = state["run"].heating.gas_loads
+    for name in ("hold_s", "_held", "_held_t"):
+        del provider.__dict__[name]
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    solves, solve = [], GasLoads._solve
+
+    def counted(self, s, radius, T_wall):
+        solves.append(s.t)
+        return solve(self, s, radius, T_wall)
+    monkeypatch.setattr(GasLoads, "_solve", counted)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert solves == pytest.approx([0.2, 0.2125], abs=1e-12)
+    settings = json.load(open(str(tmp_path / "r.json")))["settings"]
+    assert settings["gas_loads"] == "similarity" and settings["gas_loads_hold_s"] is None
