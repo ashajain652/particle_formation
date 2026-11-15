@@ -1522,9 +1522,10 @@ Each item below was measured once, on the flights named; none is a sweep.
   more enthalpy than the arriving gas, and from then on the heating is zero and no solve is made. Counted in the
   flights' histories as the rows whose stagnation flux `q_stag_Wm2` is 0 and whose heating blend `heating_blend_f` is
   1.0: 398 of the 734 rows of the 100 mm flight, from flight time 168 s on, and 553 of the 1119 rows of the 50 mm
-  flight, from 283 s on (each flight's first row included). That is about 54 % and 49 % of the steps. These walls reach
-  about 1878 K (the value reported when the task was set) because the reference flights do not melt; a melting wall
-  stays near 900 K, so the skip starts much later there (only below about 1.2 km/s, where half the speed squared falls to
+  flight, from 283 s on (each flight's first row included). That is about 54 % and 49 % of the steps. The skip starts
+  when the stagnation-point wall temperature (`T_stagnation_K` in the history) is 1878.1 K on the 100 mm flight, at 168 s,
+  and 1960.6 K on the 50 mm flight, at 283 s; the stagnation wall peaks at 2433.1 K and 2625.7 K. The walls are that hot
+  only because the reference flights do not melt; a melting wall stays near 900 K, so the skip starts much later there (only below about 1.2 km/s, where half the speed squared falls to
   the enthalpy of gas at that wall temperature). The time saved on a melting flight was not measured.
 - The elapsed time is the JSON's `results.runtime_s`, which `CoupledRun.run` (`skyscrapers/coupled.py`) times from the
   start of the flight to its results. It therefore leaves out the mesh (gmsh or the mesh cache), the construction of the
