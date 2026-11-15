@@ -82,8 +82,9 @@ column's base, read from the division, `base_normals`); the layer's closure, fil
 `fill_miss_max`, `move_miss_max`, `n_baseless`, the density carry); the owed heat and the interface mismatch against the
 heat in; the mass drawn and returned at the bases and beta's pieces. Per step also the division's own cost line
 (`division_cost`: every division of the layer, the tie rule's second nearest-marker query within it, and the sideways
-conductances' centroid distances) and the solver watch (`Profile.fresh_watch`: the skins' Newton iterations against
-NEWTON_MAX, the sideways GMRES solves' iterations and residual against SIDE_RTOL).
+conductances' centroid distances) and the solver watch (`Profile.fresh_watch`: the passes a part took against
+DAMPED_MAX_PASSES, each accepted part's interface mismatch on its repetition's own measure against INTERFACE_TOLERANCE,
+the skins' Newton iterations against NEWTON_MAX, the sideways GMRES solves' iterations and residual against SIDE_RTOL).
 
 Every number here is a setting of the cases or a reference value with its source; the physics is the shared package's."""
 import argparse
@@ -223,12 +224,18 @@ class Profile:
     @staticmethod
     def fresh_watch():
         """The solver watch of one macro step (plan 03b Task 7): the most passes a part took (against
-        `skinbody.DAMPED_MAX_PASSES`; counted here too, so that a step that raises has it), the most Newton iterations a
-        skin heat sub-step took (against `skin.NEWTON_MAX`, which raises), the most GMRES iterations a sideways solve
-        took and the largest true residual it left as a share of its right-hand side (against `skin.SIDE_RTOL`), the
-        sideways solves and those that did not converge (which raise)."""
-        return {"passes_max": 0, "newton_iterations_max": 0, "gmres_iterations_max": 0, "gmres_residual_max": 0.0,
-                "side_solves": 0, "side_solves_unconverged": 0}
+        `skinbody.DAMPED_MAX_PASSES`; counted here too, so that a step that raises has it), over every part run, one a
+        split undid included, and over the accepted parts alone (`passes_accepted_max`; Task 7's fix round 1: on the
+        shoulder a part that ran all 12 passes was undone and split, and no accepted part took more than 4), the largest
+        interface mismatch an accepted part ended with on the measure its repetition ends on against
+        `skinbody.INTERFACE_TOLERANCE` (sum |mismatch| over sum (|E_top| + |E_base|) of its real pass,
+        `LevelSetSkinBody._part_once`; Task 7's fix round 1: the row's `interface_mismatch_share` is only the last
+        part's sum |mismatch| over the step's heat in), the most Newton iterations a skin heat sub-step took (against
+        `skin.NEWTON_MAX`, which raises), the most GMRES iterations a sideways solve took and the largest true residual
+        it left as a share of its right-hand side (against `skin.SIDE_RTOL`), the sideways solves and those that did not
+        converge (which raise)."""
+        return {"passes_max": 0, "passes_accepted_max": 0, "interface_mismatch_max": 0.0, "newton_iterations_max": 0,
+                "gmres_iterations_max": 0, "gmres_residual_max": 0.0, "side_solves": 0, "side_solves_unconverged": 0}
 
     def _clock(self, owner, name, label, static=False):
         """Time `owner.name` by `label` inclusively only, outside the exclusive accounting (a measure inside calls whose
@@ -259,12 +266,23 @@ class Profile:
         return "division tie query" if k == 2 and self.depth["divide"] else None
 
     def _watch(self):
-        """The solver watch's counters on the skins' heat sub-step (`fresh_watch`): Newton iterations counted by the
-        step's linear solves (the columns' Thomas solves without sideways heat, the coupled GMRES solves with it; one
-        more for a trial sub-step's sensitivity), and GMRES's iterations and residual through a stand-in for the skin
-        module's `scipy.sparse.linalg` that adds a counting callback (results unchanged)."""
+        """The solver watch's counters (`fresh_watch`): each accepted part's passes and interface mismatch on its
+        tolerance's measure, from what `LevelSetSkinBody._accept` receives (its passes, the real pass's book and the
+        mismatch per row); on the
+        skins' heat sub-step, Newton iterations counted by the step's linear solves (the columns' Thomas solves without
+        sideways heat, the coupled GMRES solves with it; one more for a trial sub-step's sensitivity), and GMRES's
+        iterations and residual through a stand-in for the skin module's `scipy.sparse.linalg` that adds a counting
+        callback (results unchanged)."""
         prof, real_spla = self, skin_mod.spla
         orig_conduct, orig_solve, orig_thomas = skin_mod.Skins.conduct, skin_mod._Sideways.solve, skin_mod._tridiagonal
+        orig_accept = skinbody.LevelSetSkinBody._accept
+
+        def accept(body, dt, dt_macro, ratio, passes, book, mismatch, *a, **k):
+            scale = float((np.abs(book.E_top) + np.abs(book.E_base)).sum())
+            total = float(np.abs(mismatch).sum()) / max(scale, 1e-300)       # as `_part_once` ends its repetition
+            prof.watch["interface_mismatch_max"] = max(prof.watch["interface_mismatch_max"], total)
+            prof.watch["passes_accepted_max"] = max(prof.watch["passes_accepted_max"], int(passes))
+            return orig_accept(body, dt, dt_macro, ratio, passes, book, mismatch, *a, **k)
 
         def conduct(sk, dt, q_top, T_amb, emissivity, T_b, trial=False, side=None):
             prof._solves = prof._thomas = 0
@@ -300,7 +318,8 @@ class Profile:
             def __getattr__(self, name):
                 return gmres if name == "gmres" else getattr(real_spla, name)
         for owner, name, new in ((skin_mod.Skins, "conduct", conduct), (skin_mod._Sideways, "solve", solve),
-                                 (skin_mod, "_tridiagonal", thomas), (skin_mod, "spla", Spla())):
+                                 (skin_mod, "_tridiagonal", thomas), (skin_mod, "spla", Spla()),
+                                 (skinbody.LevelSetSkinBody, "_accept", accept)):
             self.saved.append((owner, name, getattr(owner, name)))
             setattr(owner, name, new)
 

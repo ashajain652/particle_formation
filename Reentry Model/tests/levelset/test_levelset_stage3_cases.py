@@ -159,11 +159,47 @@ def test_the_shoulder_s_deposit_is_judged_by_its_rigid_share_and_its_far_share()
     assert d["hot_reach_past_mm"] == pytest.approx(3.0, rel=1e-9)
 
 
+def test_the_solver_watch_keeps_each_step_s_largest_interface_mismatch_on_the_tolerance_s_measure(monkeypatch,
+                                                                                                     tmp_path):
+    """Plan 03b Task 7's fix round 1 (its review's I1, the controller's carry 5): the solver watch's
+    `interface_mismatch_max` is, over a step's accepted parts, the largest of the measure the interface's repetition
+    ends on against INTERFACE_TOLERANCE, sum |mismatch| over sum (|E_top| + |E_base|) of the part's real pass
+    (`skinbody.LevelSetSkinBody._part_once`), not the last part's mismatch over the step's heat in; and
+    `passes_accepted_max` the most passes an accepted part took. The hot plate's first two 0.5 s steps (one part, then
+    several), each part's measure and passes taken here from what `_accept` receives."""
+    from reentry_model.levelset import skinbody
+    c = _cases()
+    monkeypatch.setattr(c, "OUT", str(tmp_path))
+    monkeypatch.delenv("STAGE3_STATE_DIR", raising=False)
+    parts = {}
+    accept = skinbody.LevelSetSkinBody._accept
+
+    def measured(body, dt, dt_macro, ratio, passes, book, mismatch, *a, **k):
+        scale = float((np.abs(book.E_top) + np.abs(book.E_base)).sum())
+        parts.setdefault(round(body.time, 9), []).append((float(np.abs(mismatch).sum()) / scale, passes))
+        return accept(body, dt, dt_macro, ratio, passes, book, mismatch, *a, **k)
+    monkeypatch.setattr(skinbody.LevelSetSkinBody, "_accept", measured)
+    _, q = c.PLATE_CASES["hot"]
+    body = c.plate_body("hot", "dev")
+    rows, failure = c.run_steps(body, lambda b: b.advance(c.DT, q_prescribed=lambda mk: c.projected_heat(
+        b, q, (0.0, 0.0, 1.0))), 2, "mismatch watch")
+    assert failure is None and len(rows) == len(parts) == 2 and len(parts[c.DT]) > 1
+    for row, step in zip(rows, parts.values()):
+        assert row["solver_watch"]["interface_mismatch_max"] == pytest.approx(max(m for m, _ in step), rel=1e-12)
+        assert row["solver_watch"]["interface_mismatch_max"] > 0.0
+        assert row["solver_watch"]["passes_accepted_max"] == max(n for _, n in step) == row["passes_max"]
+
+
 def _books(out):
+    """Every step's books (mass to MASS_TOL, enthalpy to ENERGY_TOL) and its division's closure (planning ruling 1: a
+    piece's closure factor more than DIVISION_TOL from one fails the step's check, raised by the tests; plan 03b Task 7's
+    fix round 1, its review's M5)."""
+    from reentry_model.levelset.division import DIVISION_TOL
     c = _cases()
     for row in out["steps"]:
         assert abs(row["mass_residual"]) <= c.MASS_TOL, row["t"]
         assert abs(row["enthalpy_residual"]) <= c.ENERGY_TOL, row["t"]
+        assert abs(row["layer_factor_max"]) <= DIVISION_TOL, row["t"]
 
 
 @pytest.mark.reference
@@ -250,9 +286,10 @@ SHOULDER_FAILS = ("measured 2026-11-15 on the one skin depth with phi evolved (p
                   "past the heat's end, all of it rigid, but 6.6 % of it past 5 mm (the pushed plate: 3.0 %), its "
                   "centroid 2.16 mm past; the step from 1.0 s stops after 22 parts: the groups of phi's move swept "
                   "4.0016e-9 m3 while phi's volume changed by 4.0081e-9 m3 (stepend.MOVE_SUM_RTOL: cells no marker "
-                  "may own changed), so 2.0 s is not reached (in that step a part took the full 12 passes and a "
-                  "sideways solve 241 GMRES iterations). The division's closure factor was 3.7e-3 and 1.6e-3 from one "
-                  "in the two steps, against DIVISION_TOL 1e-3")
+                  "may own changed), so 2.0 s is not reached (in that step a part that a split then undid ran all 12 "
+                  "passes and a sideways solve took 241 GMRES iterations; no accepted part took more than 4 passes or "
+                  "ended over INTERFACE_TOLERANCE, 6.1e-4 at most, Task 7's fix round 1). The division's closure "
+                  "factor was 3.7e-3 and 1.6e-3 from one in the two steps, against DIVISION_TOL 1e-3")
 
 
 @pytest.mark.reference
