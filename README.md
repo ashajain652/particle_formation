@@ -318,8 +318,10 @@ A skin flight ends itself normally, with end reason `geometry`, exit code 0 and 
 
 `--gas-loads similarity|classic` chooses the surface gas loads of a `--thermal fem` run (the interim gas loads, built
 2026-11-13 from Part A of `Reentry Model/docs/superpowers/specs/2026-11-12-shoulder-melt-loss-design.md`). `similarity`,
-the default, is one provider (`reentry_model/shared/gas_loads.py`) solved once a macro step and read by the surface flow
-and, with `--heating physics`, by the heating: the wall pressure round the whole body (at and above Mach 5 the model's windward law,
+the default, is one provider (`reentry_model/shared/gas_loads.py`). It is solved at most once per `--dt` of flight (held
+over the `--dt-continuum` steps after the continuum switch, so a flight stepping at `--dt` solves at every step), and
+not at all while the stagnation wall holds at least the total enthalpy of the arriving gas, where the heating is zero
+anyway. It is read by the surface flow and, with `--heating physics`, by the heating: the wall pressure round the whole body (at and above Mach 5 the model's windward law,
 continued past 90 degrees until it meets Daniels and Schwartzentruber's lee pressure; at and below Mach 3.5 their own
 pressure, anchored to the stagnation pressure; a linear blend between), the shear and heat flux of a Lees
 similarity boundary layer on chemically frozen post-shock air to the angle where it separates (152 degrees at Holman and
@@ -357,8 +359,10 @@ under the SESAM table; w = 1 when the hot-wall clamp zeroes q_c)); `<run>/vtk/` 
 for both), `frames/`, `frames_section/`, `stills/` (surface and `section_*` stills at the start, peak heating, peak surface
 temperature and the end); with `--reference`, three more plots (`heating_time`, `temperature_time`, `integrated_heat`) and
 `comparison.thermal_metrics` in the JSON. A 100 mm flight takes ~2.5 min (SESAM-equivalent) / ~3 min (182 s with the
-animation) in physics mode on the classic loads, and about 18 min (1068 s, without the animation, on a loaded machine) on
-the interim gas loads, whose similarity solve adds 1.4 s a macro step at these states. The FEniCSx backend (`--thermal-solver fenicsx`) runs from the separate conda environment `fenicsx_env`
+animation) in physics mode on the classic loads. On the interim gas loads it took about 18 min (1068 s, without the
+animation, on a loaded machine, 2026-11-14), when the similarity solve added 1.4 s to every macro step at these states.
+Since the solve skip it takes about 7 min (409.5 s in the Step 2 reference test on a quieter machine, 2026-11-15),
+because no solve is made in the 54 % of the steps after the wall has grown too hot to be heated. The FEniCSx backend (`--thermal-solver fenicsx`) runs from the separate conda environment `fenicsx_env`
 (conda-forge `fenics-dolfinx` 0.11 + this repo's pip dependencies); selecting it in `drama_env` exits 2. It is verified:
 the seven conformance tests (the analytic cases and a 0.1 % cross-check against the skfem backend) pass, and a 100 s
 coupled flight gives the same temperatures, heat totals and energy balance as the skfem backend to every printed
@@ -397,8 +401,8 @@ of peak); `T_eq` is the energy-equivalent mean temperature vs SESAM's lumped tem
 | d050.00mm_h115.000km | sesam | 0.37 % | 2.36 % | +0.03 % / +0.02 % | 28.0 K (1.22 %) | 3.40 % | 2442 K at 245 s (SESAM lumped peak 2458 K at 245 s) | 47 s, 1117 steps |
 | d100.00mm_h077.500km | physics, classic loads | — | — | ratio to SESAM 0.744 | — | — | 2319 K stagnation at 118 s, mean 1717 K at 150 s | 182 s incl. animation, 732 steps |
 | d050.00mm_h115.000km | physics, classic loads | — | — | ratio to SESAM 0.770 | — | — | 2493 K stagnation at 239 s, mean 2151 K at 250 s | 54 s, 1117 steps |
-| d100.00mm_h077.500km | physics, interim gas loads | — | — | ratio to SESAM 0.862 | — | — | 2433 K stagnation at 118.5 s, mean 1881 K at 145.5 s | 1068 s, 733 steps (loaded machine) |
-| d050.00mm_h115.000km | physics, interim gas loads | — | — | ratio to SESAM 0.882 | — | — | 2626 K stagnation at 238.5 s, mean 2295 K at 247 s | 1684 s, 1118 steps (loaded machine) |
+| d100.00mm_h077.500km | physics, interim gas loads | — | — | ratio to SESAM 0.862 | — | — | 2433 K stagnation at 118.5 s, mean 1881 K at 145.5 s | 1068 s, 733 steps (loaded machine); 409.5 s with the skip (reference test) |
+| d050.00mm_h115.000km | physics, interim gas loads | — | — | ratio to SESAM 0.882 | — | — | 2626 K stagnation at 238.5 s, mean 2295 K at 247 s | 1684 s, 1118 steps (loaded machine); 466.8 s with the skip (reference test) |
 
 Both physics-mode runs now reach the ground (`end_reason == "ground"`, same 732 / 1117 steps as their sesam-mode
 counterparts — the trajectory is heating-mode-independent). The Q_conv/point-wise/ΔT_eq/radiated columns are "—"
@@ -417,7 +421,12 @@ to separation, `Reentry Model/docs/model_assumptions.md` section 14), measured o
 `analysis/reentry_model_thermal_verification.py --modes physics`, which runs the command line: the integrated heat is
 16 % and 14 % higher than on the classic heating (the heat now reaching round the shoulder), both inside the reported
 band 0.4 to 1.1, both flights reach the ground with the energy books closed to 1e-8, and no similarity solve at the
-stagnation point failed down to the subsonic end of the flight. No reference test flies the interim gas loads.
+stagnation point failed down to the subsonic end of the flight. Since 2026-11-15 the Step 2 reference test also flies
+the interim gas loads (`test_similarity_mode_is_reported`, which builds the run command's default heating and records
+the ratio within the same reported band). On the code with the pressure below Mach 5, the hold and the solve skip it
+gave 0.8623 and 0.8815, the same as the command's flights behind the rows to five significant figures, in 409.5 s and
+466.8 s (measured once each). These flights' heating ends at Mach 6.2, before the new pressure acts
+(`Reentry Model/docs/model_assumptions.md` 14.7).
 
 Thresholds (`tests/test_reentry_model_reference_thermal.py`): Q_conv 3 % of peak and 3 % point-wise, integrated heat
 3 %, T_eq 2 %, radiated power 8 % (= 4 × the temperature margin: the resolved surface radiates at its own, hotter

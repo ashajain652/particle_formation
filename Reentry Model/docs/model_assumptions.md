@@ -48,8 +48,9 @@ Physics mode (`--heating physics`, the model proper)
 - Since 2026-11-13 `--heating physics` on the default `--gas-loads similarity` is the similarity heating of section 14.4,
   which takes its stagnation flux and its distribution from the interim gas loads and reaches round the shoulder onto
   the lee until the boundary layer separates. The items below describe the classic physics heating, `PhysicsHeating`,
-  which `--gas-loads classic`, every state saved before that change, the Step 2 reference test
-  (`tests/test_reentry_model_reference_thermal.py`, which builds it directly) and the droplet stage use.
+  which `--gas-loads classic`, every state saved before that change, the Step 2 reference test's physics-mode test
+  (`tests/test_reentry_model_reference_thermal.py`, which builds it directly; since 2026-11-15 a second test there flies
+  the similarity heating, section 14.7) and the droplet stage use.
 - Continuum stagnation flux: Fay–Riddell (1958), equilibrium boundary layer, Pr = 0.71, Le = 1.4, Newtonian velocity
   gradient du_e/dx = (1/R) √(2 (p_s − p∞)/ρ_s); wall enthalpy at the patch temperature; the catalycity γ_cat scales the
   Lewis-number term (1 = fully catalytic, SESAM's assumption; 0 leaves the Le = 1 value — the frozen non-catalytic
@@ -1407,7 +1408,11 @@ measurement behind it; Asha's decisions are dated as in the design.
   value were identical except the new key `settings.gas_loads` in the three thermal runs (the expected difference, as
   `dispersion` was for `--dispersion table`) and the absolute path of the space-weather file `settings.fap_day` in the
   Step 1 run, which names each checkout's own copy of the same file (same SHA-256). With those two keys set equal, the
-  comparison reports the 21 files identical.
+  comparison reports the 21 files identical. The comparison was repeated on 2026-11-15, on the code with the pressure
+  below Mach 5, the hold and the solve skip (14.1, 14.4). It was run against main's outputs of 2026-11-14 and against a
+  second run of main's four cases from a fresh export of 4e857e1 at the same path. The export was needed because the
+  first checkout had been deleted, and the comparison could not then check the mesh and material files that main's
+  JSONs name (it reported them missing). Both comparisons reported only the same two keys.
 - `resume` takes no `--gas-loads`: a saved flight resumes on the loads its saved objects hold, and a state saved before
   this change resumes on the classic loads. The label the resume prints and records is the saved arguments'
   `gas_loads`, and only for a state whose arguments have none (one saved before the option) is it read from the objects
@@ -1415,9 +1420,11 @@ measurement behind it; Asha's decisions are dated as in the design.
   element model) keeps its `similarity` label (`tests/test_reentry_model_restart.py`).
 - Tests that pin the classic loads: the Step 2 reference test (`tests/test_reentry_model_reference_thermal.py`) and
   the coupled and melting test modules build `PhysicsHeating` and their bodies directly, not through the run command, so
-  they test the classic heating; two mechanism tests that do go through the run command (the 71 km continuum-step latch
-  and the 65 km droplet-spool failure) name `--gas-loads classic`, because their flights were built to trigger those
-  mechanisms on the old loads (ruling R17; 14.7).
+  they test the classic heating. Since 2026-11-15 the Step 2 reference test also flies the default loads, in
+  `test_similarity_mode_is_reported`, which builds `SimilarityHeating(GasLoads(hold_s=dt))` as the run command does and
+  records its heat ratio to SESAM (14.7). Two mechanism tests that do go through the run command (the 71 km
+  continuum-step latch and the 65 km droplet-spool failure) name `--gas-loads classic`, because their flights were
+  built to trigger those mechanisms on the old loads (ruling R17; 14.7).
 
 ### 14.6 Known accuracy against Holman and Boyd's DSMC
 
@@ -1479,32 +1486,59 @@ Each item below was measured once, on the flights named; none is a sweep.
   - These are physics effects of the new loads, not failures. The likely reasons (inferred, not separated) are less heat
     at the nose, more round the shoulder, and a four to six times larger shear, which together leave less liquid on
     the windward face early in a flight.
-- The Step 2 flights to the ground (the two no-melt US76 SESAM references, element model, 0.5 s macro step), on the
-  interim loads through `analysis/reentry_model_thermal_verification.py --modes physics`, which runs the run command and
-  so its default loads (2026-11-14, each run once, with other runs on the machine):
-  - The integrated heat to the ground is 0.862 times SESAM's for the 100 mm sphere from 77.5 km and 0.882 times for the
-    50 mm sphere from 115 km, against 0.744 and 0.770 on the classic heating: 16 % and 14 % more, as on the 65 km smoke
-    flight, and inside the reported band of 0.4 to 1.1 (`PHYSICS_RATIO`). The remaining gap is about the ratio of
-    the surface-averaged fluxes, 0.2345/0.27471 = 0.85 (inferred from the 65 km smoke flight's average against the ATDB
-    factor, section 8).
-  - The peak stagnation temperature (also the hottest surface point) is 2433 K at 118.5 s and 2626 K at 238.5 s, against
-    2319 K at 118 s and 2493 K at 239 s on the classic heating. The interim times are each run JSON's
-    `results.time_of_peak_surface_T_s`; the verification script's `summary.md` prints the same times with no decimal
-    place (format `{:.0f}`, which rounds a half to the even neighbour), as 118 s and 238 s. The peak
-    energy-equivalent mean temperature is 1881 K at 145.5 s and 2295 K at 247 s, against 1717 K at 149.5 s and 2151 K
-    at 250 s. The classic values were measured again
-    on 2026-11-14 by the Step 2 reference tier on this code (`tests/test_reentry_model_reference_thermal.py`, 5 passed),
-    which reproduced the README's ratios (0.7437, 0.7702) and temperatures. The peak convective power is 17 % higher on
-    both flights (27.7 against 23.7 kW, and 7.89 against 6.74 kW).
-  - Both flights reached the ground with the energy books closed to 1e-8; no stagnation-point solve failed (a failure
-    would have ended the flight), down to the subsonic end of the flight (60 m/s at 0.5 km). They took 1068 s for 733
-    macro steps and 1684 s for 1118 (14.8).
+- The Step 2 flights to the ground (the two no-melt US76 SESAM references, element model, 0.5 s macro step) on the
+  default loads, each flown once on each of two paths:
+  - Through the run command, with `analysis/reentry_model_thermal_verification.py --modes physics` (which runs the
+    command and so its default loads), on 2026-11-14 with other runs on the machine. This was before the pressure
+    below Mach 5 (14.1), the hold of one `--dt` (14.1) and the solve skip (14.4).
+  - Through the Step 2 reference test, which since 2026-11-15 also flies the run command's default heating
+    (`tests/test_reentry_model_reference_thermal.py::test_similarity_mode_is_reported`). The test builds
+    `SimilarityHeating(GasLoads(hold_s=dt))` and the body directly on the same mesh. It was run on 2026-11-15 on the code
+    with all three changes. Its one-minute load average, read four times during the run, was between 2.6 and 11.3.
+  - The integrated heat to the ground is 0.8623 times SESAM's for the 100 mm sphere from 77.5 km and 0.8815 times for
+    the 50 mm sphere from 115 km, on both paths. The exact values are 0.8623036 and 0.8815099 through the command and
+    0.8623030 and 0.8815105 through the test. The two paths' heat totals differ by 2.2 J of 3.2 MJ and by 0.43 J of
+    0.64 MJ, about 7 parts in 10 million, in opposite directions; the cause of so small a difference was not separated.
+    On the classic heating the ratios are 0.7437 and 0.7702 (the reference tier, 2026-11-14), so the default loads
+    deliver 16 % and 14 % more heat, as on the 65 km smoke flight. All four ratios lie inside the reported band of 0.4
+    to 1.1 (`PHYSICS_RATIO` in the verification script, and the test's own band). The remaining gap to SESAM is about the
+    ratio of the surface-averaged fluxes, 0.2345/0.27471 = 0.85 (inferred from the 65 km smoke flight's average against
+    the ATDB factor, section 8).
+  - Why the pressure below Mach 5 does not change these flights. Their heating ends while they are still hypersonic. In
+    the command's histories every row has zero convective power from 168.0 s on the 100 mm flight (Mach 6.24) and from
+    283.0 s on the 50 mm flight (Mach 6.22), because the wall then holds more enthalpy than the arriving gas (14.8).
+    They first fall below Mach 5, where the blend to Daniels and Schwartzentruber's pressure begins, at 174.5 s and
+    289.5 s, and below Mach 3.5 at 184.0 s and 299.5 s. The new pressure, and the step at 90 degrees that it removed,
+    therefore act only on a wall that receives no heat. The element model that does not melt has no surface flow, so the
+    loads reach it only through the heating, and neither change can alter these flights' heat. This is inferred from the
+    2026-11-14 histories and agrees with the unchanged ratios. A melting flight feels the new pressure through its
+    surface flow. It also feels it through its heating while its wall, near 900 K, can still be heated (14.8).
+  - The peak stagnation temperature (also the hottest surface point) is 2433.09 K at 118.5 s and 2625.69 K at 238.5 s.
+    The peak energy-equivalent mean temperature is 1880.61 K at 145.5 s and 2295.32 K at 247 s. Each figure is the same
+    on both paths to within 0.0003 K, and each time is the same. On the classic heating the peak stagnation
+    temperatures are 2319 K at 118 s and 2494 K at 239 s, and the peak mean temperatures 1717 K at 149.5 s and 2151 K
+    at 250 s (the reference tier, 2026-11-14, which reproduced the README's ratios and temperatures). The times are each run JSON's
+    `results.time_of_peak_surface_T_s` and `time_of_peak_mean_T_s`. The verification script's `summary.md` prints the
+    peak times with no decimal place (format `{:.0f}`, which rounds a half to the even neighbour), as 118 s and 238 s.
+    The peak convective power is 17 % higher than on the classic heating on both flights (27.7 against 23.7 kW, and
+    7.89 against 6.74 kW).
+  - Both flights reached the ground on both paths. The energy books closed to 4.6e-9 and 1.1e-8 of the absorbed heat
+    (`energy_balance_residual`). The command's flights solved at every step, and none of their stagnation-point
+    solves failed down to the subsonic end of the flight (60 m/s at 0.5 km); a failure would have ended the flight.
+    The test's flights make no solve from 168 s and 283 s on, where the skip begins. This is inferred from the
+    command's histories, whose temperatures the test's flights reproduce; the test does not save its history. Both
+    paths took 733 and 1118 macro steps. The flights took 1068 s
+    and 1684 s through the command on 2026-11-14, and 409.5 s and 466.8 s through the test on 2026-11-15 (14.8).
 
 ### 14.8 Cost
 
 - One meridian solve took 2.2 to 2.9 s at Holman and Boyd's Kn 0.01 and 0.25 states on a loaded machine (ruling R8;
   the test bound is 5 s), and 0.44 to 1.03 s at the 65 km smoke flight's state (Kn_body 0.005) with up to two other
-  flights running (2026-11-14).
+  flights running (2026-11-14). The Kn 0.01 solve of the cost test
+  (`tests/test_reentry_model_gas_loads.py::test_meridian_cost_near_separation_failure`) took 5.63 s, over its bound,
+  at a load average of 40 to 160 (2026-11-14). It took 0.68 s when run alone at a load average of about 4
+  (2026-11-15, once), and the test passed in that day's unit tier. The solve's cost therefore depends mostly on the load
+  on the machine.
 - Per macro step, the interim loads add about one second: on the 65 km smoke flights, run in pairs at the same time,
   the skins took 4.98 s per macro step against 3.92 s on the classic loads and the element model 1.22 s against 0.29 s
   (the run's own elapsed time over its 9 or 10 macro steps, which include one extra solve for the history's first row).
@@ -1520,10 +1554,10 @@ Each item below was measured once, on the flights named; none is a sweep.
   often as before. The wall time of a long melting flight on the hold has not been measured.
 - Steps with no solve at all (14.4, the skip). On the Step 2 flights, which do not melt, the wall warms until it holds
   more enthalpy than the arriving gas, and from then on the heating is zero and no solve is made. Counted in the
-  flights' histories as the rows whose stagnation flux `q_stag_Wm2` is 0 and whose heating blend `heating_blend_f` is
-  1.0: 398 of the 734 rows of the 100 mm flight, from flight time 168 s on, and 553 of the 1119 rows of the 50 mm
-  flight, from 283 s on (each flight's first row included). That is about 54 % and 49 % of the steps. The skip starts
-  when the stagnation-point wall temperature (`T_stagnation_K` in the history) is 1878.1 K on the 100 mm flight, at 168 s,
+  histories of the run command's flights of 2026-11-14 (14.7) as the rows whose stagnation flux `q_stag_Wm2` is 0 and
+  whose heating blend `heating_blend_f` is 1.0: 398 of the 734 rows of the 100 mm flight, from flight time 168 s on,
+  and 553 of the 1119 rows of the 50 mm flight, from 283 s on (each flight's first row included). That is about 54 %
+  and 49 % of the steps. The skip starts when the stagnation-point wall temperature (`T_stagnation_K` in the history) is 1878.1 K on the 100 mm flight, at 168 s,
   and 1960.6 K on the 50 mm flight, at 283 s; the stagnation wall peaks at 2433.1 K and 2625.7 K. The walls are that hot
   only because the reference flights do not melt; a melting wall stays near 900 K, so the skip starts much later there (only below about 1.2 km/s, where half the speed squared falls to
   the enthalpy of gas at that wall temperature). The time saved on a melting flight was not measured.
@@ -1531,10 +1565,18 @@ Each item below was measured once, on the flights named; none is a sweep.
   start of the flight to its results. It therefore leaves out the mesh (gmsh or the mesh cache), the construction of the
   body and the heating, and the writing of the CSV, JSON and droplet files afterwards, and it includes the history's
   first row, every macro step with its in-memory copy of the step's state, any frames, and the end state's save.
-- On the Step 2 flights to the ground (element model, no melting, 14.7) the interim loads took 1068 s (100 mm, 733
-  macro steps) and 1684 s (50 mm, 1118), against 57 s and 21 s for the classic heating in the reference tier the same
-  afternoon: about 1.4 to 1.5 s more per macro step, which makes such a flight 19 and 80 times slower. The interim
-  flights ran beside the unit tier and the classic ones on a quieter machine, so these factors are approximate.
+- On the Step 2 flights to the ground (element model, no melting, 14.7), each measured once:
+  - Before the skip. Through the run command on 2026-11-14, the interim loads took 1068 s (100 mm, 733 macro steps)
+    and 1684 s (50 mm, 1118). The classic heating took 57 s and 21 s in the reference tier the same afternoon. That is
+    about 1.4 to 1.5 s more per macro step, which made such a flight 19 and 80 times slower. The interim flights ran
+    beside the unit tier and the classic ones on a quieter machine, so these factors are approximate.
+  - With the hold and the skip. Through the Step 2 reference test on 2026-11-15, with one-minute load averages of 2.6
+    to 11.3, the same flights took 409.5 s and 466.8 s. That is 0.48 s and 0.40 s more per macro step than the classic
+    heating, and 7.1 and 23 times its time; the two tests together took 878.5 s. The skip removes the solve from 398
+    of the 734 rows and 553 of the 1119 (the item above); the hold removes none on these flights, which step at `--dt`
+    throughout. Had each remaining solve taken as long as on 2026-11-14, the skip alone would have brought the flights
+    to about 520 s and 860 s. The measured times are lower still, which is put down to the quieter machine (inferred;
+    the skip's share and the load's were not separated).
 
 ### 14.9 Deferred and open
 
