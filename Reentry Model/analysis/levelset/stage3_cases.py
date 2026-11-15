@@ -1,5 +1,7 @@
 """Level-set stage 3 Task 11: the verification cases and the cost of the skins on the level set (design sections 20.11
-item 3 and 20.13; plan docs/superpowers/plans/levelset/03-stage3-skins.md, Task 11). Run from `Reentry Model/`:
+item 3 and 20.13; plan docs/superpowers/plans/levelset/03-stage3-skins.md, Task 11), re-judged on the new geometry of
+design section 21 by plan 03b Task 7 (docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md): one skin depth H,
+the gas surface phi evolved and the skin base beta derived one skin depth inside it. Run from `Reentry Model/`:
 
     "$PY" analysis/levelset/stage3_cases.py plate-cold [--preset dev|production]
     "$PY" analysis/levelset/stage3_cases.py plate-hot  [--preset dev|production]
@@ -31,18 +33,24 @@ removed by 0.5 s and 1.90 by 1.0 s, against 0.79 for the one-dimensional referen
 exact (its cell is the whole face) and the column is the one-dimensional problem. Judged: the cold plate (700 K,
 6 MW/m2) within RECESSION_TOL of REFERENCE_1D and of REFERENCE_1D_LIQUIDUS at 1.0, 1.5 and 2.0 s; the hot plate (880 K,
 2 MW/m2) within RECESSION_TOL of plate_hot_1d.json at 1.5 and 2.0 s (1.0 s reported), its non-rigid depth (phi to
-psi) within NONRIGID_TOL and the volume's top beneath the skin at most HOT_BASE_TOL_K above T_rigid at all three; every step's books within MASS_TOL and ENERGY_TOL. The recession is the face's
-solid top (beta's zero on the axis plus the skin's mass over the solid density and its area), as the skyscrapers' plate
-reads it; the recession by the removed mass is reported beside it.
+psi) within NONRIGID_TOL at all three; every step's books within MASS_TOL and ENERGY_TOL. The hot plate's non-rigid
+depth passes the skin depth H = 1.2 mm, so its melting front crosses the skin base (the risk of design 21.12); the volume's
+top beneath the skin is then above T_rigid by construction, so it is reported against HOT_BASE_TOL_K (the skyscrapers'
+criterion, judged under the full-depth skins of design 20.6, which design 21.13 retires) and no longer judged (plan 03b
+Task 7's judgment). The recession is the face's solid top: phi's zero on the axis (with swell off every column holds its
+metal at the solid's density, exactly full), as the skyscrapers' plate reads it; the recession by the removed mass is
+reported beside it.
 
 The q6p box (Ruling 5): 8 x 10 x 10 mm at 700 K, 6 MW/m2 by projection on its 10 x 10 face (flight along -x; each
 marker the mean projection of the patches of phi nearest it, `projected_heat`, whose docstring says why), 2 s at
 0.5 s steps, dev cells, the design's meshes (0.7 mm fine cells over a 4 mm margin, a 0.25 mm curvature floor), the
 volume flow held (stage 3) and the skins' own flow on (the runoff driven by the flight's deceleration, PUSH_DECEL along
 the flight direction, with no gas pressure gradient or shear), `remove="feed"`. Judged: the face centre's recession
-within RECESSION_TOL of REFERENCE_1D at 1.0, 1.5 and 2.0 s (the liquidus reference reported), the books, no marker
-trapped; the edges reported (their recession along the bisector of the heated face's edges, the markers turned
-top-zone).
+(phi's zero on the axis) within RECESSION_TOL of REFERENCE_1D at 1.0, 1.5 and 2.0 s (the liquidus reference reported),
+the books, no marker trapped; the edges reported: each of the twelve edges' rounding radius, estimated from phi's zero
+contour in the plane normal to it through its midpoint (`edge_rounding`), and the recession along the bisector of the
+heated face's +y edge. The cost per step is recorded against the old design's 31.4, 175.3, 772.1 and 1175.9 s
+(OLD_BOX_STEP_S; design 21.8 item 10).
 
 The shoulder: a segment of a sphere of radius SHOULDER_R (the 50 mm sphere, as the marker tests' "25 mm sphere") about
 its 45 degree station, cut by flat faces (a closed body: SHOULDER_HALF_X along the meridian, SHOULDER_HALF_Y across,
@@ -66,12 +74,16 @@ and rounds, the mode changes) and the peak memory; the cost of cells at the 0.17
 whether psi and the remesh can run every second step (the cold plate's recession with them skipped at every second
 step end; the shadow test does not act on the plate, which is heated by prescription, and is timed on the sphere).
 
-Carried measurements (earlier tasks' parked items), per macro step in every case: the patch groups' area ratios; the
-settling (phi rebuilt from the settled skins over phi's area); how far phi moved over the step at the markers' old
-positions; the area re-partitioned at the step end and the stretch; phi against a distance function (the share of its
-cut cells with |grad phi| below GRAD_SHARE_BOUND, and the angle between phi's normal at each marker and beta's at its
-base); phi's fall where skins changed mode against the depth they handed; the owed heat against the heat in, and the mode
-changes' owed heat against what they handed; the mass drawn and returned at the bases and beta's pieces.
+Carried measurements (earlier tasks' parked items), per macro step in every case: the patch groups' area ratios; how
+far phi moved over the step at the markers' old positions; the layer's volume re-partitioned at the step end
+(`volume_repartitioned_share`) and the stretch; phi against a distance function (the share of its cut cells with
+|grad phi| below GRAD_SHARE_BOUND, and the angle between phi's normal at each marker and beta's normal over its own
+column's base, read from the division, `base_normals`); the layer's closure, fills and moves (`layer_factor_max`,
+`fill_miss_max`, `move_miss_max`, `n_baseless`, the density carry); the owed heat and the interface mismatch against the
+heat in; the mass drawn and returned at the bases and beta's pieces. Per step also the division's own cost line
+(`division_cost`: every division of the layer, the tie rule's second nearest-marker query within it, and the sideways
+conductances' centroid distances) and the solver watch (`Profile.fresh_watch`: the skins' Newton iterations against
+NEWTON_MAX, the sideways GMRES solves' iterations and residual against SIDE_RTOL).
 
 Every number here is a setting of the cases or a reference value with its source; the physics is the shared package's."""
 import argparse
@@ -97,6 +109,7 @@ from scipy.spatial import cKDTree  # noqa: E402
 from reentry_model import OUTPUT_DIR  # noqa: E402
 from reentry_model.levelset import loads as loads_mod  # noqa: E402
 from reentry_model.levelset import markers as markers_mod  # noqa: E402
+from reentry_model.levelset import skin as skin_mod  # noqa: E402
 from reentry_model.levelset import skinbody, stepend  # noqa: E402
 from reentry_model.levelset.boxmesh import BoxBase, build  # noqa: E402
 from reentry_model.levelset.criteria import BIG, finite_values, kappa_max_nodal, make_target, nodal_average  # noqa: E402
@@ -129,7 +142,10 @@ SKYSCRAPERS_DEPOSIT_CENTROID_MM = 1.05                   # the pushed plate's de
                                                          # item 21: 1.84 mm without it)
 SKYSCRAPERS_DEPOSIT_FAR_SHARE = 0.030                    # its share landing 5-10 mm past the heat's end (9.9 % without)
 HOT_BASE_TOL_K = 1.0                                     # the skyscrapers' hot plate: base at most this above T_rigid
-                                                         # (skin_plate.HOT_BASE_TOL_K; judged since Task 11's fix, item 4)
+                                                         # (skin_plate.HOT_BASE_TOL_K; judged from Task 11's fix, item 4,
+                                                         # to plan 03b Task 7, reported since: module docstring)
+OLD_BOX_STEP_S = (31.4, 175.3, 772.1, 1175.9)            # s: the box's four steps' wall times on the old design (e129c95,
+                                                         # the record of 2026-11-13; design 21.8 item 10)
 
 # -- tolerances (the brief's) ------------------------------------------------------------------------------------------
 RECESSION_TOL = 0.05
@@ -146,6 +162,11 @@ PLATE_WIDTH, PLATE_DEPTH, PLATE_GAS = 5.6e-3, 8e-3, 3.2e-3       # m: the column
 BOX_LENGTH, BOX_HALF, BOX_OFF = 8e-3, 5e-3, 0.13e-3              # m: the q6p box; its offset off the grid
 BOX_Q = 6.0e6                      # W/m2
 FACE_NORMAL = 0.8                  # a marker whose normal is within acos(0.8) = 37 degrees of -x is on the box's heated face
+BOX_LO = np.array([BOX_OFF, BOX_OFF - BOX_HALF, BOX_OFF - BOX_HALF])                # m: the box's corners at the start
+BOX_HI = np.array([BOX_OFF + BOX_LENGTH, BOX_OFF + BOX_HALF, BOX_OFF + BOX_HALF])
+EDGE_READ = (1.5e-3, 3.0e-3)       # m: an edge's faces are read this far from it along each face (`edge_rounding`)
+EDGE_OUT, EDGE_IN = 2.0e-3, 8.0e-3   # m: each reading starts this far outside the face (in the mesh box) and runs this far
+EDGE_ROUNDS = 3                    # readings of the faces, each from the last corner found
 COLD_T0 = 700.0                    # K
 SHOULDER_R = 25e-3                 # m: the sphere's radius
 SHOULDER_HALF_X, SHOULDER_HALF_Y, SHOULDER_DEPTH = 7e-3, 3e-3, 6e-3   # m: the segment about the station (local frame:
@@ -196,6 +217,92 @@ class Profile:
         self.incl, self.excl, self.calls = defaultdict(float), defaultdict(float), defaultdict(int)
         self.stack, self.depth, self.saved = [], defaultdict(int), []
         self.attempt = 0
+        self.watch = self.fresh_watch()
+        self._solves = self._thomas = 0
+
+    @staticmethod
+    def fresh_watch():
+        """The solver watch of one macro step (plan 03b Task 7): the most passes a part took (against
+        `skinbody.DAMPED_MAX_PASSES`; counted here too, so that a step that raises has it), the most Newton iterations a
+        skin heat sub-step took (against `skin.NEWTON_MAX`, which raises), the most GMRES iterations a sideways solve
+        took and the largest true residual it left as a share of its right-hand side (against `skin.SIDE_RTOL`), the
+        sideways solves and those that did not converge (which raise)."""
+        return {"passes_max": 0, "newton_iterations_max": 0, "gmres_iterations_max": 0, "gmres_residual_max": 0.0,
+                "side_solves": 0, "side_solves_unconverged": 0}
+
+    def _clock(self, owner, name, label, static=False):
+        """Time `owner.name` by `label` inclusively only, outside the exclusive accounting (a measure inside calls whose
+        split is kept as it was: the division's own line, `division_cost`); `label(*a, **k)` may give None (untimed);
+        a staticmethod is wrapped as one."""
+        orig = owner.__dict__[name] if static else getattr(owner, name)
+        fn = orig.__func__ if static else orig
+        prof = self
+
+        def wrapper(*a, **k):
+            lab = label(*a, **k) if callable(label) else label
+            if lab is None:
+                return fn(*a, **k)
+            prof.depth[lab] += 1
+            t0 = time.perf_counter()
+            try:
+                return fn(*a, **k)
+            finally:
+                if prof.depth[lab] == 1:
+                    prof.incl[lab] += time.perf_counter() - t0
+                prof.depth[lab] -= 1
+                prof.calls[lab] += 1
+        self.saved.append((owner, name, orig))
+        setattr(owner, name, staticmethod(wrapper) if static else wrapper)
+
+    def _tie_label(self, tree, points, k, *a, **kw):
+        """The nearest-marker queries within a division's `markers.ownership` with k = 2: the tie rule's second query."""
+        return "division tie query" if k == 2 and self.depth["divide"] else None
+
+    def _watch(self):
+        """The solver watch's counters on the skins' heat sub-step (`fresh_watch`): Newton iterations counted by the
+        step's linear solves (the columns' Thomas solves without sideways heat, the coupled GMRES solves with it; one
+        more for a trial sub-step's sensitivity), and GMRES's iterations and residual through a stand-in for the skin
+        module's `scipy.sparse.linalg` that adds a counting callback (results unchanged)."""
+        prof, real_spla = self, skin_mod.spla
+        orig_conduct, orig_solve, orig_thomas = skin_mod.Skins.conduct, skin_mod._Sideways.solve, skin_mod._tridiagonal
+
+        def conduct(sk, dt, q_top, T_amb, emissivity, T_b, trial=False, side=None):
+            prof._solves = prof._thomas = 0
+            out = orig_conduct(sk, dt, q_top, T_amb, emissivity, T_b, trial=trial, side=side)
+            n = (prof._solves if side is not None else prof._thomas) - (1 if trial else 0)
+            prof.watch["newton_iterations_max"] = max(prof.watch["newton_iterations_max"], n)
+            return out
+
+        def solve(sideways, *a, **k):
+            prof._solves += 1
+            return orig_solve(sideways, *a, **k)
+
+        def thomas(*a, **k):
+            prof._thomas += 1
+            return orig_thomas(*a, **k)
+
+        def gmres(A, b, *a, **k):
+            it = [0]
+
+            def count(_):
+                it[0] += 1
+            x, info = real_spla.gmres(A, b, *a, callback=count, callback_type="pr_norm", **k)
+            nb = float(np.linalg.norm(b))
+            w = prof.watch
+            w["gmres_iterations_max"] = max(w["gmres_iterations_max"], it[0])
+            w["gmres_residual_max"] = max(w["gmres_residual_max"],
+                                          float(np.linalg.norm(b - A @ x)) / nb if nb > 0.0 else 0.0)
+            w["side_solves"] += 1
+            w["side_solves_unconverged"] += int(info != 0)
+            return x, info
+
+        class Spla:
+            def __getattr__(self, name):
+                return gmres if name == "gmres" else getattr(real_spla, name)
+        for owner, name, new in ((skin_mod.Skins, "conduct", conduct), (skin_mod._Sideways, "solve", solve),
+                                 (skin_mod, "_tridiagonal", thomas), (skin_mod, "spla", Spla())):
+            self.saved.append((owner, name, getattr(owner, name)))
+            setattr(owner, name, new)
 
     def _wrap(self, owner, name, label):
         orig = getattr(owner, name)
@@ -221,9 +328,13 @@ class Profile:
         self.saved.append((owner, name, orig))
         setattr(owner, name, wrapper)
 
-    def _pass_label(self, body, dt, T_b, g, m_min, ctx, trial=False):
+    def _pass_label(self, body, dt, T_b, ctx, trial, sheet):
+        """`LevelSetSkinBody._pass`'s label: its trial and real passes, and the repeats after a part's first (plan 03b
+        Task 7: the signature followed Task 5's `_pass`, whose `trial` this read as False before, every pass then
+        labelled real and none a repeat)."""
         if trial:
             self.attempt += 1
+            self.watch["passes_max"] = max(self.watch["passes_max"], self.attempt)
         kind = "trial" if trial else "real"
         return "skins {}".format(kind) if self.attempt <= 1 else "skins repeats"
 
@@ -265,6 +376,13 @@ class Profile:
                 (loads_mod, "by_patches", "loads"), (loads_mod, "fit_nose", "loads"),
                 (loads_mod, "marker_angles", "loads"), (loads_mod.GasLoads, "evaluate", "loads")):
             self._wrap(owner, name, label)
+        # the division's own line (plan 03b Task 7): every division of the layer (`division.divide`, by the step end's
+        # `_divide` and by the re-partitions), the tie rule's second nearest-marker query within it, and the sideways
+        # conductances' centroid distances (ruling T6-b), timed inclusively only
+        self._clock(stepend, "divide", "divide")
+        self._clock(markers_mod, "_nearest", self._tie_label)
+        self._clock(skin_mod._Sideways, "_distances", "centroid distances", static=True)
+        self._watch()
         return self
 
     def __enter__(self):
@@ -318,6 +436,20 @@ def split_step(delta, wall):
     return out
 
 
+def division_cost(delta):
+    """A step's division line [s] (plan 03b Task 7, the controller's carry 4): every call of `division.divide` (the
+    step end's and the parts' `_divide` and the re-partitions'), inclusive, with its calls and their mean; within them
+    the tie rule's second nearest-marker query (`markers.ownership`); and the sideways conductances' centroid distances
+    (`skin._Sideways._distances`, ruling T6-b, once per heat sub-step with sideways heat), with their calls."""
+    inc, calls = delta["incl"], delta["calls"]
+    n = calls.get("divide", 0)
+    return {"divide_s": round(inc.get("divide", 0.0), 3), "divide_calls": n,
+            "divide_mean_s": round(inc.get("divide", 0.0) / n, 3) if n else None,
+            "tie_query_s": round(inc.get("division tie query", 0.0), 3),
+            "centroid_distances_s": round(inc.get("centroid distances", 0.0), 3),
+            "centroid_distances_calls": calls.get("centroid distances", 0)}
+
+
 # -- measures on the body ----------------------------------------------------------------------------------------------
 def unit_normals(mesh, f, x):
     """The unit recovered gradient of the field f at the points x (n, 3) (the markers' normal: the nodal average of the
@@ -329,38 +461,58 @@ def unit_normals(mesh, f, x):
     return g / np.maximum(np.linalg.norm(g, axis=1), 1e-300)[:, None]
 
 
+def zeros_along(mesh, f, starts, direction, length, n=2001):
+    """The distances [m] (k,) from each of the points `starts` (k, 3) along the unit `direction` (3,) (or one per start,
+    (k, 3)) to the first point where f falls below zero (linear between n samples), nan where f does not fall below zero
+    within `length` [m] or is below it at the start."""
+    starts = np.atleast_2d(np.asarray(starts, float))
+    d = np.broadcast_to(np.asarray(direction, float), starts.shape)
+    s = np.linspace(0.0, length, n)
+    v = interpolate(mesh, f, (starts[:, None, :] + s[None, :, None] * d[:, None, :]).reshape(-1, 3)).reshape(-1, n)
+    below = v < 0.0
+    k = np.argmax(below, axis=1)
+    out = np.full(len(starts), np.nan)
+    rows = np.flatnonzero(below.any(axis=1) & (k > 0))
+    k = k[rows]
+    v0, v1 = v[rows, k - 1], v[rows, k]
+    out[rows] = s[k - 1] + (s[k] - s[k - 1]) * v0 / (v0 - v1)
+    return out
+
+
 def zero_along(mesh, f, start, direction, length, n=4001):
     """The distance [m] from `start` along the unit `direction` to the first point where f falls below zero (linear
-    between samples), or nan."""
-    s = np.linspace(0.0, length, n)
-    pts = np.asarray(start, float)[None, :] + s[:, None] * np.asarray(direction, float)[None, :]
-    v = interpolate(mesh, f, pts)
-    k = np.flatnonzero(v < 0.0)
-    if not len(k) or k[0] == 0:
-        return float("nan")
-    k = k[0]
-    return float(s[k - 1] + (s[k] - s[k - 1]) * v[k - 1] / (v[k - 1] - v[k]))
+    between samples), or nan (`zeros_along` for one start)."""
+    return float(zeros_along(mesh, f, [start], direction, length, n)[0])
 
 
-def solid_thickness(body, rows):
-    """The skins' rows' metal as solid [m]: mass over the solid density and the top area."""
-    sk = body.skins
-    return sk.m[rows].sum(axis=1) / (sk.rho_s * sk.area[rows])
+def base_normals(body):
+    """Each marker's normal of beta over its own column's base (n, 3): the area mean of the normals of the patches of
+    beta the division gives its column (`Division.base_owner` with `base_cell`, through the body's `_beta_owners`; plan
+    03b Task 7: read at the point x - H n instead, beta's normal fell outside beta at the edge and corner markers); NaN
+    for a column with no base."""
+    P = body.solver.P
+    W = body._beta_owners(P)[body.markers.skin_index]            # (markers, patches) [m2]
+    n = np.asarray(W @ P.normal)
+    size = np.linalg.norm(n, axis=1)
+    ok = (np.asarray(W.sum(axis=1)).ravel() > 0.0) & (size > 0.0)
+    return np.where(ok[:, None], n / np.where(ok, size, 1.0)[:, None], np.nan)
 
 
 def phi_far_from_distance(body):
     """(share of phi's cut cells with |grad phi| below GRAD_SHARE_BOUND, median, 95th percentile and largest angle [deg]
-    between phi's normal at each marker and beta's normal at its base point)."""
+    between phi's normal at each marker and beta's normal over its column's base, `base_normals`; the columns with no
+    base left out)."""
     mesh, phi = body.mesh, body.phi
     p = phi[mesh.tets]
     cut = np.flatnonzero((p.min(axis=1) < 0.0) & (p.max(axis=1) > 0.0))
     g = np.linalg.norm(cell_gradients(mesh, phi, cut), axis=1)
     share = float((g < GRAD_SHARE_BOUND).mean()) if len(cut) else 0.0
-    mk = body.markers
-    base = body._bases()[mk.skin_index]
-    n_phi = unit_normals(mesh, phi, mk.x)
-    n_beta = unit_normals(mesh, body.beta, base)
+    n_phi = unit_normals(mesh, phi, body.markers.x)
+    n_beta = base_normals(body)
     ang = np.degrees(np.arccos(np.clip(np.einsum("ij,ij->i", n_phi, n_beta), -1.0, 1.0)))
+    ang = ang[np.isfinite(ang)]
+    if not len(ang):
+        return share, None, None, None
     return share, float(np.median(ang)), float(np.percentile(ang, 95)), float(ang.max())
 
 
@@ -372,8 +524,9 @@ def melt_depth(mesh, psi, x):
     return np.where(h > 0.5 * BIG, np.inf, h)
 
 
-def step_row(body, book, wall, x_before, delta):
-    """One macro step's record: the books, the parts, the cost split and the carried measurements."""
+def step_row(body, book, wall, x_before, delta, watch=None):
+    """One macro step's record: the books, the parts, the cost split (with the division's own line, `division_cost`),
+    the solver watch (`Profile.watch`) and the carried measurements."""
     mk = body.markers
     share, ang_med, ang_95, ang_max = phi_far_from_distance(body)
     move = np.abs(interpolate(body.mesh, body.phi, x_before))
@@ -398,17 +551,17 @@ def step_row(body, book, wall, x_before, delta):
            "group_area_ratio_trimmed_max": book.group_area_ratio_trimmed_max,
            # carried 3: phi's move at the markers' old positions
            "phi_move_max_m": float(move.max()), "phi_move_median_m": float(np.median(move)),
-           # carried 4: sideways mixing
-           "area_repartitioned_share": book.area_repartitioned_share, "stretch_min": book.stretch_min,
+           # carried 4: sideways mixing (a share of the layer's volume since plan 03b Task 6)
+           "volume_repartitioned_share": book.volume_repartitioned_share, "stretch_min": book.stretch_min,
            "stretch_max": book.stretch_max,
-           # carried 5: phi against a distance function
+           # carried 5: phi against a distance function, and against beta over each column's base
            "grad_phi_below_bound_share": share, "phi_beta_angle_median_deg": ang_med,
            "phi_beta_angle_p95_deg": ang_95, "phi_beta_angle_max_deg": ang_max,
            # the layer (plan 03b Task 5): the division's closure, the fills, the moves of phi, the columns with no base
            "layer_factor_max": book.layer_factor_max, "fill_miss_max": book.fill_miss_max,
            "move_miss_max": book.move_miss_max, "n_baseless": book.n_baseless, "density_carry_m3": book.density_carry_m3,
+           "density_carry_share_max": book.density_carry_share_max,
            # carried 7: owed heat
-           "owed_share_of_heat_in": pend / heat,
            "pending_share_of_heat_in": pend / heat, "interface_mismatch_share": book.interface_mismatch_J / heat,
            "residual_newton_J": book.residual_newton_J, "residual_move_J": book.residual_move_J,
            "residual_remesh_J": book.residual_remesh_J,
@@ -420,6 +573,9 @@ def step_row(body, book, wall, x_before, delta):
            "pending_flux_max_Wm2": book.pending_flux_max, "surface_flux_max_Wm2": book.surface_flux_max}
     if delta is not None:
         row["cost_split_s"] = split_step(delta, wall)
+        row["division_cost"] = division_cost(delta)
+    if watch is not None:
+        row["solver_watch"] = dict(watch)
     return row
 
 
@@ -509,7 +665,8 @@ def save_state(body, path):
 
 def run_steps(body, advance, steps, label, extra=None, before_step=None):
     """`steps` macro steps of `advance(body)` under the profiler, a row each (`step_row`, plus extra(body, book) if given);
-    a step that raises ends the run and is recorded. With STAGE3_STATE_DIR set, the body is pickled there before each
+    a step that raises ends the run and is recorded, with its time until it raised, the parts it accepted, its cost
+    split, its division line and its solver watch. With STAGE3_STATE_DIR set, the body is pickled there before each
     step and kept, its path in the failure, when the step raises (Task 11's review, M6: a failing case left nothing to
     diagnose), and after each step that succeeds. Returns (rows, failure or None)."""
     rows, failure = [], None
@@ -523,18 +680,24 @@ def run_steps(body, advance, steps, label, extra=None, before_step=None):
             t_start = float(body.time)
             before = save_state(body, os.path.join(states, "{}_before_step.pkl".format(tag))) if states else None
             snap = prof.snapshot()
+            prof.watch = prof.fresh_watch()
             t0 = time.perf_counter()
             try:
                 book = advance(body)
             except Exception as err:                       # recorded, not hidden: the run stops here
-                failure = {"step": k + 1, "t_start": round(t_start, 9), "error": "{}: {}".format(type(err).__name__, err)}
+                wall = time.perf_counter() - t0                # the failed step's time until it raised, its parts
+                delta = Profile.since(snap, prof.snapshot())   # accepted, its cost and its solver watch
+                failure = {"step": k + 1, "t_start": round(t_start, 9), "error": "{}: {}".format(type(err).__name__, err),
+                           "wall_s": round(wall, 2), "parts_accepted": delta["calls"].get("part books", 0),
+                           "cost_split_s": split_step(delta, wall), "division_cost": division_cost(delta),
+                           "solver_watch": dict(prof.watch)}
                 if before is not None:                     # the body the failing step started from, kept
                     failure["state"] = os.path.join(states, "{}_failed_from_t{:.2f}.pkl".format(tag, t_start))
                     os.replace(before, failure["state"])
                 print(label, "FAILED:", failure, flush=True)
                 break
             wall = time.perf_counter() - t0
-            row = step_row(body, book, wall, x0, Profile.since(snap, prof.snapshot()))
+            row = step_row(body, book, wall, x0, Profile.since(snap, prof.snapshot()), prof.watch)
             if extra is not None:
                 row.update(extra(body, book))
             rows.append(row)
@@ -572,10 +735,10 @@ def plate_body(case, preset, mat=None):
 
 
 def plate_top(body):
-    """The face's solid top [m] on the column's axis: beta's zero there plus the skin's metal as solid."""
-    zb = PLATE_GAS - zero_along(body.mesh, body.beta, (0.0, 0.0, PLATE_GAS - 1e-6), (0.0, 0.0, -1.0),
-                                PLATE_GAS + PLATE_DEPTH - 2e-6) - 1e-6
-    return zb + float(solid_thickness(body, body.markers.skin_index)[0])
+    """The face's solid top [m] on the column's axis: phi's zero there (plan 03b Task 7: phi is the evolved gas surface
+    and every column is exactly full, its cells at the solid's density with swell off, so phi is the solid top)."""
+    return PLATE_GAS - zero_along(body.mesh, body.phi, (0.0, 0.0, PLATE_GAS - 1e-6), (0.0, 0.0, -1.0),
+                                  PLATE_GAS + PLATE_DEPTH - 2e-6) - 1e-6
 
 
 class EverySecond:
@@ -657,9 +820,8 @@ def plate(case, preset="dev", every_second=False, steps=None, save=True):
                                "ref_mm": ref[t][0], "rel": rel, "judged_recession": t > 1.25, "nonrigid_mm": nr,
                                "nonrigid_ref_mm": ref[t][1], "nonrigid_rel": rel_nr,
                                "skin_flowing_mm": at[t]["skin_flowing_mm"], "base_excess_K": at[t]["base_excess_K"],
-                               "base_within_skyscrapers_tol": at[t]["base_excess_K"] <= HOT_BASE_TOL_K}
-            verdict.append((t < 1.25 or abs(rel) <= RECESSION_TOL) and abs(rel_nr) <= NONRIGID_TOL
-                           and at[t]["base_excess_K"] <= HOT_BASE_TOL_K)
+                               "base_within_skyscrapers_tol": at[t]["base_excess_K"] <= HOT_BASE_TOL_K}   # reported
+            verdict.append((t < 1.25 or abs(rel) <= RECESSION_TOL) and abs(rel_nr) <= NONRIGID_TOL)
     out = {"case": "plate-" + case, "preset": preset, "every_second": every_second, "T0_K": T0, "q_Wm2": q0,
            "dt_s": DT, "width_mm": PLATE_WIDTH * 1e3, "depth_mm": PLATE_DEPTH * 1e3, "markers": int(body.markers.n),
            "build_s": round(t_build, 2), "books_pass": books_pass(rows), "compare": compare,
@@ -687,13 +849,13 @@ def box_body(preset="dev", mat=None):
 
 
 def box_face(body):
-    """The heated face: the face markers' solid tops along -x [m] (their bases moved out by their metal as solid), their
-    distances from the face's axis [m], and the edge's recession along the bisector of the face's +y edge [m]."""
+    """The heated face: its solid tops [m] (phi's zero along +x, read from the gas, plan 03b Task 7) at the face markers'
+    (y, z), their distances from the face's axis [m], and the edge's recession along the bisector of the face's +y edge
+    [m]."""
     mk = body.markers
     face = mk.normal[:, 0] < -FACE_NORMAL
-    rows = mk.skin_index[face]
-    base = body._bases()[rows]
-    top = base[:, 0] - solid_thickness(body, rows)
+    starts = np.column_stack([np.full(int(face.sum()), -H0), mk.x[face, 1], mk.x[face, 2]])
+    top = -H0 + zeros_along(body.mesh, body.phi, starts, (1.0, 0.0, 0.0), H0 + BOX_LENGTH)
     d = np.hypot(mk.x[face, 1] - BOX_OFF, mk.x[face, 2] - BOX_OFF)
     corner = np.array([BOX_OFF, BOX_OFF + BOX_HALF, BOX_OFF])
     u = np.array([1.0, -1.0, 0.0]) / math.sqrt(2.0)
@@ -702,14 +864,87 @@ def box_face(body):
 
 
 def box_centre(body):
-    """The face centre's solid top [m] (beta's zero on the axis plus the skin of the face marker nearest the axis) and
-    that marker's distance from the axis [m]."""
+    """The face centre's solid top [m] (phi's zero on the axis, read from the gas; plan 03b Task 7) and the distance of
+    the face marker nearest the axis from it [m]."""
     mk = body.markers
     face = np.flatnonzero(mk.normal[:, 0] < -FACE_NORMAL)
     d = np.hypot(mk.x[face, 1] - BOX_OFF, mk.x[face, 2] - BOX_OFF)
-    i = face[np.argmin(d)]
-    xb = -H0 + zero_along(body.mesh, body.beta, (-H0, BOX_OFF, BOX_OFF), (1.0, 0.0, 0.0), H0 + BOX_LENGTH)
-    return xb - float(solid_thickness(body, mk.skin_index[[i]])[0]), float(d.min())
+    x = -H0 + zero_along(body.mesh, body.phi, (-H0, BOX_OFF, BOX_OFF), (1.0, 0.0, 0.0), H0 + BOX_LENGTH)
+    return x, float(d.min()) if len(d) else float("nan")
+
+
+def box_edges():
+    """The box's twelve edges as (name, (axis, sign) of one face's outward normal, the other's): the heated face's four
+    (-x with +-y, +-z), the rear face's four (+x with them) and the four along x (+-y with +-z)."""
+    out = []
+    for name, a in (("heated", (0, -1)), ("rear", (0, 1))):
+        out += [("{} {}{}".format(name, "+-"[s < 0], "xyz"[b]), a, (b, s)) for b in (1, 2) for s in (1, -1)]
+    out += [("along x {}y {}z".format("+-"[sy < 0], "+-"[sz < 0]), (1, sy), (2, sz)) for sy in (1, -1) for sz in (1, -1)]
+    return tuple(out)
+
+
+def edge_rounding(mesh, phi, face_a, face_b, mid):
+    """One edge's rounding, estimated from phi's zero contour in the plane normal to the edge through `mid` [m] (its
+    midpoint along the edge's axis): each face's line read at EDGE_READ from the edge (phi's zero along the face's
+    inward normal, from EDGE_OUT outside), the corner where the two lines meet (EDGE_ROUNDS times, each face read from
+    the last corner), and the contour's depth d [m] inside that corner along the bisector of the lines' normals; the
+    radius [m] of the circle tangent to both lines through that point, r = d / (1 / sin(theta / 2) - 1), theta the
+    angle between the lines (90 degrees at the start). Returns (r, d, theta [deg]), nan where a face is not found.
+    `face_a`, `face_b` are (axis, sign) of the faces' outward normals; the corner at the start is the box's."""
+    (a, sa), (b, sb) = face_a, face_b
+    ea, eb = sa * np.eye(3)[a], sb * np.eye(3)[b]
+    corner0 = np.zeros(3)
+    corner0[a] = (BOX_HI if sa > 0 else BOX_LO)[a]
+    corner0[b] = (BOX_HI if sb > 0 else BOX_LO)[b]
+    corner0[3 - a - b] = mid
+    s = np.asarray(EDGE_READ)
+    u = v = 0.0                                          # the corner's offsets along ea and eb from corner0
+    for _ in range(EDGE_ROUNDS):
+        da = zeros_along(mesh, phi, corner0 + (v - s)[:, None] * eb + (u + EDGE_OUT) * ea, -ea, EDGE_OUT + EDGE_IN)
+        db = zeros_along(mesh, phi, corner0 + (u - s)[:, None] * ea + (v + EDGE_OUT) * eb, -eb, EDGE_OUT + EDGE_IN)
+        if not (np.isfinite(da).all() and np.isfinite(db).all()):
+            return float("nan"), float("nan"), float("nan")
+        ua, vb = u + EDGE_OUT - da, v + EDGE_OUT - db    # face A's offsets at v - s, face B's at u - s
+        ma, mb = (ua[0] - ua[1]) / (s[1] - s[0]), (vb[0] - vb[1]) / (s[1] - s[0])
+        a0, b0 = ua[0] - ma * (v - s[0]), vb[0] - mb * (u - s[0])    # the lines u = a0 + ma v and v = b0 + mb u
+        u = (a0 + ma * b0) / (1.0 - ma * mb)
+        v = b0 + mb * u
+    na, nb = np.array([1.0, -ma]), np.array([-mb, 1.0])
+    na, nb = na / np.linalg.norm(na), nb / np.linalg.norm(nb)
+    theta = math.pi - math.acos(float(np.clip(na @ nb, -1.0, 1.0)))
+    bis = (na + nb) / np.linalg.norm(na + nb)
+    out = bis[0] * ea + bis[1] * eb
+    d = zero_along(mesh, phi, corner0 + u * ea + v * eb + EDGE_OUT * out, -out, EDGE_OUT + EDGE_IN, n=2001) - EDGE_OUT
+    return d / (1.0 / math.sin(0.5 * theta) - 1.0), d, math.degrees(theta)
+
+
+def box_edge_roundings(body, front):
+    """Every edge's rounding (`edge_rounding`) at its midpoint, the edges along x between the face centre's top `front`
+    [m] and the rear face: {name: {"radius_mm", "depth_mm", "angle_deg"}}."""
+    out = {}
+    for name, fa, fb in box_edges():
+        axis = 3 - fa[0] - fb[0]
+        mid = 0.5 * (front + BOX_HI[0]) if axis == 0 else BOX_OFF
+        r, d, theta = edge_rounding(body.mesh, body.phi, fa, fb, mid)
+        out[name] = {"radius_mm": r * 1e3, "depth_mm": d * 1e3, "angle_deg": theta}
+    return out
+
+
+def edge_summary(edges):
+    """The edges' radii [mm] by kind (the heated face's, the rear face's, those along x): median and largest."""
+    out = {}
+    for kind in ("heated", "rear", "along x"):
+        r = np.array([e["radius_mm"] for k, e in edges.items() if k.startswith(kind)], float)
+        r = r[np.isfinite(r)]
+        out[kind] = {"median_mm": float(np.median(r)), "max_mm": float(r.max())} if len(r) else None
+    return out
+
+
+def box_advance(body):
+    """One of the box's macro steps (module docstring): DT at BOX_Q by projection along the flight, the runoff under the
+    deceleration alone."""
+    return body.advance(DT, decel_vec=PUSH_DECEL * body.v_hat,
+                        q_prescribed=lambda mk: projected_heat(body, BOX_Q, body.v_hat))
 
 
 def box(preset="dev", steps=None, save=True):
@@ -721,13 +956,11 @@ def box(preset="dev", steps=None, save=True):
     v_hat = body.v_hat
     c0, _ = box_centre(body)
     top0, d0, edge0 = box_face(body)
+    edges0 = box_edge_roundings(body, c0)
     face_x0 = float(np.median(top0))
     markers0, coverage0 = int(body.markers.n), heat_coverage(body, v_hat)
     cells0 = {"cells": int(len(body.mesh.tets)),
               "by_size_mm": {str(round(s * 1e3, 4)): int(c) for s, c in zip(*np.unique(body.mesh.size, return_counts=True))}}
-
-    def advance(b):
-        return b.advance(DT, decel_vec=PUSH_DECEL * v_hat, q_prescribed=lambda mk: projected_heat(b, BOX_Q, v_hat))
 
     def extra(b, book):
         c, d = box_centre(b)
@@ -738,7 +971,9 @@ def box(preset="dev", steps=None, save=True):
         S, A_group, _ = b._interface()                      # the face skins' groups now (Task 11's fix, item 1)
         face_rows = b.markers.skin_index[b.markers.normal[:, 0] < -FACE_NORMAL]
         fr = A_group[face_rows] / b.skins.base_area()[face_rows]
+        edges = box_edge_roundings(b, c)
         return {"recession_mm": (c - c0) * 1e3, "centre_marker_off_axis_mm": d * 1e3,
+                "edges": edges, "edge_radius_mm": edge_summary(edges),
                 "face_group_ratio": [float(fr.min()), float(np.median(fr)), float(fr.max())] if len(fr) else None,
                 "face_flatness_mm": float(np.ptp(rec)) if len(rec) else None,
                 "face_recession_mm": {"within_2mm": float(np.median(rec[dist < 2e-3])) if (dist < 2e-3).any() else None,
@@ -757,7 +992,7 @@ def box(preset="dev", steps=None, save=True):
                 if tilted.any() else None}
 
     n = int(round(T_END / DT)) if steps is None else steps
-    rows, failure = run_steps(body, advance, n, "box " + preset, extra)
+    rows, failure = run_steps(body, box_advance, n, "box " + preset, extra)
     at = {round(r["t"], 6): r for r in rows}
     compare, verdict = {}, []
     for t in JUDGED_TIMES:
@@ -767,7 +1002,7 @@ def box(preset="dev", steps=None, save=True):
         rel, rel_l = r / REFERENCE_1D[t] - 1.0, r / REFERENCE_1D_LIQUIDUS[t] - 1.0
         compare[str(t)] = {"recession_mm": r, "ref_1d_mm": REFERENCE_1D[t], "rel_1d": rel,
                            "ref_liquidus_mm": REFERENCE_1D_LIQUIDUS[t], "rel_liquidus": rel_l,
-                           "edge_recession_mm": at[t]["edge_recession_mm"], "top_zone": at[t]["top_zone"]}
+                           "edge_recession_mm": at[t]["edge_recession_mm"], "edge_radius_mm": at[t]["edge_radius_mm"]}
         verdict.append(abs(rel) <= RECESSION_TOL)
     trapped = rows[-1]["markers_trapped"] if rows else None
     out = {"case": "box", "preset": preset, "T0_K": COLD_T0, "q_Wm2": BOX_Q, "dt_s": DT, "decel_ms2": PUSH_DECEL,
@@ -776,7 +1011,10 @@ def box(preset="dev", steps=None, save=True):
                     "margin_mm": body.fine_margin * 1e3, "at_start": cells0},
            "markers_at_start": markers0, "face_markers_at_start": int(len(top0)),
            "heat_coverage_by_normals_at_start": coverage0, "build_s": round(t_build, 2),
+           "edges_at_start": edges0, "edge_radius_mm_at_start": edge_summary(edges0),
            "books_pass": books_pass(rows), "markers_trapped": trapped, "compare": compare,
+           "cost_per_step_s": [{"t": r["t"], "wall_s": r["wall_s"], "old_design_s": old}
+                               for r, old in zip(rows, OLD_BOX_STEP_S)],
            "passes": len(verdict) == len(JUDGED_TIMES) and all(verdict) and books_pass(rows) and trapped == 0
            and failure is None, "failure": failure, "steps": rows}
     if save:

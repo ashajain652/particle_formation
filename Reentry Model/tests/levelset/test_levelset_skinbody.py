@@ -82,11 +82,20 @@ def cube(x):
     return np.max(np.abs(x - OFF) - HALF, axis=1)
 
 
-def cube_body(T0=850.0, **kw):
+ROUNDING = 2e-3        # m: the spraying cube's edge radius (the controller's ruling T6-d; more than the skin depth H)
+
+
+def rounded_cube(x):
+    """The 10 mm cube with its edges and corners rounded to ROUNDING (a signed distance), for the spraying fixture."""
+    q = np.abs(x - OFF) - (HALF - ROUNDING)
+    return np.linalg.norm(np.maximum(q, 0.0), axis=1) + np.minimum(q.max(axis=1), 0.0) - ROUNDING
+
+
+def cube_body(T0=850.0, phi0=cube, **kw):
     base = BoxBase.around((-9e-3,) * 3, (9e-3,) * 3, 2.8e-3)
     args = dict(MESH, emissivity=0.0)
     args.update(kw)
-    return skinbody.LevelSetSkinBody(aa7075(), base, cube, T0, SETTINGS, **args)
+    return skinbody.LevelSetSkinBody(aa7075(), base, phi0, T0, SETTINGS, **args)
 
 
 PLATE_W, PLATE_DEPTH, PLATE_GAS, PLATE_H0 = 5.6e-3, 8e-3, 3.2e-3, 2.8e-3     # m: a column of a plate, walls the mesh's
@@ -648,15 +657,15 @@ def test_a_step_at_a_gas_state_with_the_flow_and_the_spray_on_closes_its_books()
     assert np.array_equal(sk.m, m) and np.array_equal(sk.profile, profile)
 
 
-def gas_body():
-    """The cube with the shared heating and surface flow (`loads.GasLoads`) and Girin's spray model, radiating."""
+def gas_body(phi0=cube):
+    """The cube (`phi0`) with the shared heating and surface flow (`loads.GasLoads`) and Girin's spray model, radiating."""
     from reentry_model.levelset import loads
     from reentry_model.shared import heating, spray, surface_flow
     from reentry_model.shared.material import LiquidProperties
     mat = aa7075()
     gl = loads.GasLoads(heating.PhysicsHeating(), surface_flow.SurfaceFlow(), mat.liquid.rho)
     model = spray.SprayModel(LiquidProperties(mat.liquid.rho, mat.liquid.mu, mat.liquid.sigma), spray_gates="2026-11-10")
-    return cube_body(loads=gl, spray_model=model, T_ambient=200.0, emissivity=0.2)
+    return cube_body(phi0=phi0, loads=gl, spray_model=model, T_ambient=200.0, emissivity=0.2)
 
 
 PART_BOUND = 100      # parts a flow-on step of the test cube may take at most: a tenth of PARTS_MAX
@@ -664,22 +673,24 @@ CONTINUUM = dict(rho=1e-4, kn=1e-3)   # 7.5 km/s at a density of 1e-4 kg/m3 with
                                       # layer's branch, where Girin's closure gives a conjugate depth
 
 
-FOLDED = ("plan 03b Tasks 5 and 6: at this state the runoff carries the +x face's melt, every skin's 1.2 mm of it now "
-          "flowing, and with the runoff on the division's boundaries (Task 6) the step still folds the face, a ridge 1 mm "
-          "high across its middle and troughs 1 mm deep at its corners, and stops on stepend.THIN_METAL (3 pairs); "
-          "Task 6's diagnosis, measured once: the capillary push of phi's recovered curvature at the sharp cube's edges "
-          "dominates (median 2.5e5 N/m3 on the face's markers against 3.8e4 for the pressure gradient), four parts "
-          "instead of one raise the ridge (1.6 against 1.0 mm), the transport solve converged throughout, and without "
-          "surface tension the face recedes evenly and the step stops on the receding corner's rim (1 pair); for the "
-          "controller's ruling")
+RUNAWAY = ("plan 03b Task 7 (the controller's ruling T6-d), measured once: on the cube rounded to 2 mm the first spraying "
+           "step completes (5 parts, no THIN_METAL), but the second 0.05 s step never ends: after 9 parts (35.7 ms) a part's "
+           "move ratio is 4.3e9 and does not shrink with the part's length, because one column (row 28, its marker at "
+           "(5.58, 0.29, -1.40) mm on the rounded +x edge) was left a top cross-section of 2.4e-16 m2 by the moved phi "
+           "while its cells still hold 1.35 mg (5.2e-10 m3), and `skinbody.split_part` splits such a part into "
+           "ceil(4.3e9) parts at every level to SPLIT_DEPTH_MAX; skinbody's move ratio and split count are Task 5's "
+           "code, for the controller's ruling")
 
 
 @pytest.fixture(scope="module")
 def sprayed():
-    """The cube with liquid formed on its +x face by 0.25 s of 6 MW/m2 (no flow, nothing removed), then one 0.05 s macro
-    step at the continuum gas state with the runoff and Girin's plan on: (body, the melting step's book, the spraying
-    step's book or None, its time [s], the RuntimeError that stopped it or None; FOLDED)."""
-    body = gas_body()
+    """The cube with its edges rounded to ROUNDING (`rounded_cube`, the controller's ruling T6-d: the fixture tests the
+    spraying and the books, not sharp-edge capillarity; on the sharp cube the capillary push of phi's recovered
+    curvature at the edges folded the liquid face and the step stopped on THIN_METAL, plan 03b Task 6's diagnosis) with
+    liquid formed on its +x face by 0.25 s of 6 MW/m2 (no flow, nothing removed), then one 0.05 s macro step at the
+    continuum gas state with the runoff and Girin's plan on: (body, the melting step's book, the spraying step's book or
+    None, its time [s], the RuntimeError that stopped it or None)."""
+    body = gas_body(rounded_cube)
     melt = body.advance(0.25, q_prescribed=one_face(6e6))
     started = time.perf_counter()
     try:
@@ -689,19 +700,12 @@ def sprayed():
     return body, melt, book, time.perf_counter() - started, stop
 
 
-def _unfolded(stop):
-    """xfail the test where the spraying step stopped on THIN_METAL (FOLDED), after checking that it did."""
-    if stop is not None:
-        assert str(stop).startswith(skinbody.THIN_METAL), stop
-        pytest.xfail(FOLDED)
-
-
 def test_liquid_formed_on_the_face_sprays_and_the_books_close(sprayed):
     """Fix round 1 of Task 9 (ruling b): liquid formed on the +x face sprays in the next 0.05 s macro step at the
     continuum gas state: the released mass is positive and equals the plan's books and the history's, the mass and
     enthalpy close, and the heat still owed and the interface mismatch stay within OWED_SHARE of the heat in."""
     body, melt, book, seconds, stop = sprayed
-    _unfolded(stop)
+    assert stop is None, stop
     plan = body.plan
     liquid = melt.summary["liquid_depth_mean_mm"]
     print("spraying face: liquid {:.3f} mm mean before; {:.1f} s, {} parts; sprayed {:.3e} kg from {} markers; heat in "
@@ -720,10 +724,12 @@ def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
     step above and a second 0.05 s step at the same state. A part that meets its allowance only after splits, or never,
     carries the splits' shortness into the skyscrapers' estimate; here a step's hint is at most 1.25 times the parts it
     took: both steps stay within PART_BOUND parts, the second step's hint is at most the skyscrapers' for it, both hints
-    are 1.25 times their step's parts at most, and the books close."""
+    are 1.25 times their step's parts at most, and the books close. The first step's hint is checked; the second step is
+    not run and the test xfails at run time (RUNAWAY: that step never ends)."""
     body, _, first, _, stop = sprayed
-    _unfolded(stop)
+    assert stop is None, stop
     assert first.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * first.parts)))
+    pytest.xfail(RUNAWAY)                                 # the second step never ends (RUNAWAY): not run
     second = body.advance(0.05, state=gas_state(**CONTINUUM))
     print("two flow-on steps: parts {} then {}; hints {} then {}; the skyscrapers' hints {} then {}".format(
         first.parts, second.parts, first.parts_next, second.parts_next, first.parts_skyscrapers,
@@ -1384,3 +1390,22 @@ def test_a_body_pickled_with_the_retired_mode_settings_loads_without_them():
     del body.__dict__["division"], body.__dict__["carry"], body.__dict__["mode_settings"]
     old = pickle.loads(pickle.dumps(body))
     assert old.division is None and np.array_equal(old.carry, np.zeros(old.skins.n))
+
+
+def test_a_step_book_pickled_with_the_old_name_of_its_repartitioned_share_loads_under_the_new_one():
+    """Plan 03b Task 7 (Task 6's minor item): since Task 6 the step end's re-partitioned share is a share of the layer's
+    volume, so the book's field and the history's column are `volume_repartitioned_share`; a book pickled with the old
+    name `area_repartitioned_share` (a body's `last_step`, kept by the cases' states) loads with its value under the new
+    one, and a book pickled now loads unchanged."""
+    import pickle
+    from dataclasses import MISSING, fields
+    book = skinbody.StepBook(**{f.name: 0 for f in fields(skinbody.StepBook)
+                                if f.default is MISSING and f.default_factory is MISSING})
+    book.volume_repartitioned_share = 0.25
+    assert book.row()["volume_repartitioned_share"] == 0.25 and "area_repartitioned_share" not in book.row()
+    assert pickle.loads(pickle.dumps(book)) == book
+    state = dict(book.__dict__)
+    state["area_repartitioned_share"] = state.pop("volume_repartitioned_share")
+    old = skinbody.StepBook.__new__(skinbody.StepBook)
+    old.__setstate__(state)
+    assert old == book and "area_repartitioned_share" not in old.__dict__

@@ -154,11 +154,12 @@ class StepBook:
     (`stepend.StepEnd._snap`) brought onto phi by Newton steps from farther than `markers.NEWTON_REACH`, and
     `snap_slide_max` [m] the largest sideways slide (along the surface) of that round's Newton steps.
     `pieces_used_up` the pieces of phi the step's moves parted from the body holding no metal (no marker on them and
-    none of the volume's metal), lifted out (`stepend.StepEnd._move_phi`). `area_repartitioned_share` the layer's volume
-    passed between columns at the step end, summed over its re-partitions, over the layer's volume after it (an area's
-    share until plan 03b Task 6, when the re-partition moved to the division's volumes; the name is kept for the
-    history), and `stretch_min`, `stretch_max` the least and largest stretch of an old column in them (`repartition`,
-    Task 9b; `LevelSetSkinBody.last_settle` keeps each re-partition).
+    none of the volume's metal), lifted out (`stepend.StepEnd._move_phi`). `volume_repartitioned_share` the layer's
+    volume passed between columns at the step end, summed over its re-partitions, over the layer's volume after it (an
+    area's share, `area_repartitioned_share`, until plan 03b Task 6 moved the re-partition to the division's volumes;
+    renamed in Task 7, and a book pickled under the old name loads under the new one, `__setstate__`), and
+    `stretch_min`, `stretch_max` the least and largest stretch of an old column in them (`repartition`, Task 9b;
+    `LevelSetSkinBody.last_settle` keeps each re-partition).
     `group_area_ratio_min`, `group_area_ratio_max` the least and largest area of a marker's group of patches of beta over
     its skin's base area, over the step's parts and the columns with a base (`patch_groups`), and
     `group_area_ratio_trimmed_max` the largest with the group's largest patch left out (a group formed again stops at
@@ -198,7 +199,7 @@ class StepBook:
     snap_fallback: int
     snap_slide_max: float
     pieces_used_up: int
-    area_repartitioned_share: float
+    volume_repartitioned_share: float
     stretch_min: float
     stretch_max: float
     group_area_ratio_min: float
@@ -247,6 +248,14 @@ class StepBook:
     groups_guarded_max: int = 0
     move_corrections: list = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+
+    def __setstate__(self, state):
+        """Unpickling: a book from before plan 03b Task 7 holds the re-partitioned share under its old name
+        (`area_repartitioned_share`), taken under the new one."""
+        state = dict(state)
+        if "area_repartitioned_share" in state:
+            state.setdefault("volume_repartitioned_share", state.pop("area_repartitioned_share"))
+        self.__dict__.update(state)
 
     def row(self):
         """The step as one history row (a flat dict; vectors as their three components)."""
@@ -900,7 +909,7 @@ class LevelSetSkinBody(StepEnd):
             time=self.time, dt=dt, parts=tally.parts, parts_next=self._hint,
             parts_skyscrapers=int(math.ceil(MOVE_HINT_MARGIN * tally.ratio_all)), split_depth_max=tally.depth,
             parts_over=tally.over, snap_fallback=tally.snap_fallback, snap_slide_max=tally.snap_slide,
-            pieces_used_up=tally.pieces_used, area_repartitioned_share=passed / covered if covered > 0.0 else 0.0,
+            pieces_used_up=tally.pieces_used, volume_repartitioned_share=passed / covered if covered > 0.0 else 0.0,
             stretch_min=min((float(r.stretch.min()) for r in reps), default=1.0),
             stretch_max=max((float(r.stretch.max()) for r in reps), default=1.0),
             group_area_ratio_min=tally.group_min, group_area_ratio_max=tally.group_max,
