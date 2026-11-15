@@ -1,8 +1,10 @@
-"""Coupled model vs the two no-melt US76 SESAM references (marker: reference, ~25 min): SESAM-equivalent heating on
-the default mesh against the acceptance thresholds of spec section 10, physics mode reported (not thresholded),
-and the mesh / time-step refinement checks on the 100 mm case. Each run's metrics are also written to
-output/verification_thermal/reference_tests/ (its own subdirectory so these artifacts never collide
-with analysis/reentry_model_thermal_verification.py's identically-named CLI-schema JSONs) for the README table."""
+"""Coupled model vs the two no-melt US76 SESAM references (marker: reference, ~24 min: the five classic tests 548 s on
+2026-11-14, the two similarity tests 879 s on 2026-11-15): SESAM-equivalent heating on the default mesh against the
+acceptance thresholds of spec section 10, physics mode reported (not thresholded) on the classic heating and on the run
+command's default similarity heating, and the mesh / time-step refinement checks on the 100 mm case. Each run's
+metrics are also written to output/verification_thermal/reference_tests/ (its own subdirectory so these artifacts
+never collide with analysis/reentry_model_thermal_verification.py's identically-named CLI-schema JSONs) for the README
+table."""
 import json
 import os
 
@@ -11,6 +13,7 @@ import pytest
 
 from reentry_model import aero, atmosphere, body, compare, coupled, heating, material, mesh, sesam_io, thermal
 from reentry_model import trajectory as tj
+from reentry_model.shared.gas_loads import GasLoads
 
 NAMES = {
     "d100": "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind",
@@ -37,7 +40,12 @@ def coupled_run(ref, heating_name, h_surface=mesh.DEFAULT_H_SURFACE, h_core=mesh
     # verification numbers were measured on the ungraded-from-surface mesh, and no later amendment may move them
     the_body = body.ThermalBody(the_mesh, material.Material.from_drama_json(), thermal.thermal_solver("skfem"),
                                 body.sphere_mass(ref.diameter, ref.material_density))
-    model = heating.SesamEquivalentHeating() if heating_name == "sesam" else heating.PhysicsHeating()
+    if heating_name == "sesam":
+        model = heating.SesamEquivalentHeating()
+    elif heating_name == "similarity":      # the run command's default loads (--gas-loads similarity): one provider,
+        model = heating.SimilarityHeating(GasLoads(hold_s=dt))      # held for one dt as the run command holds it
+    else:
+        model = heating.PhysicsHeating()    # the classic physics heating (--gas-loads classic)
     sim = tj.Simulator(initial, the_body, atmosphere.US76TableAtmosphere(), aero.SphereDragTables.from_json(), aero.SesamTable(), settings)
     return coupled.CoupledRun(sim, the_body, model, coupled.CoupledSettings(dt=dt)).run()
 
@@ -74,6 +82,20 @@ def test_physics_mode_is_reported(key):
     history = coupled_run(ref, "physics")
     m = record(key + "__physics", history, ref)
     assert history.end_reason == "ground" and 0.4 < m["integrated_heat"]["ratio_end"] < 1.1
+
+
+@pytest.mark.reference
+@pytest.mark.parametrize("key", list(NAMES))
+def test_similarity_mode_is_reported(key):
+    """The run command's default loads (--gas-loads similarity: SimilarityHeating on one GasLoads provider held for
+    one dt) to the ground: the ratio of the integrated heat to SESAM's is recorded, not thresholded, beyond the same
+    0.4-1.1 band as the classic physics mode. Measured once each (2026-11-15, this test): 0.8623 (d100) and 0.8815
+    (d050), against 0.7437 and 0.7702 on the classic heating; the run command gave 0.8623 and 0.8815 (2026-11-14)."""
+    ref = load(key)
+    history = coupled_run(ref, "similarity")
+    assert history.end_reason == "ground" and abs(history.results["energy_balance_residual"]) < 1e-6
+    m = record(key + "__similarity", history, ref)
+    assert 0.4 < m["integrated_heat"]["ratio_end"] < 1.1, m["integrated_heat"]
 
 
 @pytest.mark.reference
