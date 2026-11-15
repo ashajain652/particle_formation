@@ -1098,8 +1098,13 @@ measurement behind it; Asha's decisions are dated as in the design.
 
 - One provider per flight. `GasLoads.meridian(state, radius, T_wall)` returns pressure, pressure gradient along the
   surface, shear and similarity heat flux on bins every 2 degrees from 0 to 180 degrees; the surface flow and the heating
-  both call it at the same freestream (density, temperature, speed), nose radius and stagnation-patch wall temperature,
-  and a cache of the last 8 such keys makes them share one solve. **(verified)** On the 65 km skins smoke flight
+  both call it at the same freestream (density, temperature, speed) and nose radius, and a cache of the last 8 keys
+  (those three, the nose radius and the stagnation-patch wall temperature) lets calls at one key share one solve. On the
+  skins the two calls of a step are at the same stagnation-patch wall temperature and share one solve. On the element
+  model they are not: the heating is evaluated with the wall temperatures from before the step's thermal solve, and the
+  surface flow after it, in the melt step (`skyscrapers/body.py`), so the two calls differ in wall temperature and each
+  solves, two solves a step (on the 65 km melting element flight at 0.025 s, 893.0 K for the heating against 894.92 K
+  for the flow; measured once, 2026-11-14, by the Task 2 review's scratch script). **(verified)** On the 65 km skins smoke flight
   (14.7), before the solve cadence of the next item was added, the provider solved 10 meridians for 9 macro steps and
   the history's first row, one per freestream state: in every step the heating's call solved and the surface flow's
   call found the result in the cache (counted by wrapping `GasLoads._solve` in a scratch script, 2026-11-14). A patch's
@@ -1109,22 +1114,32 @@ measurement behind it; Asha's decisions are dated as in the design.
   Task 2). The run command builds the provider with a hold of one `--dt` of flight time (0.5 s by default;
   `GasLoads(hold_s=--dt)`, recorded in the run's JSON as `settings.gas_loads_hold_s`). Every aerodynamic state now
   carries its flight time (`AeroState.t`, the time at the end of the step the loads are for). A solution is held from
-  the flight time of its solve, and every call less than one `--dt` later returns it, whatever that call's freestream,
-  nose radius and wall temperature; the first call at or after the end of the window solves again (or finds its key in
-  the cache) and starts a new window. The window ends a millionth of `--dt` early (`HOLD_TOL`), so that steps of
-  exactly `--dt`, whose summed flight times can fall short of a multiple of `--dt` by round-off, still solve at every
-  step.
+  the flight time of its solve, and every later call less than one `--dt` after that time returns it, whatever that
+  call's freestream, nose radius and wall temperature; the first call at or after the end of the window solves again
+  (or finds its key in the cache) and starts a new window. Calls at the held flight time itself are not served from the
+  hold (ruling P10 of the plan): they go to the key cache as without a hold, so calls at one flight time at different
+  keys solve separately, and the last of them is the one held. The window ends a millionth of `--dt` early (`HOLD_TOL`),
+  so that steps of exactly `--dt`, whose summed flight times can fall short of a multiple of `--dt` by round-off, still
+  solve at every step.
   - Which flights it changes. A flight whose step is `--dt` throughout (every flight that does not melt, and a melting
-    flight before its continuum switch) solves at every step and gives the rows it gave before. After the continuum
-    switch the step is `--dt-continuum` (0.0125 s by default), and the 40 such steps in each 0.5 s share one solution
-    instead of solving at each: at the first step of a window the heating's call solves, and the surface flow's call at
-    the same flight time receives the same solution. Two shorter steps are also served from the window of the step
-    before them: a last step cut short by the ground or by `--t-max`, and the second evaluation of the loads that the
-    element model makes, for the record, at the end of a step in which elements died. On a non-melting element flight
-    from 77.5 km whose last step was cut to 0.2 s by `--t-max 1.2`, the last row's stagnation heat flux was
-    1.8868 MW/m^2 on the held solution against 1.8860 MW/m^2 when that step solved (0.05 % higher), and its stagnation
-    temperature 0.03 K lower; every earlier row was identical (measured once, 2026-11-14, with a scratch script). The
-    record evaluation after element deaths was not measured. On a melting flight the hold can change the spraying by
+    flight before its continuum switch) solves at every step, at the same keys as before, and gives the rows it gave
+    before, on both surface models. After the continuum switch the step is `--dt-continuum` (0.0125 s by default), and
+    the 40 such steps in each 0.5 s share the solution of the window's first step instead of solving at each. At that
+    first step the calls go to the key cache as before: on the skins the heating's call solves and the surface flow's,
+    at the same key, finds that solution; on the element model the heating and the surface flow each solve, and the
+    flow's solution, at the wall temperature after the step's thermal solve, is the one held for the rest of the window.
+    The element model's second evaluation of the loads, for the record, at the end of a step in which elements died, is
+    at the held flight time, so it also goes to the key cache and solves as before, and its solution is then the one
+    held. **(verified)** On the 65 km melting element flight of the restart tests with the continuum switch off
+    (`--dt-continuum off`, two 25 ms steps to 0.05 s), the provider solved the same five keys in the same order with and
+    without the hold (the history's first row, then the heating and the flow at each step) and the three rows were
+    identical (measured once, 2026-11-14, with the review's scratch script extended to count the solves). Before ruling
+    P10 the flow's two calls on that flight received the heating's solutions instead of solving their own. One shorter
+    step is served from the window of the step before it: a last step cut short by the ground or by `--t-max`. On a
+    non-melting element flight from 77.5 km whose last step was cut to 0.2 s by `--t-max 1.2`, the last row's stagnation
+    heat flux was 1.8868 MW/m^2 on the held solution against 1.8860 MW/m^2 when that step solved (0.05 % higher), and its
+    stagnation temperature 0.03 K lower; every earlier row was identical (measured once, 2026-11-14, with a scratch
+    script). On a melting flight the hold can change the spraying by
     much more than it changes the loads: on the 65 km melting skins' test flight of the restart tests (hand-down on,
     parts counted by the moves, to 0.2125 s, a 25 ms first step and 12.5 ms ones after it, so a hold of 25 ms), the
     stagnation heat flux on the held solutions differed from the solved one by at most 0.23 % and the convective power
@@ -1155,6 +1170,7 @@ measurement behind it; Asha's decisions are dated as in the design.
     flight whose objects hold no provider (SESAM's heating on the element model that does not melt, whose `run` records
     its `--dt` because it builds a provider that nothing reads).
   - **(verified)** `tests/test_reentry_model_gas_loads.py` (`test_hold_returns_the_held_solution_within_the_window`,
+    `test_a_call_at_the_held_time_goes_to_the_key_cache_and_replaces_the_held_solution`,
     `test_no_hold_without_time_or_hold`, `test_pickle_keeps_the_held_solution`,
     `test_state_pickled_before_the_hold_solves_every_key`);
     `tests/test_reentry_model_restart.py::test_a_skin_flight_solves_one_meridian_per_dt_shared_by_the_heating_and_the_surface_flow`
@@ -1482,10 +1498,12 @@ Each item below was measured once, on the flights named; none is a sweep.
   skin flight's 0.5 s macro step was not measured.
 - Solves per 0.5 s of flight after the continuum switch (14.1, the solve cadence). A melting flight then steps at
   `--dt-continuum`, 0.0125 s by default, 40 steps in each 0.5 s `--dt`. Before the hold each of those steps solved the
-  boundary layer once, 40 solves per 0.5 s of flight; with the hold it is one solve per 0.5 s. At 0.44 to 2.9 s a
-  solve (the first item), the 39 solves saved in each 0.5 s of flight after the switch are about 17 to 113 s of
-  solving. A flight whose step is `--dt` throughout solves as often as before. The wall time of a long melting flight
-  on the hold has not been measured.
+  boundary layer once on the skins (the heating and the surface flow call at one key) and twice on the element model
+  (they call at different wall temperatures, 14.1): 40 or 80 solves per 0.5 s of flight. With the hold it is one solve
+  per 0.5 s on the skins and two on the element model, all at the first step of each window. At 0.44 to 2.9 s a solve
+  (the first item), the 39 solves saved in each 0.5 s of flight after the switch on the skins are about 17 to 113 s of
+  solving, and the 78 saved on the element model about 34 to 226 s. A flight whose step is `--dt` throughout solves as
+  often as before. The wall time of a long melting flight on the hold has not been measured.
 - The elapsed time is the JSON's `results.runtime_s`, which `CoupledRun.run` (`skyscrapers/coupled.py`) times from the
   start of the flight to its results. It therefore leaves out the mesh (gmsh or the mesh cache), the construction of the
   body and the heating, and the writing of the CSV, JSON and droplet files afterwards, and it includes the history's
