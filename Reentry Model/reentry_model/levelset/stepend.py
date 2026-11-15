@@ -52,25 +52,28 @@ At the macro step's end (`_end_step`): the last part's carry moves phi (ruling 4
 rebuilt from `criteria.make_target` only where it no longer meets the targets (`_needs_rebuild`, with slack), phi
 carried to it (interpolated, reset keeping its contour, corrected to its pieces' volumes; the controller's ruling T2-b),
 beta derived, and `CutThermal.remesh` (its enthalpy residual booked as heat owed); the markers settled (`_settle`):
-snapped onto phi to SNAP_TOL, the trapped and the patchless released (each giving its skin to the nearest marker by
-depth, `Markers.release`; planning ruling 6), tessellated, their skins re-partitioned (below), split and merged,
-snapped, tessellated and re-partitioned again, the skins regridded and given their markers' areas; then divided and
-filled, and the thin-metal stop (THIN_METAL, design 21.11) checked. The step end's own settle and fill leave a carry of
-their own (the re-partition's mixing and the drawn metal's density difference), which waits for the next step's first
-move (the controller's ruling T5-i, reading planning ruling 4's "before the closure check" as a bound on the carry
-left): until then phi misses its metal's true volume by it, the step's `density_carry_m3` (largest share of a column,
-`density_carry_share_max`), which the tests bound.
+snapped onto phi to SNAP_TOL, the trapped and the patchless released (each giving its skin to the nearest marker that
+may own its part of phi, by depth, `Markers.release`; planning ruling 6), given their areas of phi (`_tessellate`), the
+layer divided among them and their skins re-partitioned across that division (below), split and merged, snapped, given
+their areas, divided and re-partitioned again, the skins regridded and given their markers' areas; then given the last
+division's profile and filled, and the thin-metal stop (THIN_METAL, design 21.11) checked. The step end's own settle and
+fill leave a carry of their own (the re-partition's mixing and the drawn metal's density difference), which waits for
+the next step's first move (the controller's ruling T5-i, reading planning ruling 4's "before the closure check" as a
+bound on the carry left): until then phi misses its metal's true volume by it, the step's `density_carry_m3` (largest
+share of a column, `density_carry_share_max`), which the tests bound.
 
-The re-partition (Task 9b, the controller's ruling of 2026-11-12; by mass until plan 03b Task 6, the controller's ruling
-P4). A tessellation hands the surface out afresh: most of a marker's area change at a step end is area passing between
-markers. Each tessellation (`_tessellate`, which releases the markers it leaves no area and tessellates again) is
-followed by `_repartition`: from each marker's old owners (its position and normal at the tessellation before,
-`Markers.x_tess`), its skin's area and the surface then, and the new tessellation, `repartition.transfer_matrix` gives
-every old column's stretch and the transfer T[j, i], the area of old column j that new column i receives;
-`repartition.apply_transfer` cuts each old column into the fractions T[j, i] / (its row's sum) of its profile
-(`Skins.cut`) and makes each new column the hand-over mix (`Skins.combine`) of what it receives. Mass, enthalpy and
-momentum add to round-off; the volume is untouched; the fill that follows settles each column. Each re-partition is kept
-in `last_settle`.
+The re-partition (Task 9b, the controller's ruling of 2026-11-12; by depth across the division since plan 03b Task 6,
+the controller's ruling P4). A settle hands the layer out afresh: most of a column's change at a step end is layer
+passing between markers. Each giving of the markers' areas (`_tessellate`, which releases the markers it leaves no area
+and gives them again) is followed by `_repartition`: the layer divided among the markers as they now stand
+(`division.divide`), and from each marker's old owners (its position and normal at the last giving, `Markers.x_tess`),
+its old column's volume (its skin's profile, the last division's) and the surface then, and the new division,
+`repartition.transfer_matrix` gives every old column's stretch and the transfer T[j, i], the volume of old column j that
+new column i receives, across the new division's boundaries; `repartition.apply_transfer` stretches each old column
+(its profile with it), cuts it into the fractions T[j, i] / (its row's sum) of itself (`Skins.cut`) and gives each new
+column what it receives by depth (`Skins.combine(..., by="depth")`). Mass, enthalpy and momentum add to round-off; the
+volume is untouched; the step end then gives the skins the last division's profile and the fill settles each column.
+Each re-partition is kept in `last_settle`.
 
 No rigid metal left (the controller's ruling (d) of stage 3 Task 10): a step end whose psi finds no rigid metal raises
 RuntimeError saying so (`_check_core`): the molten metal has nothing to stand on, and stage 3 holds the volume's melt
@@ -86,7 +89,7 @@ from .criteria import finite_values, kappa_max_nodal, make_target
 from .cutcell import inside_volumes, patches
 from .division import _marker_pieces, divide
 from .levelset import correct_volumes, move_by_volumes, pieces, redistance
-from .markers import NEWTON_REACH, OPPOSED_NORMALS, OWN_SHARE, owned
+from .markers import NEWTON_REACH, OPPOSED_NORMALS
 from .repartition import SAMPLE_SHARE, apply_transfer, surface_samples, transfer_matrix
 from .surfaces import molten_rigid_surface, skin_base
 from .transfer import interpolate, locate
@@ -119,7 +122,7 @@ NO_CORE = ("the body has no rigid metal left: psi finds no metal below T_rigid (
            "volume's melt (no flow solve)")
 THIN_METAL = "metal thinner than twice the skin depth"   # the message's start (design section 21.11)
 
-Repartition = namedtuple("Repartition", "transfer stretch old_area area")   # one re-partition of a step end
+Repartition = namedtuple("Repartition", "transfer stretch old_volume volume")   # one re-partition of a step end [m3]
 
 
 class StepEnd:
@@ -308,23 +311,30 @@ class StepEnd:
 
     def _own(self):
         """The markers' areas, and so the skins' top areas (`_sync`), afresh on phi as it now is: the area of phi each
-        marker owns (`markers.owned`, as `Markers.tessellate` gives them), the markers where they stand. Within a step
-        phi moves by its columns' volumes while the markers stay where the step began (they settle at its end); the top
-        fluxes follow phi (plan 03b Task 5: on the test cube at 6 MW/m2 with the liquid fed off, the edges receded up to
-        1.9 mm within one 0.5 s step, and an edge marker's step-start area came to be 40 times its column's
-        cross-section at phi, its heat poured into a column that was no longer there). At least AREA_FLOOR of the
-        spacing squared each."""
+        marker owns (`Markers.owned_patches`, as `Markers.tessellate` gives them: the same-side and same-piece rules),
+        the markers where they stand. Within a step phi moves by its columns' volumes while the markers stay where the
+        step began (they settle at its end); the top fluxes follow phi (plan 03b Task 5: on the test cube at 6 MW/m2
+        with the liquid fed off, the edges receded up to 1.9 mm within one 0.5 s step, and an edge marker's step-start
+        area came to be 40 times its column's cross-section at phi, its heat poured into a column that was no longer
+        there). At least AREA_FLOOR of the spacing squared each."""
         mk = self.markers
-        P = patches(self.mesh, self.phi)
-        area = np.asarray(owned(mk.x, P, OWN_SHARE * mk.spacing).sum(axis=1)).ravel() if len(P.area) else np.zeros(mk.n)
+        area = np.asarray(mk.owned_patches(self.mesh, self.phi).sum(axis=1)).ravel()
         mk.area = np.maximum(area, AREA_FLOOR * mk.spacing ** 2)
         self._sync()
 
-    def _divide(self, tally):
-        """The layer divided among the markers (`division.divide`) and the skins given its profile; the largest
-        departure of a piece's closure factor from one into `tally.layer_factor`."""
+    def _division(self):
+        """The layer between phi and beta divided among the markers as they stand (`division.divide`)."""
+        mk = self.markers
+        return divide(self.mesh, self.phi, self.settings.depth, mk.x, mk.normal)
+
+    def _divide(self, tally, d=None):
+        """The layer divided among the markers (`_division`; or `d`, a division of them as they stand on phi as it is,
+        such as the step end's settle leaves) and the skins given its profile; the largest departure of a piece's
+        closure factor from one into `tally.layer_factor`."""
         mk, sk = self.markers, self.skins
-        d = divide(self.mesh, self.phi, self.settings.depth, mk.x, mk.normal)
+        d = self._division() if d is None else d
+        if len(d.area) != mk.n:
+            raise ValueError("the division must be of the markers as they stand: one column per marker")
         area = np.zeros((sk.n, len(d.levels)))
         area[mk.skin_index] = d.area
         sk.set_profile(d.levels, area)
@@ -519,8 +529,7 @@ class StepEnd:
             owed = E0 - self.solver.energy()
             tally.remesh += abs(owed)
             self._book_move(self._bases(), self.skins.area, owed)
-        self._settle(tally, surface)
-        self._divide(tally)
+        self._divide(tally, self._settle(tally, surface))
         owed = -self._fill(tally)
         tally.move += abs(owed)
         self._book_move(self._bases(), self.skins.area, owed)
@@ -567,79 +576,90 @@ class StepEnd:
         raise RuntimeError("the markers did not snap onto phi within {} m in {} rounds".format(SNAP_TOL, SNAP_ROUNDS))
 
     def _release(self, idx, tally):
-        """Release the markers idx: each gives its skin to the nearest marker that stays, by depth (`Markers.release`,
-        planning ruling 6), before any column's profile is replaced; the next fill settles both."""
-        self.markers.release(idx)
+        """Release the markers idx: each gives its skin to the nearest marker that stays and may own its part of phi
+        (the same-side and same-piece rules on phi as it is), by depth (`Markers.release`, planning ruling 6), before
+        any column's profile is replaced; the next fill settles both."""
+        self.markers.release(idx, self.mesh, self.phi)
 
     def _samples(self):
         """phi's surface samples for the re-partition, SAMPLE_SHARE of the target spacing across (`surface_samples`)."""
         return surface_samples(self.mesh, self.phi, SAMPLE_SHARE * self.spacing)
 
     def _owners(self, surface):
-        """The markers' old owners for a re-partition: [their positions and normals at the last tessellation, their
-        skins' areas, the samples `surface` of the surface those areas were given on]."""
+        """The markers' old owners for a re-partition: [their positions and normals at the last giving of their areas
+        (`Markers.x_tess`, `normal_tess`), the samples `surface` of the surface those areas were given on]."""
         mk = self.markers
-        return [mk.x_tess.copy(), mk.normal_tess.copy(), self.skins.area[mk.skin_index].copy(), surface]
+        return [mk.x_tess.copy(), mk.normal_tess.copy(), surface]
 
     def _repartition(self, old, surface):
-        """The skins follow the area the last tessellation re-partitioned (module docstring): every old column cut by
-        the transfer and mixed into its receivers by the hand-over rule; the re-partition kept in `last_settle`. `old`
-        from `_owners`, `surface` the samples of phi now."""
+        """The skins follow the layer the markers' last giving of areas re-partitioned (module docstring): the layer
+        divided among the markers as they stand, every old column (its volume its profile's) cut by the transfer across
+        that division and given to its receivers by depth; the re-partition kept in `last_settle`. `old` from
+        `_owners`, `surface` the samples of phi now. Returns the division (the skins keep their pieces' profiles until
+        the caller gives them its own, `_divide`)."""
         mk, sk = self.markers, self.skins
-        old_x, old_normal, old_area, old_surface = old
-        T, stretch = transfer_matrix(old_x, old_normal, old_area, old_surface, mk.x, mk.area, mk.faces, surface)
-        apply_transfer(sk, mk.skin_index, old_area, T, stretch)
-        self.last_settle.append(Repartition(T, stretch, old_area, mk.area.copy()))
+        old_x, old_normal, old_surface = old
+        d = self._division()
+        old_volume = sk.column_volume()[mk.skin_index]
+        T, stretch = transfer_matrix(old_x, old_normal, old_volume, old_surface, mk.x, d.volume, d, surface)
+        apply_transfer(sk, mk.skin_index, T, stretch)
+        self.last_settle.append(Repartition(T, stretch, old_volume, d.volume.copy()))
+        return d
 
     def _drop_owners(self, old, idx):
         """`old` (from `_owners`) without the rows of the markers idx, which are about to be released."""
         stay = np.setdiff1d(np.arange(self.markers.n), idx)
-        return [a[stay] for a in old[:3]] + [old[3]]
+        return [a[stay] for a in old[:2]] + [old[2]]
 
     def _tessellate(self, old, tally):
-        """The markers tessellated on phi; those it leaves no area (the patchless) released and the rest snapped and
-        tessellated again until none is left, at most BARE_ROUNDS times, their rows leaving `old` (fix round 1 of Task 9b:
-        after every tessellation of the step end, not only the first). Returns `old`."""
+        """The markers given their areas of phi (`Markers.tessellate`: their patches, normals, curvatures, owned areas
+        and longest directions); those it leaves no area (the patchless) released and the rest snapped and given their
+        areas again until none is left, at most BARE_ROUNDS times, their rows leaving `old` (fix round 1 of Task 9b:
+        after every giving of the step end, not only the first). Returns `old` (None stays None)."""
         mk = self.markers
         for _ in range(BARE_ROUNDS):
             mk.tessellate(self.mesh, self.phi)
             bare = np.flatnonzero(mk.area <= 0.0)
             if not len(bare):
                 return old
-            old = self._drop_owners(old, bare)
+            old = None if old is None else self._drop_owners(old, bare)
             self._release(bare, tally)
             self._snap(tally)
         raise RuntimeError("markers were still left no area after {} tessellations".format(BARE_ROUNDS))
 
-    def _settle(self, tally, surface=None):
-        """The markers onto phi, the trapped (and the patchless) released, tessellated and their skins re-partitioned,
-        split, merged, tessellated and re-partitioned again, and the skins regridded with their markers' areas.
-        `surface`: the samples of the surface the markers' areas were last given on (the step's start's phi), phi as
-        it is if None. The cells' volume change this makes (columns mixed at another temperature, a Scheil alloy's
-        volumes not adding; no metal crosses beta) is carried, spread over the rows by their cells' volume (module
-        docstring)."""
+    def _settle(self, tally, surface=None, repartition=True):
+        """The markers onto phi, the trapped (and the patchless) released, given their areas, the layer divided and
+        their skins re-partitioned across the division, split, merged, given their areas, divided and re-partitioned
+        again, and the skins regridded with their markers' areas. `surface`: the samples of the surface the markers'
+        areas were last given on (the step's start's phi), phi as it is if None. Without `repartition` (construction,
+        whose skins are filled afresh after it) the skins follow the markers' changes alone and nothing is divided. The
+        cells' volume change this makes (columns mixed at another temperature, a Scheil alloy's volumes not adding; no
+        metal crosses beta) is carried, spread over the rows by their cells' volume (module docstring). Returns the
+        division of the settled markers (None without `repartition`), for the caller to give the skins (`_divide`)."""
         mk, sk = self.markers, self.skins
         self.last_settle = []
         V0, C0 = float(sk.cells_volume().sum()), float(self.carry.sum())
-        old = self._owners(self._samples() if surface is None else surface)
+        old = self._owners(self._samples() if surface is None else surface) if repartition else None
         self._snap(tally)
         cell, _ = locate(self.mesh, mk.x)
         trapped = mk.trapped_markers(self.mesh, self.phi, self.mesh.size[cell])
         if len(trapped):
-            old = self._drop_owners(old, trapped)
+            old = None if old is None else self._drop_owners(old, trapped)
             self._release(trapped, tally)
             self._snap(tally)
         old = self._tessellate(old, tally)
-        now = self._samples()
-        self._repartition(old, now)
+        d = None
+        if repartition:
+            now = self._samples()
+            d = self._repartition(old, now)
         self._sync()
         big = mk.split(self.spacing ** 2)
         merged = mk.merge(self.spacing)
         if len(big) or merged:
-            old = self._owners(now)
+            old = self._owners(now) if repartition else None
             self._snap(tally)
             old = self._tessellate(old, tally)
-            self._repartition(old, self._samples())
+            d = self._repartition(old, self._samples()) if repartition else None
         self._sync()
         self.skins.regrid()
         self._sync()
@@ -647,3 +667,4 @@ class StepEnd:
         self.carry = np.zeros(sk.n)
         if v.sum() > 0.0:                                  # the carry before it and the cells' change, spread
             self.carry += (C0 + float(v.sum()) - V0) * v / v.sum()
+        return d

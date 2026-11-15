@@ -26,17 +26,22 @@ temperature T_b is the area mean over its group of the patch temperatures the so
 receives exactly sum_m (a_m + b_m T_b,m) dt.
 
 One macro step (`advance`, design 10.1 with 20 and 21): the gas loads once per marker at the step's start
-(`loads.GasLoads` at the pieces of phi's patches each marker owns, each marker the mean over its own,
-`loads.by_patches`; the leeward test, the fitted nose), or a prescribed heating; the surface flow's forcing for the
+(`loads.GasLoads` at the pieces of phi's patches each marker owns, `Markers.owned_patches`, each marker the mean over its
+own, `loads.by_patches`; the leeward test, the fitted nose), or a prescribed heating; the surface flow's forcing for the
 runoff (with an aero state or a deceleration); Girin's plan once (`spraying.spray_plan`, with a spray model and a
-state; b is always the skin's flowing depth); then the step as parts (Ruling 7: none longer than PART_MAX while any top
+state; b is always the skin's flowing depth, the wave's regions on the division's boundaries at phi); then the step as
+parts (Ruling 7: none longer than PART_MAX while any top
 is at or above T_rigid or about to be, and a part whose move of phi exceeds MOVE_SHARE of the markers' target spacing --
 the part ratio max |dV_i / A_i(0)| / (MOVE_SHARE spacing), A_i(0) the column's cross-section at phi -- rerun as shorter
 parts, at most SPLIT_DEPTH_MAX levels). Each part:
 
 1. the trial pass on saved skins (their cells, their flow memory, their profile, the plan's books): every heat sub-step's
-   conduction with the trial sensitivity, the flow sub-steps with the release, the feed removal (remove="feed") and
-   the regrid, at the linearisation temperature T_lin; its base law (a, b) per marker (none for a column with no base);
+   conduction with the trial sensitivity, the columns conducting sideways across the division's shared boundaries
+   (`runoff.Sheet.side_faces`, `Skins.conduct(..., side=...)`; plan 03b Task 6), the flow sub-steps with the release
+   across the same boundaries (`runoff.Sheet.from_division`, the part's sheet), the feed removal (remove="feed") and
+   the regrid, at the linearisation temperature T_lin; its base law (a, b) per marker (none for a column with no base;
+   with the sideways heat the derivative for every base temperature moving together, the controller's ruling T4-c,
+   the rest of the coupling between neighbours left to the interface mismatch);
 2. `CutThermal.step` with each patch's law and the pending load: the heat owed to the volume, delivered at its amount
    over the macro step's time left (at least PENDING_TIME_MIN), spread over the owing markers' patch groups;
 3. the real pass from the same saved state with T_b read from the 3D field as above;
@@ -95,7 +100,7 @@ from .cutcell import patches as cut_patches
 from .cutthermal import CutThermal
 from .levelset import pieces
 from .markers import Markers
-from .runoff import FlowBook, Forcing, flow_substeps
+from .runoff import FlowBook, Forcing, Sheet, flow_substeps
 from .skin import SkinSettings
 from .spraying import spray_plan
 from .stepend import (BASELESS_SHARE, FILL_ROUNDS, FILL_RTOL, LEAD, NO_CORE, REGION_SLACK,  # noqa: F401 (re-exported)
@@ -149,9 +154,11 @@ class StepBook:
     (`stepend.StepEnd._snap`) brought onto phi by Newton steps from farther than `markers.NEWTON_REACH`, and
     `snap_slide_max` [m] the largest sideways slide (along the surface) of that round's Newton steps.
     `pieces_used_up` the pieces of phi the step's moves parted from the body holding no metal (no marker on them and
-    none of the volume's metal), lifted out (`stepend.StepEnd._move_phi`). `area_repartitioned_share` the area passed between markers at the step end, summed over its re-partitions, over the
-    area the markers cover after it, and `stretch_min`, `stretch_max` the least and largest stretch of an old column in
-    them (`repartition`, Task 9b; `LevelSetSkinBody.last_settle` keeps each re-partition).
+    none of the volume's metal), lifted out (`stepend.StepEnd._move_phi`). `area_repartitioned_share` the layer's volume
+    passed between columns at the step end, summed over its re-partitions, over the layer's volume after it (an area's
+    share until plan 03b Task 6, when the re-partition moved to the division's volumes; the name is kept for the
+    history), and `stretch_min`, `stretch_max` the least and largest stretch of an old column in them (`repartition`,
+    Task 9b; `LevelSetSkinBody.last_settle` keeps each re-partition).
     `group_area_ratio_min`, `group_area_ratio_max` the least and largest area of a marker's group of patches of beta over
     its skin's base area, over the step's parts and the columns with a base (`patch_groups`), and
     `group_area_ratio_trimmed_max` the largest with the group's largest patch left out (a group formed again stops at
@@ -499,9 +506,9 @@ class LevelSetSkinBody(StepEnd):
         self.solver.setup(mesh, self.beta)
         self.solver.set_temperature(T0)
         self._fill_at(T0)
-        for _ in range(INITIAL_SETTLES):
+        for _ in range(INITIAL_SETTLES):                  # (the skins are filled afresh after: no re-partition)
             changes = mk.splits + mk.merges + mk.trapped
-            self._settle(tally)
+            self._settle(tally, repartition=False)
             if mk.splits + mk.merges + mk.trapped == changes:
                 break
         self._divide(tally)
@@ -635,11 +642,18 @@ class LevelSetSkinBody(StepEnd):
         return out
 
     # -- one pass of the skins -----------------------------------------------------------------------------------------
-    def _pass(self, dt, T_b, ctx, trial):
-        """The skins over one part dt [s] with the base held at T_b [K] (n,) (NaN: an insulated base): per heat
-        sub-step, the conduction, the flow sub-steps with the release, the feed removal and the regrid. A trial pass
-        returns its base law (a, b); a real pass its books (_Pass)."""
+    def _sheet(self):
+        """The part's sheet: the skins on the division's shared boundaries, depth-resolved, in the skins' rows
+        (`runoff.Sheet.from_division`; the division is of phi and the markers as the part finds them)."""
+        return Sheet.from_division(self.division, self.markers, self.skins)
+
+    def _pass(self, dt, T_b, ctx, trial, sheet):
+        """The skins over one part dt [s] with the base held at T_b [K] (n,) (NaN: an insulated base), on the part's
+        `sheet` (`_sheet`): per heat sub-step, the conduction with the columns conducting sideways across its
+        boundaries (`Sheet.side_faces`), the flow sub-steps across them with the release, the feed removal and the
+        regrid. A trial pass returns its base law (a, b); a real pass its books (_Pass)."""
         sk, s = self.skins, self.settings
+        side = sheet.side_faces()
         n = sk.n
         N = max(int(math.ceil(dt / s.substep - 1e-9)), 1)
         h = dt / N
@@ -649,12 +663,12 @@ class LevelSetSkinBody(StepEnd):
         fbook = FlowBook.zero(n)
         release = ctx["plan"].release if ctx["plan"] is not None else None
         for _ in range(N):
-            hb = sk.conduct(h, ctx["q"], self.T_ambient, self.emissivity, T_b, trial=trial)
+            hb = sk.conduct(h, ctx["q"], self.T_ambient, self.emissivity, T_b, trial=trial, side=side)
             E_top += hb.E_top
             E_rad += hb.E_rad
             E_base += hb.E_base
             if ctx["forcing"] is not None:
-                fbook.add(flow_substeps(sk, self.markers, ctx["forcing"], h, release=release))
+                fbook.add(flow_substeps(sk, sheet, ctx["forcing"], h, release=release))
             if self.remove == "feed":
                 mass, H = sk.remove_feed()
                 removed += mass
@@ -707,6 +721,7 @@ class LevelSetSkinBody(StepEnd):
             largest = S.max(axis=1).toarray().ravel() * A_group            # each group's largest patch [m2]
             tally.group_trimmed = max(tally.group_trimmed, float(((A_group - largest)[ok] / A_b[ok]).max()))
         saved = self._save(ctx)
+        sheet = self._sheet()
         try:
             T_b0 = np.where(has, S @ solver.patch_T(), np.nan)
             A_p = solver.P.area
@@ -717,14 +732,14 @@ class LevelSetSkinBody(StepEnd):
             T_lin = T_b0
             omega, r_prev = DAMPED_OMEGA0, None
             for attempt in range(DAMPED_MAX_PASSES):
-                a, b = self._pass(dt, T_lin, ctx, trial=True)
+                a, b = self._pass(dt, T_lin, ctx, True, sheet)
                 a, b = np.where(has, a, 0.0), np.where(has, b, 0.0)          # a column with no base gives no law
                 self._restore(saved, ctx, solver=False)
                 q0 = (S.T @ a) / A_p + q_pend
                 q1 = (S.T @ b) / A_p
                 Q = solver.step(dt, q0, q1)
                 T_b1 = np.where(has, S @ solver.patch_T(), np.nan)
-                book = self._pass(dt, T_b1, ctx, trial=False)
+                book = self._pass(dt, T_b1, ctx, False, sheet)
                 mismatch = book.E_base - np.where(has, (a + b * np.nan_to_num(T_b1)) * dt, 0.0)
                 scale = np.abs(book.E_top) + np.abs(book.E_base)
                 total = float(np.abs(mismatch).sum() / max(scale.sum(), 1e-300))
@@ -815,7 +830,8 @@ class LevelSetSkinBody(StepEnd):
             fit = loads_mod.fit_nose(mk, centroid, self.v_hat, "current", fallback=self._radius(centroid))
             ang_p = nose.load_angles(np.arccos(np.clip(P_phi.normal @ self.v_hat, -1.0, 1.0)), ~lee_p)
             q, flow = loads_mod.by_patches(self.loads, state, mk, P_phi,
-                                           np.nan_to_num(T_top, nan=float(np.nanmean(T_top))), ang_p, fit, self.v_hat)
+                                           np.nan_to_num(T_top, nan=float(np.nanmean(T_top))), ang_p, fit, self.v_hat,
+                                           W=mk.owned_patches(self.mesh, self.phi, P_phi))
             ctx["q"][mk.skin_index] = q
             g = flow.deceleration * self.v_hat if decel_vec is None else np.asarray(decel_vec, float)
             ctx["forcing"] = Forcing.from_surface_flow(flow, g, self.v_hat, mat.liquid.sigma, mk.kappa.sum(axis=1))
@@ -824,7 +840,7 @@ class LevelSetSkinBody(StepEnd):
                 w_n = float(np.linalg.norm(g)) * np.maximum(np.cos(ang), 0.0)
                 ctx["plan"] = spray_plan(sk, mk, flow, state, self.spray_model, windward, w_n, dt,
                                          self._radius(centroid), fit.used, slurry=self.slurry_spray, theta=ang,
-                                         centre=centroid, v_hat=self.v_hat)
+                                         centre=centroid, v_hat=self.v_hat, division=self.division)
         elif decel_vec is not None:
             still = _StillGas(np.zeros(mk.n), np.zeros(mk.n))
             ctx["forcing"] = Forcing.from_surface_flow(still, np.asarray(decel_vec, float), self.v_hat,
@@ -867,7 +883,7 @@ class LevelSetSkinBody(StepEnd):
         self.momentum_to_volume += tally.to_volume
         reps = self.last_settle
         passed = math.fsum(float(r.transfer.sum() - r.transfer.diagonal().sum()) for r in reps)
-        covered = float(reps[-1].area.sum()) if reps else 0.0
+        covered = float(reps[-1].volume.sum()) if reps else 0.0
         summary = self._summary(state, ctx["plan"])
 
         end = self.books()

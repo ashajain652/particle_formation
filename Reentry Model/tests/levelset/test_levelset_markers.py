@@ -1,17 +1,18 @@
-"""Tests of the level set's markers (design sections 9.1, 9.2 and 9.6, stage 3 Task 5): markers on phi carrying one skin
-each, snapped to the zero contour, tessellated by a Voronoi construction in each marker's tangent plane (Ruling 2),
-split, merged by the hand-over rule and trapped, with the skins' books exact."""
+"""Tests of the level set's markers (design sections 9.1, 9.2, 9.6 and 21.5, stage 3 Task 5): markers on phi carrying one
+skin each, snapped to the zero contour, given the area of phi each owns (`Markers.tessellate`: ownership with the
+same-side and same-piece rules; plan 03b Task 6 retired the tangent-plane Voronoi faces), split, merged by the hand-over
+rule, trapped and released, with the skins' books exact."""
 import numpy as np
 import pytest
 
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import patches
-from reentry_model.levelset.levelset import redistance
+from reentry_model.levelset.levelset import pieces, redistance
 from reentry_model.levelset import markers as markers_mod
 from reentry_model.levelset.markers import Markers
 from reentry_model.levelset.skin import Skins, SkinSettings
 
-from cases import DESIGN_FINE, DESIGN_SPACING, CAPPED_SHARE, OWNERSHIP_FACTOR, nearest_ratio, refined, seeded
+from cases import DESIGN_FINE, DESIGN_SPACING, box_sdf, refined, seeded
 from materials import ConstMaterial, LinearMeltMaterial
 
 R = 25e-3                  # m, the sphere
@@ -71,29 +72,58 @@ def test_markers_are_created_one_per_patch_on_the_zero_contour():
 
 
 def test_areas_sum_to_the_surface_area():
+    """Every marker on the sphere owns a part of phi, the areas sum to phi's, the ownership `tessellate` returns holds
+    them as its rows, and each marker's longest direction (`axis`, which a split follows) is a unit vector in its tangent
+    plane. (Plan 03b Task 6: the faces, their closure and the cap went with the tangent-plane cells; the division's
+    boundaries replace them, tested in test_levelset_division.py.)"""
     mesh = _mesh()
     phi = _sphere(mesh)
     P = patches(mesh, phi)
     mk = Markers.create(mesh, phi, None)
-    faces = mk.tessellate(mesh, phi)
+    W = mk.tessellate(mesh, phi)
     assert mk.area.sum() == pytest.approx(P.area.sum(), rel=1e-12)
     assert np.all(mk.area > 0.0)
-    i, j, length, normal = faces
-    assert np.all(i < j) and np.all(length > 0.0)
-    assert np.allclose(np.linalg.norm(normal, axis=1), 1.0, rtol=1e-12)
-    # a face's normal lies in the surface and points from i toward j
-    assert np.all(np.einsum("ij,ij->i", normal, mk.x[j] - mk.x[i]) > 0.0)
-    assert np.abs(np.einsum("ij,ij->i", normal, mk.normal[i] + mk.normal[j])).max() < 0.2
-    # every marker is a neighbour of some other, and the cap binds almost nowhere on a closed surface
-    assert len(np.setdiff1d(np.arange(mk.n), np.concatenate([i, j]))) == 0
-    assert mk.capped.mean() < 0.02
-    # each cell closes: the outward face vectors of an uncapped marker nearly cancel
-    vec = np.zeros((mk.n, 3))
-    np.add.at(vec, i, length[:, None] * normal)
-    np.add.at(vec, j, -length[:, None] * normal)
-    per = np.bincount(i, length, mk.n) + np.bincount(j, length, mk.n)
-    ok = ~mk.capped
-    assert np.median(np.linalg.norm(vec[ok], axis=1) / per[ok]) < 0.05
+    assert W.shape == (mk.n, len(P.area))
+    np.testing.assert_allclose(np.asarray(W.sum(axis=1)).ravel(), mk.area, rtol=1e-14, atol=0.0)
+    np.testing.assert_allclose(np.linalg.norm(mk.axis, axis=1), 1.0, rtol=1e-12)
+    assert np.abs(np.einsum("ij,ij->i", mk.axis, mk.normal)).max() < 1e-12
+    for gone in ("faces", "cell_area", "capped"):
+        assert not hasattr(mk, gone)
+
+
+CLOSE_GAP = 0.7e-3         # m: the gas between the two cubes of the same-piece test (test_levelset_division's pair)
+
+
+def test_a_marker_owns_area_only_on_its_own_piece():
+    """Plan 03b Task 6 (the controller's ruling T1-i carried to the markers' areas): two 6 mm cubes 0.7 mm apart across
+    gas, markers seeded on both as the body seeds them. Facing faces lie side by side across the gap, so the nearest
+    marker to a point of one cube's face may stand on the other (the plain ownership crosses the gap); the markers'
+    areas (`tessellate`) do not: the areas of each cube's markers sum to that cube's part of phi to round-off, and every
+    piece of phi a marker owns lies on its own cube."""
+    side = np.full(3, 6e-3)
+    off = 0.13e-3
+    a_lo = np.array([off - 6e-3 - 0.5 * CLOSE_GAP, off - 3e-3, off - 3e-3])
+    b_lo = np.array([off + 0.5 * CLOSE_GAP, off - 3e-3, off - 3e-3])
+    fa, fb = box_sdf(a_lo, a_lo + side), box_sdf(b_lo, b_lo + side)
+    sdf = lambda p: np.minimum(fa(p), fb(p))
+    base = BoxBase.around((-9.8e-3, -5.8e-3, -5.8e-3), (9.8e-3, 5.8e-3, 5.8e-3), 2.8e-3)
+    mesh = refined(base, sdf, 0.35e-3)
+    phi = sdf(mesh.points)
+    mk = seeded(mesh, phi, DESIGN_SPACING, base.lo)
+    P = patches(mesh, phi)
+    on_b = mk.x[:, 0] >= off
+    tri_b = P.centroid[:, 0] >= off
+    plain = markers_mod.owned(mk.x, P, markers_mod.OWN_SHARE * DESIGN_SPACING).tocoo()
+    assert np.any(on_b[plain.row] != tri_b[plain.col])                  # the nearest marker alone crosses the gap
+    W = mk.tessellate(mesh, phi).tocoo()
+    label, n_pieces = pieces(mesh, phi)
+    print("two cubes {:.1f} mm apart: {} pieces, {} markers; areas {:.3e} and {:.3e} m2 against their cubes' {:.3e} and "
+          "{:.3e}".format(CLOSE_GAP * 1e3, n_pieces, mk.n, mk.area[~on_b].sum(), mk.area[on_b].sum(),
+                          P.area[~tri_b].sum(), P.area[tri_b].sum()))
+    assert n_pieces == 2
+    assert not np.any(on_b[W.row] != tri_b[W.col])
+    assert mk.area[on_b].sum() == pytest.approx(P.area[tri_b].sum(), rel=1e-12)
+    assert mk.area[~on_b].sum() == pytest.approx(P.area[~tri_b].sum(), rel=1e-12)
 
 
 def test_rigid_motion_leaves_skins_unchanged():
@@ -251,6 +281,41 @@ def test_ownership_with_no_normals_is_unchanged():
         for name in ("indptr", "indices", "data"):
             assert np.array_equal(getattr(W, name), getattr(old, name))
     assert len(i) > mk.n and np.all(i < j) and np.all(length > 0.0)
+
+
+TIE_OFF = 0.13e-3          # m: the flat face of the tie test off the mesh's node planes (the stage 3 box's offset)
+
+
+def test_a_boundary_along_a_mesh_edge_is_counted_once():
+    """Plan 03b Task 6: markers a and b mirror-symmetric about a plane of the mesh's nodes (x = -1 and +1 mm about x = 0),
+    so that the plane halfway between them runs along the edges of a flat face's triangles and the corners on it are
+    exactly as near one as the other, and a third, c, on that plane 2 mm along it (z = 2 mm), so that the triangles
+    beside the edge near the three's meeting point are divided among them. On the face 12 mm across the boundaries are
+    the plane's: a's with b from z = -6 mm to the meeting point at z = 0.75 mm, 6.75 mm, and a's and b's with c, each
+    3 sqrt(5) mm to the face's edge; the division of the triangles gives each to 1e-12, with and without the same-side
+    rule (before, an edge counted in both triangles beside it or in neither, by the candidates' order and the
+    nearest-marker query's choice at its corners: on a 10 mm sphere centred on the mesh's planes one column's boundary
+    fluxes missed closing by 22 %); and the areas are the ones asking for no boundaries gives, bit for bit."""
+    base = BoxBase((-6e-3, -2.5e-3, -6e-3), 0.5e-3, (24, 6, 24))
+    mesh = build(base)
+    phi = mesh.points[:, 1] - TIE_OFF
+    P = patches(mesh, phi)
+    size = markers_mod.OWN_SHARE * DESIGN_SPACING
+    x = np.array([[-1e-3, TIE_OFF, 0.0], [1e-3, TIE_OFF, 0.0], [0.0, TIE_OFF, 2e-3]])
+    nrm = np.tile([0.0, 1.0, 0.0], (3, 1))
+    assert np.any(P.tris[:, :, 0] == 0.0)                                     # corners on the halfway plane
+    want = {(0, 1): 6.75e-3, (0, 2): 3.0 * np.sqrt(5.0) * 1e-3, (1, 2): 3.0 * np.sqrt(5.0) * 1e-3}
+    for kw in ({}, dict(normals=nrm, tri_normal=P.normal[P.tri_patch])):
+        W0 = markers_mod.ownership(x, P.tris, P.tri_patch, len(P.area), size, **kw)
+        W, (i, j, length) = markers_mod.ownership(x, P.tris, P.tri_patch, len(P.area), size, boundaries=True, **kw)
+        got = {(int(a), int(b)): float(v) for a, b, v in zip(i, j, length)}
+        print("three markers{}: boundaries {} mm".format(" (same side)" if kw else "",
+                                                       {k: round(v * 1e3, 9) for k, v in got.items()}))
+        assert set(got) == set(want)
+        for k, v in want.items():
+            assert got[k] == pytest.approx(v, rel=1e-12), k
+        for name in ("indptr", "indices", "data"):
+            assert np.array_equal(getattr(W, name), getattr(W0, name))
 
 
 def test_a_turned_sphere_s_markers_keep_their_areas_at_the_body_s_spacing():
@@ -483,145 +548,6 @@ def test_snap_converges_where_phi_is_far_from_a_distance():
     assert abs(mk.x[0, 2] - 0.3e-3) <= 1e-15 and np.allclose(mk.x[0, :2], x0[0, :2], atol=1e-15)
 
 
-# -- the neighbours on meshes whose patches are much smaller than the spacing (Task 9b) -------------------------------
-def test_the_tessellation_keeps_its_neighbours_on_a_sphere_at_design_size_cells():
-    """Task 9b (the ruling on the neighbour test): a 10 mm sphere on the body's design cells (0.7 mm near the surface)
-    with markers seeded as the body seeds them, one per 2 mm voxel. The patches are pieces of cut cells, about a sixth of
-    the spacing across; the neighbour test bounds the path along the patch graph, not its hops, so the true neighbours
-    are found: under 1 % of the cells are bounded by the cap, and every area is within a factor of 1.5 of the area
-    nearest the marker. (Two hops of the patch graph, the rule before, capped most cells on the test cube and left areas
-    0.38 to 2.67 times their nearest-marker areas.)"""
-    R = 10e-3
-    base = BoxBase.around((-R - 5.6e-3,) * 3, (R + 5.6e-3,) * 3, 2.8e-3)
-    mesh = refined(base, lambda x: np.linalg.norm(x, axis=1) - R, DESIGN_FINE)
-    phi = np.linalg.norm(mesh.points, axis=1) - R
-    mk = seeded(mesh, phi, DESIGN_SPACING, base.lo)
-    mk.tessellate(mesh, phi)
-    r = nearest_ratio(mk, mesh, phi)
-    print("design-size sphere: {} markers, {} capped; areas {:.3f} to {:.3f} times the nearest-marker areas".format(
-        mk.n, int(mk.capped.sum()), r.min(), r.max()))
-    assert mk.capped.mean() < CAPPED_SHARE
-    assert r.min() >= 1.0 / OWNERSHIP_FACTOR and r.max() <= OWNERSHIP_FACTOR
-
-
-def slot_body():
-    """A block 7 x 7 x 5 mm with a slot 1.5 mm wide cut 5 mm deep into it from its +y face through its whole height, on
-    0.25 mm cells near the surface; markers seeded at a 1 mm spacing (a reach of 3 mm, wider than the slot)."""
-    base = BoxBase.around((-5e-3,) * 3, (5e-3,) * 3, 1e-3)
-
-    def level(x):
-        block = np.max(np.abs(x) - np.array([3.5e-3, 3.5e-3, 2.5e-3]), axis=1)
-        cut = np.maximum(np.abs(x[:, 0]) - 0.75e-3, -1.5e-3 - x[:, 1])          # negative inside the slot
-        return np.maximum(block, -cut)
-    mesh = refined(base, level, 0.25e-3)
-    phi = redistance(mesh, level(mesh.points))
-    return mesh, phi, seeded(mesh, phi, 1e-3, base.lo)
-
-
-SLOT_FLOOR = -1.5e-3       # m: the slot's floor (y); its walls rise from it to the block's +y face at 3.5 mm
-
-
-def test_two_sheets_across_a_thin_gap_are_not_neighbours():
-    """Task 9b (fix round 1): the slot's two walls face each other 1.5 mm apart, half the 3 mm reach, and meet only round
-    its floor, so that low on the walls the path along the surface between them is within the path bound. Over the walls'
-    whole height no marker on one wall is a neighbour of one on the other (their normals oppose and each lies in front
-    of the other), though dozens of such pairs lie within the reach; every wall marker keeps a neighbour on its own wall;
-    and the wall markers more than 1 mm above the floor have areas within a factor of 1.5 of the area nearest them. The
-    lower ones, by the concave corner at the floor, are reported and not bounded. (With the path bound alone, 23 pairs
-    crossed the gap, with wall markers 0.42 to 2.67 mm above the floor, and cut the lowest ones' areas to 0.137 of the
-    nearest-marker area.)"""
-    from reentry_model.levelset.markers import NEIGHBOUR_REACH
-    mesh, phi, mk = slot_body()
-    faces = mk.tessellate(mesh, phi)
-    x, n = mk.x, mk.normal
-    wa = (np.abs(x[:, 0] + 0.75e-3) < 0.1e-3) & (n[:, 0] > 0.9)
-    wb = (np.abs(x[:, 0] - 0.75e-3) < 0.1e-3) & (n[:, 0] < -0.9)
-    across = (wa[faces.i] & wb[faces.j]) | (wb[faces.i] & wa[faces.j])
-    within = (np.linalg.norm(x[wa][:, None] - x[wb][None], axis=2) < NEIGHBOUR_REACH * mk.spacing).sum()
-    own = np.zeros(mk.n, bool)
-    for side in (wa, wb):
-        same = side[faces.i] & side[faces.j]
-        own[faces.i[same]] = own[faces.j[same]] = True
-    r = nearest_ratio(mk, mesh, phi)
-    height = x[:, 1] - SLOT_FLOOR
-    wall = wa | wb
-    high, low = wall & (height > 1e-3), wall & (height <= 1e-3)
-    print("slot: walls of {} and {} markers {:.2f} to {:.2f} mm above the floor, {} pairs across within the reach, {} of "
-          "them neighbours; areas over nearest-marker areas {:.3f} to {:.3f} more than 1 mm above the floor, {:.3f} to "
-          "{:.3f} by the floor's corner ({} markers)".format(
-              int(wa.sum()), int(wb.sum()), height[wall].min() * 1e3, height[wall].max() * 1e3, int(within),
-              int(across.sum()), r[high].min(), r[high].max(), r[low].min(), r[low].max(), int(low.sum())))
-    assert wa.sum() >= 10 and wb.sum() >= 10 and within >= 30 and height[wall].min() < 0.5e-3
-    assert not across.any()
-    assert own[wall].all()
-    assert r[high].min() >= 1.0 / OWNERSHIP_FACTOR and r[high].max() <= OWNERSHIP_FACTOR
-
-
-def test_a_concave_right_angle_corner_keeps_its_neighbours():
-    """Task 9b (fix round 1): a step, a floor (normal +z) meeting a wall (normal +x) at a concave right angle, markers
-    1 mm apart. Pairs across the corner lie each in front of the other, as the slot's walls do, but their normals are at
-    about a right angle (measured 0.34 to 0.47 for the dot product: the recovered normals blend within a cell of the
-    corner), far above OPPOSED_NORMALS (-0.5): the neighbour test keeps them, faces join the floor's and the wall's
-    markers by the corner, and none of their cells is capped."""
-    from reentry_model.levelset.markers import OPPOSED_NORMALS
-    base = BoxBase.around((-4e-3, -3e-3, -3e-3), (4e-3, 3e-3, 4e-3), 1e-3)
-
-    def level(x):
-        floor = np.maximum(x[:, 2], -x[:, 2] - 2.5e-3)                   # the slab 0 > z > -2.5 mm
-        step = np.maximum(np.maximum(x[:, 0], x[:, 2] - 3e-3), -x[:, 2] - 2.5e-3)   # and the block x < 0, z < 3 mm
-        box = np.maximum(np.abs(x[:, 0]) - 3.5e-3, np.abs(x[:, 1]) - 2.5e-3)
-        return np.maximum(np.minimum(floor, step), box)
-    mesh = refined(base, lambda x: level(x + 0.13e-3), 0.25e-3)
-    phi = redistance(mesh, level(mesh.points + 0.13e-3))
-    mk = seeded(mesh, phi, 1e-3, base.lo)
-    faces = mk.tessellate(mesh, phi)
-    x, n = mk.x + 0.13e-3, mk.normal
-    fl = (np.abs(x[:, 2]) < 0.1e-3) & (n[:, 2] > 0.9) & (x[:, 0] > 0.0) & (x[:, 0] < 1.2e-3)
-    wl = (np.abs(x[:, 0]) < 0.1e-3) & (n[:, 0] > 0.9) & (x[:, 2] > 0.0) & (x[:, 2] < 1.2e-3)
-    across = np.flatnonzero((fl[faces.i] & wl[faces.j]) | (wl[faces.i] & fl[faces.j]))
-    i, j = faces.i[across], faces.j[across]
-    d = mk.x[j] - mk.x[i]
-    dot = np.einsum("ij,ij->i", n[i], n[j])
-    front = (np.einsum("ij,ij->i", n[i], d) > 0.0) & (np.einsum("ij,ij->i", n[j], d) < 0.0)
-    print("concave corner: {} floor and {} wall markers by it, {} faces across it (normals' dot products {}), {} "
-          "capped".format(int(fl.sum()), int(wl.sum()), len(across), np.round(dot, 2), int(mk.capped[fl | wl].sum())))
-    assert fl.sum() >= 3 and wl.sum() >= 3 and len(across) >= 3
-    assert front.all() and dot.min() > OPPOSED_NORMALS + 0.5
-    assert not mk.capped[fl | wl].any()
-
-
-def test_patch_paths_match_an_unrestricted_dijkstra(monkeypatch):
-    """Task 9b (fix round 1, minor 2): `patch_paths`, Dijkstra from its sources in spatial chunks each on the patches
-    within the bound of its sources, gives every pair's path along the patch graph exactly as Dijkstra over the whole
-    graph does, and np.inf beyond the bound: on a 10 mm sphere on 0.7 mm cells, 2000 random pairs of patches up to the
-    sphere's diameter apart, a 6 mm bound, and chunks of 7 sources (so that most sources share a chunk with others)."""
-    from scipy.sparse import coo_matrix
-    from scipy.sparse.csgraph import dijkstra
-    from reentry_model.levelset import markers as M
-    from reentry_model.levelset.thin import patch_adjacency
-    R = 10e-3
-    base = BoxBase.around((-R - 5.6e-3,) * 3, (R + 5.6e-3,) * 3, 2.8e-3)
-    mesh = refined(base, lambda x: np.linalg.norm(x, axis=1) - R, DESIGN_FINE)
-    phi = np.linalg.norm(mesh.points, axis=1) - R
-    P = patches(mesh, phi)
-    rng = np.random.default_rng(12)
-    a, b = rng.integers(0, len(P.cell), 2000), rng.integers(0, len(P.cell), 2000)
-    limit = 6e-3
-    monkeypatch.setattr(M, "PATH_CHUNK", 7)
-    got = M.patch_paths(mesh, P, a, b, limit)
-    A = patch_adjacency(mesh, P).tocoo()
-    w = np.maximum(np.linalg.norm(P.centroid[A.row] - P.centroid[A.col], axis=1), 1e-300)
-    src = np.unique(a)
-    D = dijkstra(coo_matrix((w, (A.row, A.col)), shape=A.shape).tocsr(), indices=src, limit=limit)
-    want = D[np.searchsorted(src, a), b]
-    within = np.isfinite(want)
-    print("patch paths: {} pairs, {} within the bound, largest difference {:.1e} m".format(
-        len(a), int(within.sum()), np.abs(got[within] - want[within]).max()))
-    assert 100 < within.sum() < len(a)
-    assert np.array_equal(np.isfinite(got), within)
-    np.testing.assert_allclose(got[within], want[within], rtol=1e-12, atol=0.0)
-
-
 def test_markers_pickled_before_task_9b_load_with_their_positions_as_the_last_tessellation():
     """Task 9b (fix round 1): markers pickled before `x_tess` and `normal_tess` existed (a state saved between steps,
     when they equal the positions and normals) load with them filled from `x` and `normal`; markers that have them keep
@@ -638,7 +564,37 @@ def test_markers_pickled_before_task_9b_load_with_their_positions_as_the_last_te
     mk.x_tess, mk.normal_tess = mk.x + 1e-6, -mk.normal
     new = pickle.loads(pickle.dumps(mk))
     assert np.array_equal(new.x_tess, mk.x + 1e-6) and np.array_equal(new.normal_tess, -mk.normal)
-    # markers pickled with the retired modes (stage 3 Task 10 to plan 03b Task 5) load without them
+    # markers pickled with the retired modes (stage 3 Task 10 to plan 03b Task 5) load without them, and so do markers
+    # pickled with the retired tangent-plane faces, cells and cap flags (to plan 03b Task 6)
     mk.top, mk.hold = np.zeros(mk.n, bool), np.zeros(mk.n, np.int64)
+    mk.faces, mk.cell_area, mk.capped = (np.zeros(0), np.zeros(0), np.zeros(0), np.zeros((0, 3))), mk.area.copy(), \
+        np.zeros(mk.n, bool)
     retired = pickle.loads(pickle.dumps(mk))
-    assert not hasattr(retired, "top") and not hasattr(retired, "hold")
+    for gone in ("top", "hold", "faces", "cell_area", "capped"):
+        assert not hasattr(retired, gone)
+
+
+def test_a_released_marker_gives_its_skin_to_the_nearest_marker_on_its_own_side():
+    """Plan 03b Task 6 (optional, the review's note on `Markers.release`): a released marker's keeper is the nearest
+    marker that may own its part of phi by the same-side rule (normals not opposed, `markers.OPPOSED_NORMALS`), as
+    ownership elsewhere chooses. Two rows of markers 1 mm apart facing each other across 0.4 mm of gas (a slot's walls,
+    normals +z and -z): a marker of the lower row released gives its skin to its own row's nearest marker, 1 mm away,
+    not to the upper row's, 0.4 mm away; the books are exact."""
+    mat = LinearMeltMaterial()
+    n = 5
+    row = np.arange(n) * 1e-3
+    x = np.concatenate([np.column_stack([row, np.zeros(n), np.zeros(n)]),
+                        np.column_stack([row, np.zeros(n), np.full(n, 0.4e-3)])])
+    normal = np.concatenate([np.tile([0.0, 0.0, 1.0], (n, 1)), np.tile([0.0, 0.0, -1.0], (n, 1))])
+    sk = Skins(mat, np.full(2 * n, 1e-6), np.zeros((2 * n, 2)), SETTINGS)
+    sk.fill(mat.rho * 1e-6 * FLAT_DEPTH * (1.0 + np.arange(2 * n)), 600.0)
+    mk = Markers(x, normal, np.full(2 * n, 1e-6), np.zeros((2 * n, 2)), np.arange(2 * n), np.full(2 * n, -1), 1e-3,
+                 skins=sk)
+    M0 = sk.totals()[0].copy()
+    _, keeper, (mass, _, _) = mk.release(np.array([2]))
+    survivors = np.r_[np.arange(2), np.arange(3, 2 * n)]
+    print("released marker 2: its keeper is marker {} at {} mm".format(survivors[keeper[0]],
+                                                                         np.round(x[survivors[keeper[0]]] * 1e3, 2)))
+    assert survivors[keeper[0]] in (1, 3)                              # its own row's neighbour, not marker 7 above it
+    assert mass[0] == pytest.approx(M0[2], rel=1e-14)
+    assert sk.m.sum() == pytest.approx(M0.sum(), rel=1e-14)

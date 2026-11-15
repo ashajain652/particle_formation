@@ -1,7 +1,7 @@
-"""Tests of the step end's re-partition (level-set stage 3 Task 9b, `reentry_model.levelset.repartition`): the transfer's
-rows and columns to round-off with no negative entry and a diagonal transfer when nothing moves, and the column fit on
-its own, a column of zero area included. The skins following it are tested with the body's step end
-(test_levelset_skinbody.py)."""
+"""Tests of the step end's re-partition (level-set stage 3 Task 9b, `reentry_model.levelset.repartition`; plan 03b Task 6:
+across the division of the layer, by the columns' volumes): the transfer's rows and columns to round-off with no negative
+entry and a diagonal transfer when nothing moves, and the column fit on its own, a column of zero volume included. The
+skins following it are tested with the body's step end (test_levelset_skinbody.py)."""
 import numpy as np
 import pytest
 from scipy.sparse import csr_matrix
@@ -9,60 +9,64 @@ from scipy.spatial.transform import Rotation
 
 from reentry_model.levelset import repartition
 from reentry_model.levelset.boxmesh import BoxBase
-from reentry_model.levelset.markers import Faces
+from reentry_model.levelset.division import divide
 from reentry_model.levelset.repartition import _fit_columns, surface_samples, transfer_matrix
+from reentry_model.levelset.skin import SkinSettings
 
 from cases import DESIGN_FINE, DESIGN_SPACING, refined, seeded
 
-ROUND_OFF = 1e-14      # of an area: the transfer's rows and columns; a column held to n eps of the mean area at most,
+ROUND_OFF = 1e-14      # of a volume: the transfer's rows and columns; a column held to n eps of the mean volume at most,
                        # n the markers (the piece's summed rounding, which no flow moves: `repartition._fit_columns`)
+H = SkinSettings().depth   # m: the skin depth the layer is divided to
 
 
 def _sphere(R=10e-3):
-    """Markers seeded one per 2 mm voxel on a 10 mm sphere on 0.7 mm cells, tessellated."""
+    """Markers seeded one per 2 mm voxel on a 10 mm sphere on 0.7 mm cells, tessellated, and the layer divided among
+    them at the skin depth."""
     base = BoxBase.around((-R - 5.6e-3,) * 3, (R + 5.6e-3,) * 3, 2.8e-3)
     mesh = refined(base, lambda x: np.linalg.norm(x, axis=1) - R, DESIGN_FINE)
     phi = np.linalg.norm(mesh.points, axis=1) - R
     mk = seeded(mesh, phi, DESIGN_SPACING, base.lo)
     mk.tessellate(mesh, phi)
-    return mesh, phi, mk
+    return mesh, phi, mk, divide(mesh, phi, H, mk.x, mk.normal)
 
 
-def test_a_transfer_with_nothing_moved_is_the_old_areas_on_its_diagonal():
-    """The same markers, areas and surface before and after: every sample keeps its owner, the stretch is one exactly
-    and the transfer is diagonal, each entry the marker's area."""
-    mesh, phi, mk = _sphere()
+def test_a_transfer_with_nothing_moved_is_the_old_volumes_on_its_diagonal():
+    """The same markers, division and surface before and after: every sample keeps its owner, the stretch is one exactly
+    and the transfer is diagonal, each entry the column's volume."""
+    mesh, phi, mk, d = _sphere()
     samples = surface_samples(mesh, phi, DESIGN_SPACING / 16.0)
-    T, stretch = transfer_matrix(mk.x, mk.normal, mk.area, samples, mk.x, mk.area, mk.faces, samples)
+    T, stretch = transfer_matrix(mk.x, mk.normal, d.volume, samples, mk.x, d.volume, d, samples)
     off = T - csr_matrix(np.diag(T.diagonal()))
     print("nothing moved: {} markers, off-diagonal entries {}, stretch {:.17f} to {:.17f}".format(
         mk.n, off.count_nonzero(), stretch.min(), stretch.max()))
     assert off.count_nonzero() == 0
-    np.testing.assert_allclose(T.diagonal(), mk.area, rtol=ROUND_OFF, atol=0.0)
+    np.testing.assert_allclose(T.diagonal(), d.volume, rtol=ROUND_OFF, atol=0.0)
     np.testing.assert_allclose(stretch, 1.0, rtol=ROUND_OFF, atol=0.0)
 
 
 def test_a_transfer_after_the_markers_turn_holds_its_rows_and_columns_to_round_off():
-    """The sphere's markers turned 0.3 rad about an axis through the centre, snapped and tessellated again on the same
-    surface: the transfer's rows sum to the old areas times the stretch to 1e-14, its columns to the new areas to the
-    piece's summed rounding (n eps of the mean area); no entry is negative; and the stretch, on an unchanged surface, is
-    one within the sampling's noise."""
-    mesh, phi, mk = _sphere()
+    """The sphere's markers turned 0.3 rad about an axis through the centre, snapped, tessellated and the layer divided
+    again on the same surface: the transfer's rows sum to the old columns' volumes times the stretch to 1e-14, its
+    columns to the new columns' volumes to the piece's summed rounding (n eps of the mean volume); no entry is negative;
+    and the stretch, on an unchanged surface, is one within the sampling's noise."""
+    mesh, phi, mk, d0 = _sphere()
     samples = surface_samples(mesh, phi, DESIGN_SPACING / 16.0)
-    x0, n0, A0 = mk.x.copy(), mk.normal.copy(), mk.area.copy()
+    x0, n0, V0 = mk.x.copy(), mk.normal.copy(), d0.volume.copy()
     rot = Rotation.from_rotvec([0.1, 0.2, 0.2]).as_matrix()
     mk.carry(lambda x: x @ rot.T - x, 1.0)
     mk.snap(mesh, phi)
     mk.tessellate(mesh, phi)
-    T, stretch = transfer_matrix(x0, n0, A0, samples, mk.x, mk.area, mk.faces, samples)
+    d1 = divide(mesh, phi, H, mk.x, mk.normal)
+    T, stretch = transfer_matrix(x0, n0, V0, samples, mk.x, d1.volume, d1, samples)
     rows, cols = np.asarray(T.sum(axis=1)).ravel(), np.asarray(T.sum(axis=0)).ravel()
     moved = (T.sum() - T.diagonal().sum()) / T.sum()
-    print("turned: {:.1%} of the area passed between markers; rows {:.1e}, columns {:.1e} off; stretch {:.4f} to "
-          "{:.4f}".format(moved, np.abs(rows / (A0 * stretch) - 1).max(), np.abs(cols / mk.area - 1).max(),
+    print("turned: {:.1%} of the volume passed between columns; rows {:.1e}, columns {:.1e} off; stretch {:.4f} to "
+          "{:.4f}".format(moved, np.abs(rows / (V0 * stretch) - 1).max(), np.abs(cols / d1.volume - 1).max(),
                           stretch.min(), stretch.max()))
     assert moved > 0.1
-    np.testing.assert_allclose(rows, A0 * stretch, rtol=ROUND_OFF, atol=0.0)
-    np.testing.assert_allclose(cols, mk.area, rtol=0.0, atol=mk.n * np.finfo(float).eps * mk.area.mean())
+    np.testing.assert_allclose(rows, V0 * stretch, rtol=ROUND_OFF, atol=0.0)
+    np.testing.assert_allclose(cols, d1.volume, rtol=0.0, atol=mk.n * np.finfo(float).eps * d1.volume.mean())
     assert T.data.min() >= 0.0
     assert stretch.sum() == pytest.approx(mk.n, rel=0.01) and np.abs(stretch - 1).max() < 0.1
 

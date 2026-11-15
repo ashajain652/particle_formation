@@ -18,7 +18,9 @@ The plan (`spray_plan`, once a macro step, at its start), per marker, in the mar
   `lubrication(tau, G, b, delta_m, mu_l, b_layer=b)`;
 - the droplet's cap depth: the skin's liquid depth `depth_above(T_liquidus)`, or with `slurry` its flowing depth; the
   Rayleigh-Taylor pool the liquid depth; the film mass the run of releasable cells' mass; the wave's extent the
-  contiguous region of markers with liquid on the markers' face graph (`Markers.faces`);
+  contiguous region of markers with liquid on the graph of the division's shared boundaries at phi (those with a length
+  at phi: `division.Division`'s i, j and length[:, 0]; plan 03b Task 6, the tangent-plane faces it read before are
+  retired);
 - with `slurry`, the exposed slurry's own mode per marker (`_slurry_modes`), a second `SprayModel` with the slurry's
   properties at the shear rate of its own sheared layer, found by fixed point.
 
@@ -245,18 +247,28 @@ class SprayPlan:
         return out
 
 
+def _region_edges(division):
+    """The wave's domain graph (module docstring): the division's shared boundaries with a length at phi, (E, 2) markers'
+    indices i < j; ValueError without a division."""
+    if division is None:
+        raise ValueError("the wave's domain graph is the division's boundaries at phi: give the division of the layer "
+                         "among the markers (division=...)")
+    at_phi = np.asarray(division.length, dtype=float)[:, 0] > 0.0
+    return np.column_stack([np.asarray(division.i)[at_phi], np.asarray(division.j)[at_phi]]).astype(np.int64)
+
+
 def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, nose_radius, slurry=False, theta=None,
-               centre=None, v_hat=None):
+               centre=None, v_hat=None, division=None):
     """Girin's spraying from each marker's skin for the macro step about to run (module docstring): a SprayPlan, per
     marker in the markers' order. `skins` the markers' skins (marker i's is row `markers.skin_index[i]`); `markers`
-    tessellated (its faces are the wave's domain graph); `flow` the shared SurfaceFlowResult per marker; `state` the
+    their markers; `division` the division of the layer among them (`division.Division`, its boundaries at phi the
+    wave's domain graph; needed); `flow` the shared SurfaceFlowResult per marker; `state` the
     aero state; `model` the shared SprayModel; `windward` bool (n,) and `w_n` [m/s2] (n,) the normal deceleration
     W cos(theta) (the loads' leeward test and angles); `dt` [s] the macro step; `radius` [m] the body radius of the
     quarter cap; `nose_radius` [m] the radius the slip band's integrated shear was taken at. `slurry` the exposed slurry's
     mode too (`--slurry-spray on`); `theta` [rad] (n,) the markers' angles to the flow (the slip band and the records; nan if not given); `centre` [m]
     and `v_hat` for the records' release angle."""
-    if markers.faces is None:
-        raise ValueError("the markers have no faces: tessellate them first")
+    edges = _region_edges(division)
     if model.slip_band and theta is None:
         raise ValueError("the slip band's depth reads the markers' angles: give theta with the model's slip band on")
     mat, liq = skins.material, model.liquid
@@ -275,7 +287,6 @@ def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, no
     delta_m = spray_mod.spray_layer(flow, liq, model.slip_band, theta, nose_radius)
     v_s = lubrication(flow.tau, flow.G, b, delta_m, liq.mu, b_layer=b)[0]
     area = skins.area[rows]
-    edges = np.column_stack([markers.faces.i, markers.faces.j]).astype(np.int64)
     extent = spray_mod.region_extent(edges, L > 0.0, area)
     run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
     m_f = (skins.m * run).sum(axis=1)[rows]

@@ -15,93 +15,51 @@ millimetre off moves a marker along a gradient up to 73 degrees off n, and on th
 as its P1 interpolant; the recovered gradient is the nodal (volume-weighted) average of the cells' gradients,
 interpolated, so the normal varies continuously along the surface.
 
-Tessellation (Ruling 2). Each marker's neighbours are the markers within NEIGHBOUR_REACH target spacings whose patches
-are joined by a path along phi's patch graph (cells sharing a node, each step the distance between the two patches'
-centroids; `patch_paths`) no longer than NEIGHBOUR_PATH reaches, less the pairs that face each other across gas: their
-normals' dot product below OPPOSED_NORMALS (more than 120 degrees apart) and each in front of the other (n_i . d > 0 and
-n_j . d < 0, d from i to j), as the two walls of a slot are. The path bound parts sheets that the surface joins only far
-round, whatever lies between them; the normals part facing sheets however near the surface joins them. Neither parts
-the two faces of a thin plate of metal (back to back, each behind the other) where the surface joins them within the
-bound, nor a wall from the rim of the wall facing it, where the rim's normal blends with the face beyond it (10 short
-faces in the slot below).
+The areas (stage 3 Task 11's fix round 1, C1, the controller's ruling; plan 03b Task 6): each marker's area is the area
+of phi it owns (`Markers.owned_patches`, `tessellate`), the part of phi nearer it than any other marker that may own it
+(`ownership`, exact by planes between the markers): a marker owns no part of phi whose normal opposes its own (the
+same-side rule, design section 21.5), nor any part of another piece of metal (the same-piece rule, the controller's
+ruling T1-i: two pieces are parted by gas; a marker's piece is the piece of the cell holding it,
+`division._marker_pieces`). This is the one partition of phi that the gas loads, the skins' top fluxes and the division
+of the layer beneath (`division.divide`, whose level at phi is this ownership) read, so a skin's heat is its flux over
+the area it stands for and the beam's total is exact; with the tangent-plane cells' areas the q6p box's markers took
+0.961 of a beam's projected heat at the start and 0.640 after its first melting step. A marker without a patch owns
+nothing (it is released at the step end). Each marker's longest direction (`axis`, which a split follows) is the
+principal direction, in its tangent plane, of the patches it owns about it, weighted by the area it owns of each.
 
-Task 9b. The rule before allowed at most two hops of the graph, but the patches are pieces of cut cells, on the body's
-meshes about a sixth of the 2 mm spacing across, so two hops reached about one spacing. On the 10 mm test cube 123 of its
-219 cells were capped and the areas were 0.38 to 2.67 times the area nearest each marker with nothing moving; at the
-step ends 64 to 95 per cent of the area changes the tessellation itself made sat on markers whose neighbours had crossed
-the hop limit. With the path, no cell is capped there and the areas are 0.68 to 1.10 times the nearest-marker areas (the
-least at the rounded edges and corners, where a tangent plane stands in poorly for the surface); on a 10 mm sphere on the
-design's 0.7 mm cells with markers at 2 mm, 0.98 to 1.02 and none capped. The bound is two reaches, not less, because
-the centroids' path zigzags across sliver patches: with one marker per patch on a 25 mm sphere at 2 mm cells it is 1.04
-times the straight distance at the median, 1.7 at the 95th percentile and 2.5 at the 99th, and at 1.5 reaches a rotation
-of those markers lost 306 far pairs and changed areas by 8 %; at two it loses none. The path bound alone (fix round 1)
-left 23 pairs of a slot's walls neighbours (the slot 1.5 mm wide, markers 1 mm apart, the walls joined round the floor
-within the bound up to 2.7 mm above it), and they cut the lowest wall markers' areas to 0.137 of the nearest-marker
-area; with the normals none is, and the least is 0.455, by the floor's concave corner. The threshold: walls facing each
-other within 60 degrees of parallel (a V narrower than 60 degrees, a slot) are across gas, and a tangent plane cannot
-stand for both; at a concave right angle the dot product is about zero (0.34 to 0.47 measured, the normals blending
-within a cell of the corner) and the pairs stay. In the slot the facing walls' pairs lie below -0.9 and the pairs of a
-wall with the facing rim between -0.9 and -0.5.
-
-The plan named 1.5 spacings for the reach; with one marker per patch at creation (the patches' areas spread over three
-decades) the true Voronoi cells reach past 0.75 spacings on most markers, so at 1.5 the cap bound 78 % of the cells on a
-25 mm sphere at 2 mm cells, a capped cell could not grow with the surface (a uniform stretch to 26 mm gave 6 % less than
-(26/25)^2) and a rotation changed areas by 73 % (7 % with the two hops). At 3.0 none is capped there (0.55 % at 0.7 mm
-cells near the surface, one marker per patch), no pair within the reach is lost to the path bound, and the rotation
-changes areas by 0.3 %.
-
-In each marker's tangent plane the neighbours' offsets, projected, bound its Voronoi
-cell (the half-planes y . d <= |d|^2 / 2), clipped from a CAP_SIDES-gon whose inscribed radius is half the reach (no
-neighbour beyond the reach could bound the cell inside it); a cell that the cap still bounds is flagged `capped`. Each
-edge is a face to the neighbour that made it. Faces are symmetrised: a pair's face has the mean of its two edge lengths
-(an edge present on one side only counts as zero on the other) and the unit normal (t_ij - t_ji)/|t_ij - t_ji|, t_ij the
-unit tangent-plane direction from i toward j in i's plane, so a face is shared by both markers with opposite normals.
-
-The areas (stage 3 Task 11's fix round 1, C1, the controller's ruling; it replaces Ruling 2's scaled cells): each
-marker's area is the area of phi it owns, the part of phi nearer it than any other marker (`ownership`, exact by planes
-between the markers). This is the one partition of phi that the gas loads and the skins' base groups read, so a skin's
-heat is its flux over the area it stands for and the beam's total is exact; with the tangent-plane cells' areas the q6p
-box's markers took 0.961 of a beam's projected heat at the start and 0.640 after its first melting step, and its face's
-central skins took the beam over cells 1.2 to 1.3 times the area beneath them. The tangent-plane cells now give only the
-faces (the runoff's exchange, the spray's regions, the re-partition's neighbours; their lengths
-scaled by the square root of the factor that brings the cells' areas to phi's; the cells' areas so scaled are kept as
-`cell_area`, for diagnosis), the `capped` flag and the cells' longest direction (`axis`, for splits). A marker without a
-patch owns nothing (it is released at the step end).
+Plan 03b Task 6 retired the tangent-plane Voronoi faces of Ruling 2 (each marker's neighbours within a reach, joined by
+a bounded path along phi's patch graph and not facing each other across gas, clipping a cell in its tangent plane):
+the runoff, the sideways heat, the spray's regions and the re-partition now cross the shared boundaries of the one
+division of the layer (`division.divide`), which the ownership above gives at every depth.
 
 Topology. `split` divides a marker above twice the target area into two half a target spacing apart along the longest
-direction of its Voronoi cell, each with the same profile and half the mass and area; `merge` joins markers closer than
-a third of the target spacing, their skins mixed by the hand-over rule (`Skins.combine`); `trapped_markers` finds the
-markers with no zero contour of phi within half a cell, and `release` removes markers, each giving its skin to the
-nearest marker that stays, by depth (`Skins.combine(..., by="depth")`; plan 03b, planning ruling 6: the metal stays in
-the layer, where the next fill settles it). Every change of the markers changes
-the skins' rows with them and is counted (`splits`, `merges`, `trapped`).
+direction of the part of phi it owns (`axis`), each with the same profile and half the mass and area; `merge` joins
+markers closer than a third of the target spacing, their skins mixed by the hand-over rule (`Skins.combine`);
+`trapped_markers` finds the markers with no zero contour of phi within half a cell, and `release` removes markers, each
+giving its skin to the nearest marker that stays and may own its part of phi (the same-side rule, and given the mesh and
+phi the same-piece rule; plan 03b Task 6), by depth (`Skins.combine(..., by="depth")`; plan 03b, planning ruling 6: the
+metal stays in the layer, where the next fill settles it). Every change of the markers changes the skins' rows with them
+and is counted (`splits`, `merges`, `trapped`).
 
-The re-partition of the skins' metal after a tessellation is `repartition`'s (Task 9b).
+The re-partition of the skins' metal after a tessellation is `repartition`'s (Task 9b), across the division's
+boundaries (plan 03b Task 6).
 
 Numbers here are numerical settings of the construction; no physics."""
-from collections import namedtuple
-
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
-from scipy.sparse.csgraph import dijkstra
 from scipy.spatial import cKDTree
 
 from .criteria import nodal_average, principal_curvatures
 from .cutcell import cell_gradients, patches as cut_patches
-from .levelset import point_triangle_distance
+from .levelset import pieces as level_pieces, point_triangle_distance
 from .skin import Skins
-from .thin import patch_adjacency
 from .transfer import locate
 
-NEIGHBOUR_REACH = 3.0      # target spacings: markers farther apart are never neighbours (plan: 1.5; see the docstring)
-NEIGHBOUR_PATH = 2.0       # the path along phi's patch graph between neighbours' patches at most this times the reach
-                           # (Task 9b; see the docstring)
-PATH_CHUNK = 64            # sources of one Dijkstra in `patch_paths` at most
-OPPOSED_NORMALS = -0.5     # two markers whose normals' dot product is below this, each in front of the other, face
-                           # each other across gas and are never neighbours (Task 9b, fix round 1; see the docstring);
-                           # and a marker whose normal's dot product with the surface's is below it never owns that
-                           # surface (`ownership`'s same-side rule, design section 21.5)
-CAP_SIDES = 16             # sides of the polygon a Voronoi cell is clipped from
+OPPOSED_NORMALS = -0.5     # a marker whose normal's dot product with the surface's is below this never owns that
+                           # surface (`ownership`'s same-side rule, design section 21.5; Task 9b's facing test of the
+                           # tangent-plane neighbours, fix round 1, chose it: walls facing each other within 60 degrees
+                           # of parallel, a slot, are across gas), and two columns whose normals' dot product is below it
+                           # meet face to face (`division.divide`, design 21.11)
 SNAP_PASSES = 2            # the snap applied once and iterated once (section 9.1)
 NEWTON_ROUNDS = 8          # cell-gradient Newton steps after them at most (`_cell_newton`; Task 9, fix round 4)
 NEWTON_REACH = 1.0e-6      # m: only markers this close to phi's zero contour take them (module docstring)
@@ -117,8 +75,9 @@ OWN_SHARE = 1.0 / 64.0     # of the target spacing: a piece of phi at most this 
 OWN_CANDIDATES = 4         # markers a piece of phi is divided among at most (`ownership`)
 ALLOWED_FIRST = 16         # markers searched first for the nearest that may own a point under the same-side rule
                            # (`_nearest`; four times as many again where too few of them may)
-
-Faces = namedtuple("Faces", "i j length normal")
+TIE_SLACK = 1e-12          # of two markers' squared distance apart: a point whose halfway function between them is
+                           # within this of zero is as near one as the other, to the rounding of the nearest-marker
+                           # query and of the halfway function (`ownership`'s whole triangles' segments; plan 03b Task 6)
 
 
 def owners(x, points):
@@ -209,14 +168,17 @@ def _divide(t, a, x, cand, live):
 
 def _dividing(t, x, cand, live, s):
     """The segments dividing the triangles `t` (q, 3, 3) among their first `live` (q,) candidate markers `cand` (q, m),
-    as `_divide` divides them: for each pair (u, w) of a triangle's candidates, the triangle's cut by the plane halfway
-    between them, kept where no other candidate is nearer (where u is nearer than each other v, the function `_halfway`
-    of (u, v), linear along the cut, is not positive). A segment is measured on `s` (q, 3, 3), triangles matching `t`
-    corner for corner, carried there by the affine map between the two (`s` = `t` measures it where it lies). The cut's
-    ends follow `_below`'s sides (negative on u's), so a cut along an edge of two triangles counts in one of them; where a
-    corner is exactly as near two markers, which of the triangles beside it is whole and which divided depends on the
-    nearest-marker query's choice, and such a cut may count in neither or both (of measure zero away from symmetric
-    set-ups). Returns (marker i, marker j, length [m]) of each piece, i < j."""
+    as `_divide` divides them: for each pair of a triangle's candidates, the triangle's cut by the plane halfway between
+    them, kept where no other candidate is nearer (where the pair's first is nearer than each other v, the function
+    `_halfway` of (first, v), linear along the cut, is not positive). A segment is measured on `s` (q, 3, 3), triangles
+    matching `t` corner for corner, carried there by the affine map between the two (`s` = `t` measures it where it
+    lies). Each pair is taken in the order of its markers' indices, whatever the candidates' order, and the cut's ends
+    follow `_below`'s sides (negative on the first's), so a cut along an edge of two triangles counts in one of them
+    (plan 03b Task 6: in the candidates' order, a bisector lying on a mesh edge -- two markers mirror-symmetric about a
+    plane of nodes -- counted in both; on a 10 mm sphere centred on the mesh's planes one boundary was twice its length
+    and its column's boundary fluxes missed closing by 22 % of its perimeter); where the triangle on the first's side is
+    left whole by the nearest-marker query's choice at such an edge's corners, `ownership` passes it here for its
+    segments alone. Returns (marker i, marker j, length [m]) of each piece, i < j."""
     out_i, out_j, out_l = [], [], []
     for L in np.unique(live).tolist():
         if L < 2:
@@ -226,7 +188,8 @@ def _dividing(t, x, cand, live, s):
         r = np.arange(len(sel))
         for u in range(L):
             for w in range(u + 1, L):
-                xu, xw = x[C[:, u]], x[C[:, w]]
+                first, second = np.minimum(C[:, u], C[:, w]), np.maximum(C[:, u], C[:, w])
+                xu, xw = x[first], x[second]                  # each pair in its markers' order (docstring)
                 f = _halfway(T, xu, xw)
                 neg = f < 0.0
                 count = neg.sum(axis=1)
@@ -258,8 +221,8 @@ def _dividing(t, x, cand, live, s):
                 q0, q1 = (np.einsum("ki,kid->kd", lam, S) for lam in ends)
                 length = np.linalg.norm(q1 - q0, axis=1) * np.clip(hi - lo, 0.0, 1.0)
                 keep = cut & (length > 0.0)
-                out_i.append(np.minimum(C[keep, u], C[keep, w]))
-                out_j.append(np.maximum(C[keep, u], C[keep, w]))
+                out_i.append(first[keep])
+                out_j.append(second[keep])
                 out_l.append(length[keep])
     if not out_i:
         return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), np.zeros(0)
@@ -299,8 +262,9 @@ def _nearest(tree, points, k, normals=None, point_normal=None):
 def ownership(x, tris, tri_patch, n_patch, size, normals=None, tri_normal=None, boundaries=False, measure=None):
     """The one partition of phi by the markers at `x` (n, 3) (stage 3 Task 11's fix round 1, C1): every point of phi
     belongs to its nearest marker, so that a marker owns the part of phi inside its Voronoi cell in space. Each marker's
-    area is the area it owns (`Markers.tessellate`), the gas loads give it the mean over what it owns
-    (`loads.by_patches`), and its skin's base group is the base beneath it (`skinbody.LevelSetSkinBody._beta_owners`).
+    area is the area it owns (`Markers.owned_patches`, with the same-side rule below and piece by piece), the gas loads
+    give it the mean over what it owns (`loads.by_patches`), and the division of the layer beneath divides each level
+    surface by it (`division.divide`, whose base level is the skins' base groups).
 
     Evaluated on the patches' triangles `tris` (Q, 3, 3) [m] (of patch `tri_patch` (Q,) of `n_patch`), exactly: a
     triangle whose three corners have one nearest marker lies wholly in that marker's (convex) cell and is its whole. For
@@ -319,8 +283,15 @@ def ownership(x, tris, tri_patch, n_patch, size, normals=None, tri_normal=None, 
     marker may own is owned by none. With `boundaries`, also the segments dividing the triangles (`_dividing`), measured
     on `measure` (Q, 3, 3), triangles matching `tris` corner for corner (by default `tris` themselves; the division of
     the layer measures on the level surface what it divides on phi, `division.divide`): returns (W, (i, j, length)),
-    each pair of markers i < j sharing a boundary once, with its segments' lengths summed [m]. Without normals and
-    boundaries the result is the one before these options, bit for bit."""
+    each pair of markers i < j sharing a boundary once, with its segments' lengths summed [m]. A boundary lying along an
+    edge of the triangles (two markers mirror-symmetric about a plane of the mesh's nodes) is counted in the triangle
+    beside it on the side of its marker of lower index (`_dividing`), whether or not the nearest-marker query's choice at
+    the edge's corners, which are as near one as the other (to TIE_SLACK), leaves that triangle whole: a whole triangle
+    with such a corner is divided between its owner and the other marker for its segments alone (plan 03b Task 6: on a 10 mm
+    sphere centred on the mesh's planes the choice lost half of one boundary's length, its column's boundary fluxes
+    missing closure by 13 % of its perimeter, and before `_dividing` took each pair in its markers' order another
+    boundary counted twice). Without normals and boundaries the result is the one before these options, bit for bit,
+    and asking for the boundaries leaves the areas as they are."""
     x = np.asarray(x, dtype=float).reshape(-1, 3)
     n = len(x)
     t = np.asarray(tris, dtype=float).reshape(-1, 3, 3)
@@ -336,17 +307,44 @@ def ownership(x, tris, tri_patch, n_patch, size, normals=None, tri_normal=None, 
     tn = None if normals is None else np.asarray(tri_normal, dtype=float).reshape(-1, 3)
     s = (t if measure is None else np.asarray(measure, dtype=float).reshape(-1, 3, 3)) if boundaries else None
     near = lambda points, k, tri: _nearest(tree, points, k, nn, None if tn is None else tn[tri])
-    _, o = near(t.reshape(-1, 3), 1, np.repeat(q, 3))
+
+    def owner(points, tri):
+        """Each point's nearest (allowed) marker and, with `boundaries`, the second nearest where the point is as near
+        it (their halfway function zero there to TIE_SLACK; n where none): the corners a whole triangle's segments need
+        (docstring)."""
+        first = near(points, 1, tri)[1][:, 0]                 # (the query as without boundaries: the same owners)
+        if not boundaries:
+            return first, None
+        _, k2 = near(points, min(2, n) if nn is None else 2, tri)
+        if k2.shape[1] < 2:
+            return first, np.full(len(first), n, dtype=np.int64)
+        other = np.where(k2[:, 0] == first, k2[:, 1], k2[:, 0])
+        has = (first < n) & (other < n)
+        f, gap = np.zeros(len(first)), np.zeros(len(first))
+        f[has] = _halfway(points[has][:, None, :], x[first[has]], x[other[has]])[:, 0]
+        gap[has] = np.einsum("ij,ij->i", x[other[has]] - x[first[has]], x[other[has]] - x[first[has]])
+        return first, np.where(has & (np.abs(f) <= TIE_SLACK * gap), other, n)
+
+    o, tie = owner(t.reshape(-1, 3), np.repeat(q, 3))
     o = o.reshape(-1, 3)
+    tie = None if tie is None else tie.reshape(-1, 3)
     if nn is not None:
         mine = o[:, 0] < n                                      # a triangle no marker may own stays unowned
         t, tp, o, a, q = t[mine], tp[mine], o[mine], a[mine], q[mine]
         s = None if s is None else s[mine]
+        tie = None if tie is None else tie[mine]
     rows, cols, vals = [], [], []
     pairs = []
     while len(t):
         same = (o[:, 0] == o[:, 1]) & (o[:, 0] == o[:, 2])
         rows.append(o[same, 0]), cols.append(tp[same]), vals.append(a[same])
+        if boundaries:                                          # a whole triangle with a tied corner: its segments
+            tied = np.flatnonzero(same & (tie < n).any(axis=1))
+            if len(tied):
+                partner = tie[tied][np.arange(len(tied)), np.argmax(tie[tied] < n, axis=1)]
+                cand = np.column_stack([o[tied, 0], partner])
+                pairs.append(_dividing(t[tied], x, cand, np.full(len(tied), 2), s[tied]))
+            tie = tie[~same]
         t, tp, o, a, q = t[~same], tp[~same], o[~same], a[~same], q[~same]
         s = None if s is None else s[~same]
         if not len(t):
@@ -368,16 +366,22 @@ def ownership(x, tris, tri_patch, n_patch, size, normals=None, tri_normal=None, 
                 pairs.append(_dividing(t[done], x, k[done, :m], divided, s[done]))
         t, tp, o, a, q = t[~done], tp[~done], o[~done], a[~done], q[~done]
         s = None if s is None else s[~done]
+        tie = None if tie is None else tie[~done]
         if not len(t):
             break
         A, B, C = t[:, 0], t[:, 1], t[:, 2]
         AB, BC, CA = 0.5 * (A + B), 0.5 * (B + C), 0.5 * (C + A)
-        _, om = near(np.concatenate([AB, BC, CA]), 1, np.tile(q, 3))
+        om, mt = owner(np.concatenate([AB, BC, CA]), np.tile(q, 3))
         oAB, oBC, oCA = om.reshape(3, -1)
         oA, oB, oC = o[:, 0], o[:, 1], o[:, 2]
         t = np.concatenate([np.stack(v, axis=1) for v in ((A, AB, CA), (AB, B, BC), (CA, BC, C), (AB, BC, CA))])
         o = np.concatenate([np.stack(v, axis=1) for v in ((oA, oAB, oCA), (oAB, oB, oBC), (oCA, oBC, oC),
                                                           (oAB, oBC, oCA))])
+        if tie is not None:
+            tAB, tBC, tCA = mt.reshape(3, -1)
+            tA, tB, tC = tie[:, 0], tie[:, 1], tie[:, 2]
+            tie = np.concatenate([np.stack(v, axis=1) for v in ((tA, tAB, tCA), (tAB, tB, tBC), (tCA, tBC, tC),
+                                                                (tAB, tBC, tCA))])
         tp, a, q = np.tile(tp, 4), np.tile(0.25 * a, 4), np.tile(q, 4)
         if s is not None:
             A, B, C = s[:, 0], s[:, 1], s[:, 2]
@@ -399,7 +403,8 @@ def ownership(x, tris, tri_patch, n_patch, size, normals=None, tri_normal=None, 
 
 def owned(x, P, size):
     """`ownership` of phi's patches `P` (`cutcell.patches`) by the markers at `x` (n, 3), with pieces at most `size` [m]
-    across."""
+    across, by the nearest marker alone (no same-side and no same-piece rule: `loads.owned`'s, where no ownership is
+    given; the markers' own is `Markers.owned_patches`)."""
     return ownership(x, P.tris, P.tri_patch, len(P.area), size)
 
 
@@ -436,37 +441,6 @@ def _cell_newton(mesh, phi, x):
     return x
 
 
-def patch_paths(mesh, P, a, b, limit):
-    """The shortest path [m] along phi's patch graph (`thin.patch_adjacency`: patches whose cells share a node, each
-    step the distance between the two patches' centroids) from patch a[k] to patch b[k] of `P` (a `cutcell.Patches`),
-    np.inf where it is longer than `limit` [m]. Dijkstra from the sources in spatial chunks, each on the patches within
-    `limit` of its sources (a path no longer than `limit` never leaves them), so that the work and memory follow the
-    sources' neighbourhoods, not the whole surface."""
-    a, b = np.asarray(a, dtype=np.int64), np.asarray(b, dtype=np.int64)
-    out = np.full(len(a), np.inf)
-    if not len(a):
-        return out
-    A = patch_adjacency(mesh, P).tocoo()
-    c = P.centroid
-    w = np.maximum(np.linalg.norm(c[A.row] - c[A.col], axis=1), 1e-300)    # an explicit zero would be no edge
-    G = coo_matrix((w, (A.row, A.col)), shape=A.shape).tocsr()
-    tree = cKDTree(c)
-    src = np.unique(a)
-    key = np.floor((c[src] - c.min(axis=0)) / limit).astype(np.int64)       # sources in spatial chunks
-    src = src[np.lexsort((key[:, 2], key[:, 1], key[:, 0]))]
-    for k in range(0, len(src), PATH_CHUNK):
-        chunk = np.sort(src[k:k + PATH_CHUNK])
-        balls = tree.query_ball_point(c[chunk], limit)
-        near = np.unique(np.concatenate([np.asarray(q, dtype=np.int64) for q in balls] + [chunk]))
-        D = dijkstra(G[near][:, near], indices=np.searchsorted(near, chunk), limit=limit)
-        sel = np.flatnonzero(np.isin(a, chunk))
-        row = np.searchsorted(chunk, a[sel])
-        col = np.minimum(np.searchsorted(near, b[sel]), len(near) - 1)
-        inside = near[col] == b[sel]
-        out[sel[inside]] = D[row[inside], col[inside]]
-    return out
-
-
 def _tangent_basis(n):
     """Two unit vectors (e1, e2) spanning the plane normal to each n (n, 3)."""
     a = np.eye(3)[np.argmin(np.abs(n), axis=1)]
@@ -475,72 +449,42 @@ def _tangent_basis(n):
     return e1, np.cross(n, e1)
 
 
-def _clip(poly, lab, cnt, sp, j):
-    """Clip the convex polygons poly (r, V, 2) with cnt vertices (edge k from vertex k to k+1 labelled lab[:, k]) to
-    the side sp <= 0, sp (r, V) the vertices' signed values of the clipping half-plane a . y - c; the new edge is
-    labelled j (r,). Returns the new (poly, lab, cnt), of width V + 1."""
-    r, V, _ = poly.shape
-    rr = np.arange(r)[:, None]
-    k = np.arange(V)[None, :]
-    real = k < cnt[:, None]
-    nxt = np.where(k + 1 < cnt[:, None], k + 1, 0)
-    q, sq = poly[rr, nxt], sp[rr, nxt]
-    inp, inq = sp <= 0.0, sq <= 0.0
-    cross = real & (inp != inq)
-    t = np.divide(sp, sp - sq, out=np.zeros_like(sp), where=cross)
-    I = poly + t[..., None] * (q - poly)
-    pts = np.stack([poly, I], axis=2).reshape(r, 2 * V, 2)
-    labs = np.stack([lab, np.where(inp, j[:, None], lab)], axis=2).reshape(r, 2 * V)
-    keep = np.stack([real & inp, cross], axis=2).reshape(r, 2 * V)
-    dest = np.cumsum(keep, axis=1) - 1
-    out = np.zeros((r, V + 1, 2))
-    out_lab = np.full((r, V + 1), -1, dtype=np.int64)
-    rows = np.broadcast_to(rr, keep.shape)[keep]
-    out[rows, dest[keep]] = pts[keep]
-    out_lab[rows, dest[keep]] = labs[keep]
-    return out, out_lab, keep.sum(axis=1)
-
-
 class Markers:
     """n markers: positions `x` (n, 3) on phi, unit normals `normal` (n, 3) out of the metal, areas `area` (n,) [m2],
     phi's principal curvatures `kappa` (n, 2) [1/m], the row of each one's skin `skin_index` (n,) in `skins` (a
     `Skins`, or None for markers without skins), the patch of phi holding each `patch` (n,) (-1 for none), the target
-    spacing `spacing` [m] and the counters `splits`, `merges`, `trapped`. After `tessellate`: `faces`, `capped` (n,)
-    and `axis` (n, 3), the longest direction of each Voronoi cell. `x_tess` and `normal_tess` (n, 3) are each marker's
-    position and normal at the last tessellation (at creation before any), the owners of the area it was given there
-    (Task 9b, `repartition.transfer_matrix`); a split or a merge sets them to the new markers' own. (Every skin is one
-    skin depth deep, design section 21.3: stage 3 Task 10's modes, `top` and `hold`, are retired by plan 03b Task 5.)"""
+    spacing `spacing` [m] and the counters `splits`, `merges`, `trapped`. After `tessellate`: `axis` (n, 3), the longest
+    direction of the part of phi each owns. `x_tess` and `normal_tess` (n, 3) are each marker's position and normal at
+    the last tessellation (at creation before any), the owners of the area it was given there (Task 9b,
+    `repartition.transfer_matrix`); a split or a merge sets them to the new markers' own. (Every skin is one skin depth
+    deep, design section 21.3: stage 3 Task 10's modes, `top` and `hold`, are retired by plan 03b Task 5; the
+    tangent-plane faces, cells and cap flags, `faces`, `cell_area` and `capped`, by plan 03b Task 6.)"""
 
     def __init__(self, x, normal, area, kappa, skin_index, patch, spacing, skins=None):
         self.x = np.array(x, dtype=float).reshape(-1, 3)
         n = len(self.x)
         self.normal = np.array(normal, dtype=float).reshape(n, 3)
         self.area = np.array(area, dtype=float).reshape(n)
-        self.cell_area = self.area.copy()
         self.kappa = np.array(kappa, dtype=float).reshape(n, 2)
         self.skin_index = np.array(skin_index, dtype=np.int64).reshape(n)
         self.patch = np.array(patch, dtype=np.int64).reshape(n)
         self.spacing = float(spacing)
         self.skins = skins
         self.splits = self.merges = self.trapped = 0
-        self.faces = None
-        self.capped = np.zeros(n, bool)
         self.axis = np.zeros((n, 3))
         self.x_tess, self.normal_tess = self.x.copy(), self.normal.copy()
 
     def __setstate__(self, state):
         """Unpickling: a state from before Task 9b has no `x_tess`, `normal_tess`; saved between steps, the markers'
-        last tessellation was where they are, so they are filled from `x` and `normal`. One from before Task 11's fix
-        round 1 has no `cell_area`: its areas were its tangent-plane cells'. One from Task 10 to plan 03b Task 5 holds the
-        retired modes, `top` and `hold`: they are dropped."""
-        state = {k: v for k, v in state.items() if k not in ("top", "hold")}
+        last tessellation was where they are, so they are filled from `x` and `normal`. One from Task 10 to plan 03b Task
+        5 holds the retired modes, `top` and `hold`, and one from before plan 03b Task 6 the retired tangent-plane faces,
+        cells and cap flags, `faces`, `cell_area` and `capped`: they are dropped."""
+        state = {k: v for k, v in state.items() if k not in ("top", "hold", "faces", "cell_area", "capped")}
         self.__dict__.update(state)
         if "x_tess" not in state:
             self.x_tess = np.array(self.x, dtype=float)
         if "normal_tess" not in state:
             self.normal_tess = np.array(self.normal, dtype=float)
-        if "cell_area" not in state:
-            self.cell_area = np.array(self.area, dtype=float)
 
     @property
     def n(self):
@@ -608,140 +552,90 @@ class Markers:
         self.patch = patch
         return patch
 
-    def _neighbours(self, mesh, P):
-        """The neighbour pairs (i < j) of Ruling 2 (module docstring)."""
-        reach = NEIGHBOUR_REACH * self.spacing
-        pairs = cKDTree(self.x).query_pairs(reach, output_type="ndarray")
-        if not len(pairs):
-            return pairs.reshape(0, 2)
-        i, j = pairs[:, 0], pairs[:, 1]
-        d = self.x[j] - self.x[i]
-        ni, nj = self.normal[i], self.normal[j]
-        facing = ((np.einsum("ij,ij->i", ni, nj) < OPPOSED_NORMALS) & (np.einsum("ij,ij->i", ni, d) > 0.0)
-                  & (np.einsum("ij,ij->i", nj, d) < 0.0))       # across a gap of gas: each in front of the other
-        pi, pj = self.patch[i], self.patch[j]
-        ok = (pi >= 0) & (pj >= 0) & ~facing
-        pairs, pi, pj = pairs[ok], pi[ok], pj[ok]
-        limit = NEIGHBOUR_PATH * reach
-        return pairs[patch_paths(mesh, P, pi, pj, limit) <= limit]
+    def owned_patches(self, mesh, phi, P=None, live=None):
+        """The area of each of phi's patches `P` (`cutcell.patches(mesh, phi)` by default) each marker owns, W (n,
+        len(P.area)) csr [m2] (module docstring): `ownership` with the markers' normals (the same-side rule) piece by
+        piece of the metal (`levelset.pieces`; the same-piece rule, the controller's ruling T1-i: the markers on a piece
+        own only its patches), each marker's piece the piece of the cell holding it (`division._marker_pieces`, as the
+        division takes it); with `live` (n,) bool only those markers own. Its rows are the markers' areas; its columns
+        sum to the patches' areas wherever some marker may own them."""
+        from .division import _marker_pieces              # (division imports this module)
+        P = cut_patches(mesh, phi) if P is None else P
+        n, Q = self.n, len(P.area)
+        if not n or not Q:
+            return csr_matrix((n, Q))
+        label, n_pieces = level_pieces(mesh, phi)
+        piece = _marker_pieces(mesh, self.x, label, P)
+        if live is not None:
+            piece = np.where(np.asarray(live, dtype=bool), piece, -1)
+        tri_piece = label[P.cell[P.tri_patch]]
+        tri_normal = P.normal[P.tri_patch]
+        size = OWN_SHARE * self.spacing
+        rows, cols, vals = [np.zeros(0, dtype=np.int64)], [np.zeros(0, dtype=np.int64)], [np.zeros(0)]
+        for p in range(n_pieces):
+            mq, tq = np.flatnonzero(piece == p), np.flatnonzero(tri_piece == p)
+            if not len(mq) or not len(tq):
+                continue
+            W = ownership(self.x[mq], P.tris[tq], P.tri_patch[tq], Q, size, normals=self.normal[mq],
+                          tri_normal=tri_normal[tq]).tocoo()
+            rows.append(mq[W.row]), cols.append(W.col.astype(np.int64)), vals.append(W.data)
+        W = coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, Q)).tocsr()
+        W.sum_duplicates()
+        return W
+
+    def _longest(self, P, W):
+        """Each marker's longest direction (n, 3), a unit vector in its tangent plane: the principal axis of the
+        centroids of the patches of `P` it owns (W, `owned_patches`) about it, each weighted by the area it owns of it,
+        projected on the plane; a direction of the plane where it owns none."""
+        e1, _ = _tangent_basis(self.normal)
+        C = W.tocoo()
+        if not len(C.data):
+            return e1
+        d = P.centroid[C.col] - self.x[C.row]
+        nr = self.normal[C.row]
+        d = d - np.einsum("ij,ij->i", d, nr)[:, None] * nr
+        M = np.zeros((self.n, 3, 3))
+        np.add.at(M, C.row, C.data[:, None, None] * d[:, :, None] * d[:, None, :])
+        v = np.linalg.eigh(M)[1][:, :, -1]
+        v = v - np.einsum("ij,ij->i", v, self.normal)[:, None] * self.normal
+        size = np.linalg.norm(v, axis=1)
+        return np.where((size > 1e-6)[:, None], v / np.maximum(size, 1e-300)[:, None], e1)
 
     def tessellate(self, mesh, phi):
-        """Ruling 2's tessellation (module docstring): assigns the patches, updates the normals and curvatures, sets
-        `area`, `capped` and `axis` and returns the faces as `Faces(i, j, length, unit_normal_ij)`, i < j."""
+        """The markers on phi as it is (module docstring): their patches assigned (`assign`), their normals and phi's
+        principal curvatures recovered at them, `area` the area of phi each marker with a patch owns (`owned_patches`;
+        a marker without one owns none, and is released at the step end), `axis` its longest direction, and `x_tess`,
+        `normal_tess` set to its own. Returns the ownership W (n, P) csr [m2] of phi's patches P (`cutcell.patches(mesh,
+        phi)`), whose rows are the areas. (Plan 03b Task 6: the tangent-plane faces it also gave before are retired; the
+        division of the layer gives the boundaries.)"""
         P = cut_patches(mesh, phi)
         self.assign(mesh, P)
-        n = self.n
         _, self.normal = _field(mesh, phi, self.x)
-        self.kappa = np.column_stack(principal_curvatures(mesh, phi, self.x))
-        pairs = self._neighbours(mesh, P)
-        # each marker's neighbours, padded
-        a = np.concatenate([pairs[:, 0], pairs[:, 1]])
-        b = np.concatenate([pairs[:, 1], pairs[:, 0]])
-        order = np.lexsort((np.linalg.norm(self.x[b] - self.x[a], axis=1), a))     # by marker, nearest first
-        a, b = a[order], b[order]
-        deg = np.bincount(a, minlength=n)
-        K = int(deg.max()) if len(a) else 0
-        start = np.concatenate([[0], np.cumsum(deg)[:-1]])
-        slot = np.arange(len(a)) - start[a]
-        nbr = np.full((n, K), -1, dtype=np.int64)
-        nbr[a, slot] = b
-        e1, e2 = _tangent_basis(self.normal)
-        d3 = self.x[np.maximum(nbr, 0)] - self.x[:, None, :]
-        D = np.stack([np.einsum("nkj,nj->nk", d3, e1), np.einsum("nkj,nj->nk", d3, e2)], axis=2)
-        dd = (D * D).sum(axis=2)
-        use = (nbr >= 0) & (dd > (1e-9 * self.spacing) ** 2)
-        # the cap and the clipping
-        r_in = 0.5 * NEIGHBOUR_REACH * self.spacing
-        ang = 2.0 * np.pi * (np.arange(CAP_SIDES) + 0.5) / CAP_SIDES
-        cap = (r_in / np.cos(np.pi / CAP_SIDES)) * np.column_stack([np.cos(ang), np.sin(ang)])
-        poly = np.broadcast_to(cap, (n, CAP_SIDES, 2)).copy()
-        lab = np.full((n, CAP_SIDES), -1, dtype=np.int64)
-        cnt = np.full(n, CAP_SIDES, dtype=np.int64)
-        for k in range(K):                                # nearest neighbours first: later ones rarely cut
-            r = np.flatnonzero(use[:, k])
-            if not len(r):
-                continue
-            V = int(cnt[r].max())
-            sp = np.einsum("rvk,rk->rv", poly[r, :V], D[r, k]) - 0.5 * dd[r, k][:, None]
-            cuts = ((sp > 0.0) & (np.arange(V)[None, :] < cnt[r][:, None])).any(axis=1)
-            r, sp = r[cuts], sp[cuts]
-            if not len(r):
-                continue
-            p2, l2, c2 = _clip(poly[r, :V], lab[r, :V], cnt[r], sp, np.full(len(r), k))
-            if poly.shape[1] < V + 1:
-                poly = np.pad(poly, ((0, 0), (0, V + 1 - poly.shape[1]), (0, 0)))
-                lab = np.pad(lab, ((0, 0), (0, V + 1 - lab.shape[1])), constant_values=-1)
-            poly[r, :V + 1], lab[r, :V + 1], cnt[r] = p2, l2, c2
-        V = poly.shape[1]
-        kk = np.arange(V)[None, :]
-        real = kk < cnt[:, None]
-        nxt = np.where(kk + 1 < cnt[:, None], kk + 1, 0)
-        q = np.take_along_axis(poly, nxt[..., None], axis=1)
-        cell_area = 0.5 * np.where(real, poly[..., 0] * q[..., 1] - q[..., 0] * poly[..., 1], 0.0).sum(axis=1)
-        edge = np.linalg.norm(q - poly, axis=2)
-        self.capped = (real & (lab < 0)).any(axis=1)
-        # the longest direction: the principal axis of the cell's vertices
-        cnt_safe = np.maximum(cnt, 1)
-        cen = np.where(real[..., None], poly, 0.0).sum(axis=1) / cnt_safe[:, None]
-        rel = np.where(real[..., None], poly - cen[:, None, :], 0.0)
-        cov = np.einsum("nvi,nvj->nij", rel, rel)
-        _, vec = np.linalg.eigh(cov)
-        v = vec[:, :, -1]
-        self.axis = v[:, :1] * e1 + v[:, 1:] * e2
-        # faces, symmetrised
-        on = real & (lab >= 0)
-        rows = np.broadcast_to(np.arange(n)[:, None], on.shape)[on]
-        cols = nbr[rows, lab[on]]
-        L = coo_matrix((edge[on], (rows, cols)), shape=(n, n)).tocsr()
-        S = ((L + L.T) * 0.5).tocoo()
-        up = S.row < S.col
-        fi, fj, fl = S.row[up].astype(np.int64), S.col[up].astype(np.int64), S.data[up]
-        live = fl > 0.0
-        fi, fj, fl = fi[live], fj[live], fl[live]
-
-        def tangent(src, dst):
-            d = self.x[dst] - self.x[src]
-            nn = self.normal[src]
-            t = d - np.einsum("ij,ij->i", d, nn)[:, None] * nn
-            return t / np.linalg.norm(t, axis=1)[:, None]
-
-        u = tangent(fi, fj) - tangent(fj, fi)
-        u /= np.linalg.norm(u, axis=1)[:, None]
-        # the areas: the area of phi each marker with a patch owns (`ownership`, the one partition of phi; stage 3 Task
-        # 11's fix round 1, C1), a marker without one none; the faces' lengths scaled as the tangent-plane cells would be
-        # to phi's area
-        cell_area = np.where(self.patch >= 0, cell_area, 0.0)
-        total = cell_area.sum()
-        f = P.area.sum() / total if total > 0.0 else 0.0
-        self.cell_area = cell_area * f                    # the faces' cells, kept for diagnosis (the neighbour tests)
-        live = np.flatnonzero(self.patch >= 0)
-        self.area = np.zeros(n)
-        if len(P.cell) and len(live):
-            self.area[live] = np.asarray(owned(self.x[live], P, OWN_SHARE * self.spacing).sum(axis=1)).ravel()
-        self.faces = Faces(fi, fj, fl * np.sqrt(f), u)
+        self.kappa = np.column_stack(principal_curvatures(mesh, phi, self.x)) if self.n else np.zeros((0, 2))
+        W = self.owned_patches(mesh, phi, P, live=self.patch >= 0)
+        self.area = np.asarray(W.sum(axis=1)).ravel()
+        self.axis = self._longest(P, W)
         self.x_tess, self.normal_tess = self.x.copy(), self.normal.copy()
-        return self.faces
+        return W
 
     # -- topology ---------------------------------------------------------------------------------------------------
     def _append(self, src, x):
         """New markers copying the markers `src` at positions x, their skins' rows given later."""
         self.x = np.concatenate([self.x, x])
-        for name in ("normal", "area", "cell_area", "kappa", "patch", "capped", "axis", "x_tess", "normal_tess"):
+        for name in ("normal", "area", "kappa", "patch", "axis", "x_tess", "normal_tess"):
             setattr(self, name, np.concatenate([getattr(self, name), getattr(self, name)[src]]))
 
     def _drop(self, idx):
         keep = np.ones(self.n, bool)
         keep[idx] = False
-        for name in ("x", "normal", "area", "cell_area", "kappa", "patch", "capped", "axis", "skin_index", "x_tess",
-                     "normal_tess"):
+        for name in ("x", "normal", "area", "kappa", "patch", "axis", "skin_index", "x_tess", "normal_tess"):
             setattr(self, name, getattr(self, name)[keep])
-        self.faces = None
 
     def split(self, target_area):
         """Every marker above SPLIT_FACTOR times `target_area` [m2] becomes two, SPLIT_GAP target spacings apart along
-        its cell's longest direction (from the last `tessellate`) and centred on it, each with half the area and a skin
-        of the same profile with half the mass of every cell (`Skins.divide`). The new markers are appended; the caller
-        snaps and tessellates. Returns the indices that split."""
+        the longest direction of the part of phi it owns (`axis`, from the last `tessellate`) and centred on it, each
+        with half the area and a skin of the same profile with half the mass of every cell (`Skins.divide`). The new
+        markers are appended; the caller snaps and tessellates. Returns the indices that split."""
         big = np.flatnonzero(self.area > SPLIT_FACTOR * target_area)
         if not len(big):
             return big
@@ -757,7 +651,6 @@ class Markers:
             new_rows = self.n - len(big) + np.arange(len(big))
         self.skin_index = np.concatenate([self.skin_index, new_rows])
         self.splits += len(big)
-        self.faces = None
         return big
 
     def merge(self, target_spacing):
@@ -821,15 +714,35 @@ class Markers:
             d[i] = min(d[i], point_triangle_distance(p, t[:, 0], t[:, 1], t[:, 2]).min())
         return np.flatnonzero(d > lim)
 
-    def release(self, idx):
+    def _keepers(self, idx, stay, piece=None):
+        """The marker each released marker idx gives its skin to (indices into the markers): the nearest of `stay` that
+        may own its part of phi, by the same-side rule (`_nearest` with the released marker's normal; module docstring)
+        and, with `piece` (n,) each marker's piece of metal, on its own piece; the nearest of `stay` where none may."""
+        x, nrm = self.x[idx], self.normal[idx]
+        keeper = np.full(len(idx), -1, dtype=np.int64)
+        groups = [(np.arange(len(idx)), stay)] if piece is None else \
+            [(np.flatnonzero(piece[idx] == p), stay[piece[stay] == p]) for p in np.unique(piece[idx])]
+        for sel, cand in groups:
+            if not len(sel) or not len(cand):
+                continue
+            k = _nearest(cKDTree(self.x[cand]), x[sel], 1, self.normal[cand], nrm[sel])[1][:, 0]
+            ok = k < len(cand)
+            keeper[sel[ok]] = cand[k[ok]]
+        rest = np.flatnonzero(keeper < 0)
+        if len(rest):
+            keeper[rest] = stay[cKDTree(self.x[stay]).query(x[rest])[1]]
+        return keeper
+
+    def release(self, idx, mesh=None, phi=None):
         """Remove the markers `idx` (distinct; the trapped ones, or those left with no area), counting them as
-        trapped; each first gives its skin to the nearest marker that stays (by position), by depth
-        (`Skins.combine(..., by="depth")`, which takes the by-mass rule for a column with no volume of its own): plan
-        03b, planning ruling 6, the metal stays in the layer and the next fill settles both columns. Several released
-        markers giving to one keeper give in turn. Returns, per released marker in the order of `idx`, (its position
-        (., 3), the marker that took its skin as numbered after the release (.,), and the (mass [kg], enthalpy [J],
-        momentum [kg m/s] (., 3)) it gave). Mass, enthalpy and momentum add to round-off. RuntimeError if no marker
-        would stay to take them."""
+        trapped; each first gives its skin to the nearest marker that stays and may own its part of phi (`_keepers`:
+        the same-side rule, and with the `mesh` and `phi` the same-piece rule; plan 03b Task 6: by position alone a
+        marker released on one wall of a slot gave its skin across the gas), by depth (`Skins.combine(..., by="depth")`,
+        which takes the by-mass rule for a column with no volume of its own): plan 03b, planning ruling 6, the metal
+        stays in the layer and the next fill settles both columns. Several released markers giving to one keeper give
+        in turn. Returns, per released marker in the order of `idx`, (its position (., 3), the marker that took its skin
+        as numbered after the release (.,), and the (mass [kg], enthalpy [J], momentum [kg m/s] (., 3)) it gave). Mass,
+        enthalpy and momentum add to round-off. RuntimeError if no marker would stay to take them."""
         idx = np.asarray(idx, dtype=np.int64).reshape(-1)
         if len(np.unique(idx)) != len(idx):
             raise ValueError("markers to release must be distinct")
@@ -839,7 +752,12 @@ class Markers:
             return x, np.zeros(0, dtype=np.int64), (np.zeros(0), np.zeros(0), np.zeros((0, 3)))
         if not len(stay):
             raise RuntimeError("no marker would stay to take the skins of the {} released".format(len(idx)))
-        keeper = stay[cKDTree(self.x[stay]).query(x)[1]]
+        piece = None
+        if mesh is not None:
+            from .division import _marker_pieces          # (division imports this module)
+            label, _ = level_pieces(mesh, phi)
+            piece = _marker_pieces(mesh, self.x, label, cut_patches(mesh, phi))
+        keeper = self._keepers(idx, stay, piece)
         if self.skins is not None:
             M, E, P = self.skins.totals()
             given = M[self.skin_index[idx]], E[self.skin_index[idx]], P[self.skin_index[idx]]

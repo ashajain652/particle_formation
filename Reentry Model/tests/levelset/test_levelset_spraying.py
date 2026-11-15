@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from reentry_model.levelset import spraying
-from reentry_model.levelset.markers import Faces, Markers
+from reentry_model.levelset.markers import Markers
 from reentry_model.levelset.skin import Skins, SkinSettings
 from reentry_model.shared import droplets, spray, surface_flow as sf
 from reentry_model.shared.lubrication import lubrication
@@ -35,15 +35,19 @@ def aa7075():
 
 
 def row_markers(n, h=H, order=None):
-    """n markers on a straight row h apart in z = 0, normals +z, square cells of area h^2, a face of length h between
-    neighbours; `order` the skin row of each marker (default the identity)."""
+    """n markers on a straight row h apart in z = 0, normals +z, square cells of area h^2; `order` the skin row of each
+    marker (default the identity). Their division's boundaries are `row_division`'s."""
     x = np.column_stack([np.arange(n) * h, np.zeros(n), np.zeros(n)])
     skin_index = np.arange(n) if order is None else np.asarray(order)
-    mk = Markers(x, np.tile([0.0, 0.0, 1.0], (n, 1)), np.full(n, h * h), np.zeros((n, 2)), skin_index,
-                 np.full(n, -1), h)
-    i, j = np.arange(n - 1), np.arange(1, n)
-    mk.faces = Faces(i, j, np.full(n - 1, h), np.tile([1.0, 0.0, 0.0], (n - 1, 1)))
-    return mk
+    return Markers(x, np.tile([0.0, 0.0, 1.0], (n, 1)), np.full(n, h * h), np.zeros((n, 2)), skin_index,
+                   np.full(n, -1), h)
+
+
+def row_division(n, h=H):
+    """What `spray_plan` reads of the division of `row_markers`' layer (plan 03b Task 6: the wave's domain graph is the
+    division's boundaries at phi): a boundary of length h at every level between neighbours along the row, as markers'
+    indices i < j."""
+    return SimpleNamespace(i=np.arange(n - 1), j=np.arange(1, n), length=np.full((max(n - 1, 0), 2), h))
 
 
 def stacked(mk, temps, mat=None, rng=None):
@@ -98,7 +102,8 @@ def test_marker_release_equals_the_shared_model():
     flow, model = gas(n), model_of(mat)
     theta = np.linspace(0.1, 0.6, n)
     windward, w_n = theta <= 0.5 * np.pi, flow.deceleration * np.cos(theta)
-    plan = spraying.spray_plan(sk, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.05, theta=theta)
+    plan = spraying.spray_plan(sk, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.05, theta=theta,
+                               division=row_division(n))
     # the same arrays by hand, in the markers' order
     r = mk.skin_index
     F, L = sk.depth_above(mat.T_rigid)[r], sk.depth_above(mat.T_liquidus)[r]
@@ -108,7 +113,7 @@ def test_marker_release_equals_the_shared_model():
     delta_m = spray.spray_layer(flow, model.liquid, model.slip_band, theta, 0.05)
     v_s = lubrication(flow.tau, flow.G, F, delta_m, model.liquid.mu, b_layer=F)[0]
     A = sk.area[r]
-    extent = spray.region_extent(np.column_stack([mk.faces.i, mk.faces.j]), L > 0.0, A)
+    extent = spray.region_extent(np.column_stack([row_division(n).i, row_division(n).j]), L > 0.0, A)
     m_f = (sk.m * np.cumprod(liquid, axis=1))[r].sum(axis=1)
     want = model.evaluate(flow, STATE, F, delta_m, v_s, windward, 0.5, A, m_f, 0.05, b_layer=F, extent=extent,
                           deceleration_n=w_n, regime_layer=F, on_slurry=n_flow > n_liq, rt_layer=L, cap_depth=L)
@@ -116,6 +121,34 @@ def test_marker_release_equals_the_shared_model():
     assert np.array_equal(plan.result.r, want.r, equal_nan=True)
     assert np.array_equal(plan.result.branch, want.branch)
     assert (want.mdot > 0.0).sum() >= 2 and len(set(want.branch.tolist())) >= 2    # the case is not trivial
+
+
+def test_the_wave_s_region_is_the_division_s_boundaries_at_phi(monkeypatch):
+    """Plan 03b Task 6: the wave's domain graph (`spray.region_extent`'s edges, for the liquid region and the slurry's
+    flowing one) is the division's shared boundaries that have a length at phi, as markers' indices; a boundary the
+    division finds only below phi (two columns meeting at depth beyond an edge) joins no region. Six markers in a row,
+    the boundary between the third and fourth of no length at phi: the plan's edges are the other four."""
+    mat = aa7075()
+    n = len(MIXED)
+    mk = row_markers(n)
+    sk = stacked(mk, MIXED, mat)
+    d = row_division(n)
+    d.length[2, 0] = 0.0                                  # the third and fourth columns meet only below phi
+    seen = []
+    extent = spraying.spray_mod.region_extent
+
+    def spy(edges, wet, area):
+        seen.append(np.array(edges))
+        return extent(edges, wet, area)
+    monkeypatch.setattr(spraying.spray_mod, "region_extent", spy)
+    theta = np.linspace(0.1, 0.6, n)
+    spraying.spray_plan(sk, mk, gas(n), STATE, model_of(mat), np.ones(n, bool), np.full(n, 30.0), 0.5, 0.05, 0.05,
+                        slurry=True, theta=theta, division=d)
+    want = np.array([[0, 1], [1, 2], [3, 4], [4, 5]])
+    assert len(seen) >= 1 and all(np.array_equal(e, want) for e in seen)
+    with pytest.raises(ValueError, match="division"):
+        spraying.spray_plan(sk, mk, gas(n), STATE, model_of(mat), np.ones(n, bool), np.full(n, 30.0), 0.5, 0.05, 0.05,
+                            theta=theta)
 
 
 def test_the_slip_band_needs_the_markers_angles():
@@ -127,7 +160,8 @@ def test_the_slip_band_needs_the_markers_angles():
     sk = stacked(mk, MIXED, mat)
     model = model_of(mat, slip_band=True)
     with pytest.raises(ValueError, match="theta"):
-        spraying.spray_plan(sk, mk, gas(n), STATE, model, np.ones(n, bool), np.full(n, 30.0), 0.5, 0.05, 0.05)
+        spraying.spray_plan(sk, mk, gas(n), STATE, model, np.ones(n, bool), np.full(n, 30.0), 0.5, 0.05, 0.05,
+                            division=row_division(n))
 
 
 SLURRY_COLUMNS = MIXED[:5] + [[LIQUID] * 2 + [907.8] * 300 + [RIGID] * 5, [907.5] * 200 + [RIGID] * 5,
@@ -152,12 +186,12 @@ def test_the_slurry_mode_matches_the_skyscrapers_on_the_same_columns():
     theta = np.linspace(0.05, 0.9, n)
     windward, w_n = theta <= 0.5 * np.pi, flow.deceleration * np.cos(theta)
     plan = spraying.spray_plan(ours, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.04, slurry=True,
-                               theta=theta)
+                               theta=theta, division=row_division(n))
     F = theirs.depth_above(mat.T_rigid)
     flowing = theirs.valid & np.isfinite(sky.cell_viscosity(theirs, 0.0))
     liquid = flowing & (theirs.T >= mat.T_liquidus)
     n_flow, n_liq = np.cumprod(flowing, axis=1).sum(axis=1), np.cumprod(liquid, axis=1).sum(axis=1)
-    edges = np.column_stack([mk.faces.i, mk.faces.j])
+    edges = np.column_stack([row_division(n).i, row_division(n).j])
     rate, modes = skinbody.slurry_modes(theirs, flow, STATE, model, windward, w_n, theirs.area, edges, 0.05, 0.5, F, n_liq,
                                         n_flow, theta=theta, nose_radius=0.04)
     assert (rate > 0.0).sum() >= 1 and (modes["branch"] >= 0).sum() >= 3 and np.all(modes["branch"][rate > 0.0] == spray.BRANCH_THICK)
@@ -183,7 +217,8 @@ def test_the_exposed_slurry_mode_matches_the_skyscrapers_on_one_column():
     flow, model = gas(1, tau=200.0, G=-3e4), model_of(mat)
     theta = np.array([0.2])
     windward, w_n = np.array([True]), flow.deceleration * np.cos(theta)
-    plan = spraying.spray_plan(ours, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.04, slurry=True, theta=theta)
+    plan = spraying.spray_plan(ours, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.04, slurry=True, theta=theta,
+                               division=row_division(1))
     F = theirs.depth_above(mat.T_rigid)
     flowing = theirs.valid & np.isfinite(sky.cell_viscosity(theirs, 0.0))
     liquid = flowing & (theirs.T >= mat.T_liquidus)
@@ -279,7 +314,7 @@ def test_release_is_not_capped_by_a_renewal_time():
     flow, model = gas(1, tau=TAU_RENEWAL), model_of(mat)
     theta = np.array([0.3])
     plan = spraying.spray_plan(sk, mk, flow, STATE, model, np.array([True]), flow.deceleration * np.cos(theta), 0.5,
-                               0.05, 0.05, theta=theta)
+                               0.05, 0.05, theta=theta, division=row_division(1))
     assert plan.result.branch[0] == spray.BRANCH_THICK
     liq = model.liquid
     d = plan.result.delta_m[0]
@@ -306,7 +341,7 @@ def test_release_books_close():
         flow, model = gas(n), model_of(mat)
         theta = np.linspace(0.1, 0.6, n)
         plan = spraying.spray_plan(sk, mk, flow, STATE, model, theta <= 0.5 * np.pi, 30.0 * np.cos(theta), 0.5, 0.05,
-                                   0.05, slurry=slurry, theta=theta)
+                                   0.05, slurry=slurry, theta=theta, division=row_division(n))
         plan.rate[:] = np.maximum(plan.rate, 50.0)               # every skin releases something it may
         if slurry:
             plan.rate_slurry[:] = 20.0
@@ -348,7 +383,7 @@ def test_droplet_records_go_through_the_shared_writer(tmp_path):
     for step in range(3):
         plan = spraying.spray_plan(sk, mk, gas(n), STATE, model, theta <= 0.5 * np.pi, 30.0 * np.cos(theta), 0.5,
                                    0.05, 0.05, slurry=True, theta=theta, centre=np.array([0.0, 0.0, -0.05]),
-                                   v_hat=np.array([0.0, 0.0, -1.0]))
+                                   v_hat=np.array([0.0, 0.0, -1.0]), division=row_division(n))
         for _ in range(4):
             booked += plan.release(sk, 0.125).mass.sum()
         block = plan.records(0.5 * (step + 1))
@@ -394,7 +429,7 @@ def test_girin_cases_through_the_level_set_path():
         flow = gas(1, closure=sf.CLOSURE_COUETTE, tau=0.0, decel=W)
         theta = np.zeros(1)
         plan = spraying.spray_plan(sk, mk, flow, STATE, model, np.array([True]), np.array([W]), 0.5, 0.05, 0.05,
-                                   theta=theta)
+                                   theta=theta, division=row_division(1))
         res = plan.result
         assert res.branch[0] == spray.BRANCH_RT and plan.rate[0] > 0.0
         assert res.wavelength[0] == pytest.approx(lam_ref, rel=2e-2)

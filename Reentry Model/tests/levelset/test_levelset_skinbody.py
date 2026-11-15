@@ -22,7 +22,7 @@ from reentry_model.levelset.surfaces import skin_base
 from reentry_model.levelset.transfer import interpolate
 from reentry_model.shared.material import Material
 
-from cases import CAPPED_SHARE, gas_state, nearest_ratio
+from cases import OWNERSHIP_FACTOR, gas_state, nearest_ratio
 
 HALF = 5e-3            # m: the cube's half side (a 10 mm cube)
 OFF = 0.13e-3          # m: the cube's centre off the grid, so that its faces cut the cells
@@ -82,11 +82,11 @@ def cube(x):
     return np.max(np.abs(x - OFF) - HALF, axis=1)
 
 
-def cube_body(**kw):
+def cube_body(T0=850.0, **kw):
     base = BoxBase.around((-9e-3,) * 3, (9e-3,) * 3, 2.8e-3)
     args = dict(MESH, emissivity=0.0)
     args.update(kw)
-    return skinbody.LevelSetSkinBody(aa7075(), base, cube, 850.0, SETTINGS, **args)
+    return skinbody.LevelSetSkinBody(aa7075(), base, cube, T0, SETTINGS, **args)
 
 
 PLATE_W, PLATE_DEPTH, PLATE_GAS, PLATE_H0 = 5.6e-3, 8e-3, 3.2e-3, 2.8e-3     # m: a column of a plate, walls the mesh's
@@ -526,6 +526,66 @@ def test_a_part_that_would_empty_a_column_is_split():
     assert abs(book.mass_residual) <= 1e-12 and abs(book.enthalpy_residual) <= 1e-8
 
 
+EDGE_T = (890.0, 1000.0)   # K: the cube, rigid just below T_rigid (895.1 K), and its +x side's columns, liquid
+EDGE_PULL = 0.05           # m/s2: the acceleration the metal feels along +z in the runoff-over-an-edge test
+EDGE_STEP = 0.01           # s: its one macro step (one heat sub-step)
+
+
+def _shuffle_rows(body, seed=3):
+    """The body's skins' rows put in a random order, everything kept per row (the cells, the top areas and curvatures,
+    the profile, the feed's momentum and the carry), so that `Markers.skin_index` is a real mapping (the body keeps the
+    rows in the markers' order otherwise)."""
+    sk, mk = body.skins, body.markers
+    perm = np.random.default_rng(seed).permutation(sk.n)          # new row r holds old row perm[r]
+    for name in ("m", "H", "U", "count", "area", "kappa", "momentum_out", "profile"):
+        setattr(sk, name, getattr(sk, name)[perm])
+    body.carry = body.carry[perm]
+    mk.skin_index = np.argsort(perm)[mk.skin_index]
+    assert not np.array_equal(mk.skin_index, np.arange(mk.n))
+
+
+def test_runoff_crosses_a_box_edge_through_the_body(monkeypatch):
+    """Plan 03b Task 6 (design 21.5: runoff crosses the shared boundaries of the one division of the layer): the test
+    cube at 890 K (rigid) with its skins' rows shuffled (`_shuffle_rows`), the columns on its +x side (normals within 72
+    degrees of +x) made liquid at 1000 K through their depth, and one 0.01 s step with the metal pulled along +z
+    (EDGE_PULL, a deceleration with no gas state), toward the +x face's edge with the +z face, its liquid's surface
+    tension off (the capillary push of phi's recovered curvature at the sharp cube's edges, some 2.5e5 N/m3 on its face
+    markers, folds the liquid face within the step and stops it on THIN_METAL: plan 03b Task 6's diagnosis of the
+    spraying fixture, the controller's carry T5-h). Every flow sub-step runs on the body's division (each transport's
+    sheet depth-resolved, `runoff.Sheet.from_division`, its rows the shuffled ones); metal arrives in the +z face's
+    columns across the edge (their net gain over the real passes' transports is positive); and the step's books close
+    (mass 1e-12, enthalpy 1e-8)."""
+    from dataclasses import replace
+    from reentry_model.levelset import runoff
+    body = cube_body(T0=EDGE_T[0])
+    body.material.liquid = replace(body.material.liquid, sigma=0.0)
+    _shuffle_rows(body)
+    sk, mk = body.skins, body.markers
+    hot = mk.skin_index[mk.normal[:, 0] > 0.3]
+    T = np.where(sk.valid, EDGE_T[1], np.nan)
+    sk.H[hot] = np.where(sk.valid[hot], sk.m[hot] * sk.props.enthalpy(T[hot]), 0.0)
+    gained, sheets = np.zeros(sk.n), []
+    transport = runoff.transport
+
+    def spy(skins, sheet, dt, faces=None):
+        book = transport(skins, sheet, dt, faces=faces)
+        sheets.append(sheet)
+        if skins.dH is None:                             # a real pass (a trial pass carries its sensitivity)
+            gained[:] += book.mass
+        return book
+    monkeypatch.setattr(runoff, "transport", spy)
+    rows_z = mk.skin_index[mk.normal[:, 2] > 0.9]          # the +z face's rows within the step (the markers settle after)
+    book = body.advance(EDGE_STEP, decel_vec=(0.0, 0.0, EDGE_PULL))
+    print("runoff over the edge: {} transports; the +z face's columns gained {:.3e} kg over the real passes, the most "
+          "one gained {:.3e} kg; residuals mass {:.1e}, enthalpy {:.1e}; {} parts".format(
+              len(sheets), gained[rows_z].sum(), gained[rows_z].max(), book.mass_residual, book.enthalpy_residual,
+              book.parts))
+    assert sheets and all(s.length_z is not None for s in sheets)
+    assert all(not np.array_equal(s.marker, np.arange(s.n)) for s in sheets)   # the rows are not the markers' order
+    assert gained[rows_z].sum() > 0.0
+    assert abs(book.mass_residual) <= 1e-12 and abs(book.enthalpy_residual) <= 1e-8
+
+
 def test_pending_load_reaches_the_volume():
     """A deferred load of 5 J at a point under the +x face is delivered to the volume, at the patches of beta nearest the
     point, in the next part (a 0.05 s step): the body's stored enthalpy rises by the 5 J less the load still deferred
@@ -604,11 +664,14 @@ CONTINUUM = dict(rho=1e-4, kn=1e-3)   # 7.5 km/s at a density of 1e-4 kg/m3 with
                                       # layer's branch, where Girin's closure gives a conjugate depth
 
 
-FOLDED = ("plan 03b Task 5: at this state the runoff carries the +x face's melt, every skin's 1.2 mm of it now flowing "
-          "(the retired top-zone skins held their deep melt in the volume), so far within the 0.05 s step that the face "
-          "stands from 1.0 mm below to 1.8 mm above where it began (measured once), its folds' columns face each other, "
-          "and the step end stops on stepend.THIN_METAL (19 pairs); for the controller, with Task 6's runoff on the "
-          "division's faces")
+FOLDED = ("plan 03b Tasks 5 and 6: at this state the runoff carries the +x face's melt, every skin's 1.2 mm of it now "
+          "flowing, and with the runoff on the division's boundaries (Task 6) the step still folds the face, a ridge 1 mm "
+          "high across its middle and troughs 1 mm deep at its corners, and stops on stepend.THIN_METAL (3 pairs); "
+          "Task 6's diagnosis, measured once: the capillary push of phi's recovered curvature at the sharp cube's edges "
+          "dominates (median 2.5e5 N/m3 on the face's markers against 3.8e4 for the pressure gradient), four parts "
+          "instead of one raise the ridge (1.6 against 1.0 mm), the transport solve converged throughout, and without "
+          "surface tension the face recedes evenly and the step stops on the receding corner's rim (1 pair); for the "
+          "controller's ruling")
 
 
 @pytest.fixture(scope="module")
@@ -883,23 +946,18 @@ def test_the_snap_books_the_markers_its_last_round_brings_from_afar_and_their_sl
     assert off <= SNAP_TOL
 
 
-SHARP_FACTOR = 2.5    # the tangent-plane cells' areas over the area nearest each marker on the sharp test cube, within
-                      # this either way (plan 03b Task 5: 0.47 to 1.23 measured once, against OWNERSHIP_FACTOR's 1.5 when
-                      # the stub rounded the cube's edges; the cells serve only runoff's faces until Task 6 retires them)
-
-
 def test_the_test_cube_s_markers_keep_their_neighbours():
-    """Task 9b (the ruling on the neighbour test): on the test cube as the body builds it (its edges sharp since plan 03b
-    Task 5; markers one per 2 mm voxel) at most CAPPED_SHARE of the cells are bounded by the cap and every tangent-plane
-    cell's area is within a factor of SHARP_FACTOR of the area nearest the marker."""
+    """Task 9b (the ruling on the neighbour test), on the division since plan 03b Task 6: on the test cube as the body
+    builds it (its edges sharp since plan 03b Task 5; markers one per 2 mm voxel) every column's top cross-section in
+    the body's division (its A(0), which the skins fill and the runoff's cells cross) is within a factor of
+    OWNERSHIP_FACTOR (1.5) of the area of phi nearest its marker. (Task 5 widened the tangent-plane cells' bound to 2.5:
+    their areas were 0.47 to 1.23 of the nearest-marker areas on the sharp cube, measured once.)"""
     body = cube_body()
     mk = body.markers
-    mk.tessellate(body.mesh, body.phi)
-    r = nearest_ratio(mk, body.mesh, body.phi)
-    print("test cube: {} markers, {} capped; areas {:.3f} to {:.3f} times the nearest-marker areas".format(
-        mk.n, int(mk.capped.sum()), r.min(), r.max()))
-    assert mk.capped.mean() < CAPPED_SHARE
-    assert r.min() >= 1.0 / SHARP_FACTOR and r.max() <= SHARP_FACTOR
+    r = nearest_ratio(mk, body.mesh, body.phi, body.division)
+    print("test cube: {} markers; the division's top cross-sections {:.3f} to {:.3f} times the nearest-marker "
+          "areas".format(mk.n, r.min(), r.max()))
+    assert r.min() >= 1.0 / OWNERSHIP_FACTOR and r.max() <= OWNERSHIP_FACTOR
 
 
 # -- the step end's re-partition (Task 9b) -----------------------------------------------------------------------------
@@ -975,53 +1033,90 @@ def _would_fill(host):
     return host.skins.column_volume() - host.skins.cells_volume()
 
 
-THROUGH_SHARE = 1e-2  # of the inner columns' volume: what the fill after a re-partition by mass moves through the base
+THROUGH_SHARE = 1e-12  # of the inner columns' volume: what the fill after a re-partition by depth moves through the base
+LEVEL_SHARE = 1e-12    # of a column's mass: each depth's metal in a new column against what its donors held there
+DEPTH_SHARE = 1e-12    # of H: each new cell's depth span against its donors' (the same in every flat column here)
+MUSH = (885.0, 905.0)  # K: the columns' temperatures, inside LinearMeltMaterial's mushy range (880 to 908 K), where the
+                       # specific volume is linear in the enthalpy (mixing keeps volume) and the density varies with depth
+                       # and column (about 2440 to 2730 kg/m3), so that a mix by mass fraction would move metal in depth
 
 
-def test_a_repartition_closes_the_skins_books_and_keeps_their_depths():
-    """Task 9b: liquid skins on a closed flat box, the 16 markers in the middle of its top face shifted along it by up to
-    0.4 mm each, the surface unchanged: the step end's tessellation re-partitions the area (the shifted markers' areas
-    change by 0.82 to 1.16 times, the area of phi each owns) and each column's metal follows its area by the hand-over
-    rule. The skins' mass and enthalpy close to 1e-14 and their momentum to round-off; every new column's flat depth lies
-    within its donors'; the stretch is one, since the surface did not change; and on the top face's middle, where the
-    columns are flat, the fill that follows moves through the base only what the transfer's sampled areas miss of the
-    division's (THROUGH_SHARE: 2.3e-3 of those columns' volume, measured once; the re-partition by depth across the
-    division's faces, plan 03b Task 6, is to remove it)."""
+def _profiled(sk, T_of):
+    """Every column's cells at the temperatures T_of(rows (n, 1), mid-depths (n, K)) [K], each cell's mass the one that
+    keeps its span full (its density times the span's volume under the column's profile, `Skins._volume_at`), so that
+    every column stays exactly full; the velocities kept."""
+    dz = sk.dz()
+    z = np.concatenate([np.zeros((sk.n, 1)), np.cumsum(dz, axis=1)], axis=1)
+    span = np.diff(sk._volume_at(z), axis=1)
+    T = np.where(sk.valid, T_of(np.arange(sk.n)[:, None], 0.5 * (z[:, 1:] + z[:, :-1])), MUSH[0])
+    m = np.where(sk.valid, sk.density(T) * span, 0.0)
+    sk.install(m, m * sk.props.enthalpy(T), sk.count, sk.U)
+
+
+def test_a_repartition_by_depth_moves_no_metal_through_the_base_and_keeps_each_depth():
+    """Plan 03b Task 6 (the controller's ruling P4; design 21.5: metal stays where it is, only its owner changes): mushy
+    skins on a closed flat box, every column exactly full, its temperature (and so its density) varying with depth and
+    from column to column (MUSH); the 16 markers in the middle of its top face shifted along it by up to 0.4 mm each, the
+    surface unchanged. The step end's tessellation re-partitions the area (the shifted markers' areas change by 0.82 to
+    1.16 times) and the re-partition cuts every old column by the transfer across the new division's boundaries and
+    gives each piece to its new column by depth (`Skins.combine(..., by="depth")`). The skins' mass and enthalpy close
+    to 1e-14 and their momentum to round-off; the stretch is one, since the surface did not change; on the top face's
+    middle, where the columns are flat, the fill that follows moves nothing through the base (THROUGH_SHARE: Task 5
+    measured 2.3e-3 of those columns' volume after a re-partition by mass), and each level's metal in each new column
+    is what its donors held at that level, in the shares the transfer gave: every cell keeps its depth span (DEPTH_SHARE)
+    and holds its donors' metal from that span (LEVEL_SHARE). (The profiles here are not flat at their last two levels,
+    1.15 and 1.2 mm deep, where the slab's 1 mm cells smear the distance's kink at its mid-plane, 2 mm deep: the P1
+    slope there is 0.74, so the coarea measure is 1.35 times the face's; the check is therefore cell by cell, the
+    resolution at which by-depth mixing keeps the metal, not between the levels within a cell.)"""
     from materials import LinearMeltMaterial
     mat = LinearMeltMaterial()
     host, top = _slab_host(mat)
     mk, sk = host.markers, host.skins
     middle = top[1:5, 1:5].ravel()
+    inner = top[2:4, 2:4].ravel()
     rng = np.random.default_rng(7)
     rng.uniform(1.5, 3.0, mk.n)                       # (the draws Task 9b's skins of one to three stubs took: the
     rng.random(len(middle)), rng.uniform(1.0, 3.0, len(middle))      # same shifts as its measurement below)
-    sk.fill(sk.density(np.full(sk.n, 950.0)) * sk.column_volume(), 950.0)    # liquid: above the liquidus, 908 K
+    sk.fill(sk.density(np.full(sk.n, MUSH[1])) * sk.column_volume(), MUSH[1])
+    share = np.random.default_rng(8).uniform(0.0, 1.0, sk.n)    # each column's mushy profile: from MUSH[1] at its top
+    lo, hi = MUSH                                                # to MUSH[0] at H, bent by its own share
+    _profiled(sk, lambda r, z: hi - (hi - lo) * (z / H) ** (0.5 + share[r]))
+    sk.regrid()                                       # (as the settle leaves them: its own regrid then changes nothing)
     sk.U = np.where(sk.valid[..., None], np.concatenate([rng.normal(0.0, 1.0, (sk.n, 1, 2)),
                                                          np.zeros((sk.n, 1, 1))], axis=2), 0.0)
+    assert np.abs(sk.cells_volume() / sk.column_volume() - 1.0).max() <= 1e-13          # every column full
     M0, E0, P0 = (np.sum(t, axis=0) for t in sk.totals())
     P_size = np.abs(sk.m[..., None] * sk.U).sum()
-    thick0, A0, n0 = _flat_depth(sk)[mk.skin_index], mk.area.copy(), mk.n
+    held, spans = sk.m[mk.skin_index].copy(), np.cumsum(sk.dz(), axis=1)[mk.skin_index]   # each old column's cells and
+    count0 = sk.count[mk.skin_index].copy()                                                # their depths (markers' order)
+    A0, n0 = mk.area.copy(), mk.n
     mk.x[middle, :2] += rng.uniform(-0.4e-3, 0.4e-3, (len(middle), 2))
     host._settle(skinbody._Tally(0))
     assert mk.n == n0
     M1, E1, P1 = (np.sum(t, axis=0) for t in sk.totals())
     ratio = mk.area[middle] / A0[middle]
-    inner = mk.skin_index[top[2:4, 2:4].ravel()]
+    T, stretch = host.last_settle[0].transfer, host.last_settle[0].stretch
+    f = T.multiply(1.0 / np.asarray(T.sum(axis=1)).ravel()[:, None]).tocsc()      # each old column's shares (j, i)
+    rows = mk.skin_index[inner]
+    donors = np.unique(f[:, inner].nonzero()[0])
+    K = int(count0[inner[0]])
+    assert np.all(count0[donors] == K) and np.all(sk.count[rows] == K)      # the same cells in every flat column here
+    depth_miss = float(np.abs(np.cumsum(sk.dz(), axis=1)[rows, :K] - spans[inner, :K]).max() / H)
+    want = np.asarray(f[:, inner].T @ held)[:, :K]
+    level_miss = float((np.abs(sk.m[rows, :K] - want).sum(axis=1) / sk.m[rows].sum(axis=1)).max())
     miss = _would_fill(host)
-    through = float(np.abs(miss[inner]).sum() / sk.column_volume()[inner].sum())
-    print("re-partition: shifted areas {:.3f} to {:.3f} of their old; books mass {:.1e} enthalpy {:.1e} momentum {:.1e}; "
-          "the fill would move {:.1e} of the inner columns' volume through the base".format(
-              ratio.min(), ratio.max(), M1 / M0 - 1, E1 / E0 - 1, np.abs(P1 - P0).max() / P_size, through))
+    through = float(np.abs(miss[rows]).sum() / sk.column_volume()[rows].sum())
+    print("re-partition by depth: shifted areas {:.3f} to {:.3f} of their old; books mass {:.1e} enthalpy {:.1e} "
+          "momentum {:.1e}; stretch {:.1e} from one; the fill would move {:.1e} of the inner columns' volume through "
+          "the base; their cells' depths {:.1e} of H and metal {:.1e} off their donors'".format(
+              ratio.min(), ratio.max(), M1 / M0 - 1, E1 / E0 - 1, np.abs(P1 - P0).max() / P_size,
+              np.abs(stretch - 1.0).max(), through, depth_miss, level_miss))
     assert ratio.min() < 0.85 and ratio.max() > 1.1                    # the shift does re-partition the area
-    assert through <= THROUGH_SHARE
     assert abs(M1 / M0 - 1) <= BOOKS_RTOL and abs(E1 / E0 - 1) <= BOOKS_RTOL
     assert np.abs(P1 - P0).max() <= BOOKS_RTOL * P_size
-    T, stretch = host.last_settle[0].transfer, host.last_settle[0].stretch
     assert np.abs(stretch - 1.0).max() <= 1e-14
-    thick1 = _flat_depth(sk)[mk.skin_index]
-    for i in range(mk.n):
-        donors = T[:, i].nonzero()[0]
-        assert thick0[donors].min() * (1 - 1e-12) <= thick1[i] <= thick0[donors].max() * (1 + 1e-12)
+    assert through <= THROUGH_SHARE
+    assert depth_miss <= DEPTH_SHARE and level_miss <= LEVEL_SHARE
 
 
 def test_a_thick_skin_losing_area_gives_its_metal_to_its_neighbour():
@@ -1071,6 +1166,127 @@ def test_a_thick_skin_losing_area_gives_its_metal_to_its_neighbour():
     share = np.asarray(tr[thick].todense()).ravel() / tr[thick].sum()
     np.testing.assert_allclose(after, E_ex[thick] * share, rtol=0.0, atol=1e-12 * E_ex[thick])
     assert share[left] + share[right] >= 0.9 * (1.0 - share[thick])
+
+
+# -- heat across a box edge (plan 03b Task 6) ---------------------------------------------------------------------------
+BOX_T0, BOX_FLUX, BOX_TIME = 700.0, 1.0e6, 0.5    # K, W/m2, s: the stage 3 box, the flux on its -x face, the one step
+EDGE_PROBE = (0.5e-3, 0.6e-3)   # m: the probe 0.5 mm from the heated face's edge along the unheated +y face, 0.6 mm
+                                # below that face (at the edge's middle, z = BOX_OFF)
+REF_FLOOR = 0.1e-3              # m: the reference's cells near that edge (0.0875 mm, the box mesh's level below it)
+REF_STEPS = 100                 # the reference's backward-Euler steps over BOX_TIME
+EDGE_RTOL = 0.05                # the probe's temperature rise against the reference's, relative
+EDGE_FAILS = ("plan 03b Task 6, measured once: the probe lies in an unheated-face column wrapping the edge (its marker's "
+              "normal +y), whose cell at the probe's depth is the mean over its level surface, 0.50 to 1.98 mm from the "
+              "heated face; its rise is 25.73 K with the sideways heat (16 % under the reference's 30.71 K at the probe, "
+              "9.3 % under the reference's 28.37 K mean over the column's own region) and 31.12 K without it (9.7 % over "
+              "that mean); across the edge the columns' centroids at 0.5 mm depth are 0.56 of their markers' distance "
+              "apart, along a face 0.60 to 1.84 of it (planning ruling 5 divides by the markers' distance); for the "
+              "controller's ruling")
+
+
+def _box_phi0():
+    """The stage 3 box's phi0 (analysis/levelset/stage3_cases.py's `box_phi0`): the largest of its six planes'
+    distances, an exact distance inside, from `cases.box_corners`."""
+    from cases import box_corners
+    lo, hi = box_corners()
+    return lambda x: np.max(np.concatenate([lo - x, x - hi], axis=1), axis=1)
+
+
+def _box_flux(P):
+    """BOX_FLUX on the box's -x face as a beam along +x puts it [W/m2] on each patch P of phi: BOX_FLUX max(-n_x, 0), so
+    that the heat in is BOX_FLUX times phi's shadow along x however the edges' cut cells blend their normals (the face's
+    10 x 10 mm less what the P1 contour rounds off the shadow's corners: 1.6e-4 of it on the box's own mesh)."""
+    return BOX_FLUX * np.maximum(-P.normal[:, 0], 0.0)
+
+
+def _layer_temperature(body, p):
+    """The body's temperature [K] at the point p (3,) between phi and beta: the column whose marker owns its foot on phi
+    (p - phi(p) n, n phi's recovered normal; the nearest marker by the same-side rule, as the division divides the
+    layer), at the depth -phi(p), linear between its cells' mid-depths. Returns (T, the marker, the depth [m])."""
+    from scipy.spatial import cKDTree
+    from reentry_model.levelset import markers as M
+    mk, sk = body.markers, body.skins
+    val, g = M._field(body.mesh, body.phi, np.asarray(p, float)[None])
+    foot = p[None] - val[:, None] * g
+    m = int(M._nearest(cKDTree(mk.x), foot, 1, mk.normal, g)[1][0, 0])
+    row = mk.skin_index[m]
+    dz = sk.dz()[row, :sk.count[row]]
+    return float(np.interp(-val[0], np.cumsum(dz) - 0.5 * dz, sk.T()[row, :sk.count[row]])), m, float(-val[0])
+
+
+def _edge_reference(phi0, probe):
+    """CutThermal alone on the box (its phi0 exact on the nodes) at BOX_T0, BOX_FLUX on its -x face (`_box_flux`) for
+    BOX_TIME in REF_STEPS steps, on the box's base mesh refined to REF_FLOOR within 1 mm of the heated face's +y edge, to
+    0.175 mm within 2 mm of it, to 0.35 mm within 4 mm of the heated face and 0.7 mm elsewhere in the metal. Returns
+    (the temperature [K] at `probe`, the mesh's cells)."""
+    from cases import box_corners
+    from reentry_model.levelset.boxmesh import build
+    from reentry_model.levelset.cutcell import patches
+    from reentry_model.levelset.cutthermal import CutThermal
+    lo, hi = box_corners()
+    base = BoxBase.around((-2.8e-3, -5e-3 - 2.8e-3, -5e-3 - 2.8e-3), (8e-3 + 2.8e-3, 5e-3 + 2.8e-3, 5e-3 + 2.8e-3),
+                          2.8e-3)
+
+    def target(x, size):
+        f = phi0(x)
+        metal = f < 0.87 * size
+        edge = np.hypot(x[:, 0] - lo[0], x[:, 1] - hi[1])
+        want = np.where(edge < 1e-3 + 0.87 * size, REF_FLOOR, np.where(edge < 2e-3 + 0.87 * size, 0.175e-3,
+                        np.where(x[:, 0] - lo[0] < 4e-3 + 0.87 * size, 0.35e-3, 0.7e-3)))
+        return np.where(metal, want, np.inf)
+    mesh = build(base, target)
+    phi = phi0(mesh.points)
+    solver = CutThermal(aa7075(), emissivity=0.0)
+    solver.setup(mesh, phi)
+    solver.set_temperature(BOX_T0)
+    q = _box_flux(solver.P)
+    for _ in range(REF_STEPS):
+        solver.step(BOX_TIME / REF_STEPS, q)
+    return float(interpolate(mesh, solver.T, np.asarray(probe, float)[None])[0]), len(mesh.tets)
+
+
+@pytest.mark.reference
+@pytest.mark.xfail(strict=True, reason=EDGE_FAILS)
+def test_heat_passes_a_box_edge_between_the_faces_columns():
+    """Plan 03b Task 6 (design 21.5 and planning ruling 5: the skins conduct sideways across the division's shared
+    boundaries): the stage 3 box (8 x 10 x 10 mm, its default meshes, development skins) at 700 K, 1 MW/m2 on its -x face
+    as a beam along +x puts it (`_box_flux`) for one 0.5 s step, nothing melting. At the probe 0.6 mm below the unheated
+    +y face, 0.5 mm along it from the heated face's edge (EDGE_PROBE), the body's temperature rise (its column's cell at
+    the probe's depth, `_layer_temperature`) is within EDGE_RTOL of the reference's, CutThermal alone on the same box
+    with 0.1 mm cells near that edge (`_edge_reference`); the books close."""
+    from cases import box_corners
+    from reentry_model.levelset.cutcell import patches
+    lo, hi = box_corners()
+    phi0 = _box_phi0()
+    probe = np.array([lo[0] + EDGE_PROBE[0], hi[1] - EDGE_PROBE[1], 0.5 * (lo[2] + hi[2])])
+    started = time.perf_counter()
+    base = BoxBase.around((-2.8e-3, -5e-3 - 2.8e-3, -5e-3 - 2.8e-3), (8e-3 + 2.8e-3, 5e-3 + 2.8e-3, 5e-3 + 2.8e-3),
+                          2.8e-3)
+    body = skinbody.LevelSetSkinBody(aa7075(), base, phi0, BOX_T0, SETTINGS, remove="feed", v_hat=(-1.0, 0.0, 0.0))
+    built = time.perf_counter() - started
+    P = patches(body.mesh, body.phi)
+    W = body.markers.owned_patches(body.mesh, body.phi, P)
+    q = np.asarray(W @ _box_flux(P)).ravel() / body.markers.area          # each marker's mean over what it owns
+    heat = float(_box_flux(P) @ P.area) * BOX_TIME                          # the beam over phi's patches [J]
+    started = time.perf_counter()
+    book = body.advance(BOX_TIME, q_prescribed=q)
+    stepped = time.perf_counter() - started
+    T_body, m, depth = _layer_temperature(body, probe)
+    started = time.perf_counter()
+    T_ref, cells = _edge_reference(phi0, probe)
+    referenced = time.perf_counter() - started
+    rise, want = T_body - BOX_T0, T_ref - BOX_T0
+    print("box edge: built {:.0f} s, stepped {:.0f} s ({} parts, at most {} passes; heat in {:.4f} J against {:.4f} J; "
+          "mismatch {:.2e} of it; residuals mass {:.1e} enthalpy {:.1e}); the probe in marker {}'s column (normal {}) at "
+          "{:.3f} mm: rise {:.3f} K against the reference's {:.3f} K ({:+.2%}; {} cells, {:.0f} s)".format(
+              built, stepped, book.parts, book.passes, book.enthalpy_in, heat,
+              book.interface_mismatch_J / book.enthalpy_in, book.mass_residual, book.enthalpy_residual, m,
+              np.round(body.markers.normal[m], 2), depth * 1e3, rise, want, rise / want - 1.0, cells, referenced))
+    assert np.nanmax(body.skins.T()) < body.material.T_solidus                     # nothing melting
+    assert abs(book.mass_residual) <= 1e-12
+    assert abs(book.enthalpy_residual) <= 1e-8
+    assert book.enthalpy_in == pytest.approx(heat, rel=1e-9)
+    assert abs(rise / want - 1.0) <= EDGE_RTOL
 
 
 def _melt_all(body, T=1000.0):

@@ -1,6 +1,7 @@
 """Builders the level-set tests share (Task 9b, fix round 1: moved here from the test modules that imported them from
 one another): the gas state of the loads and body tests, markers seeded as the body seeds them, a box mesh refined along a
-level set, and each marker's tessellated area against the area nearest it, with the acceptance numbers of the ruling on
+level set, and each column's top cross-section in the division of the layer against the area of phi nearest its marker
+(plan 03b Task 6: the tangent-plane cells it compared before are retired), with the acceptance number of the ruling on
 the neighbour test; and (plan 03b Task 2, moved here from test_levelset_division.py) the exact signed distances of a box
 and of a polygonal prism, and the stage 3 box refined by the body's refinement rule around its exact distance, with (plan
 03b Task 4) its division at the skin depth. Test-only; no physics of the level set lives here."""
@@ -21,8 +22,8 @@ from reentry_model.shared import atmosphere, trajectory as tj
 
 DESIGN_SPACING = 2e-3      # m: the body's marker spacing (skinbody.MARKER_SPACING)
 DESIGN_FINE = 0.7e-3       # m: the body's fine cells (its default fine_size)
-CAPPED_SHARE = 0.01        # of the cells: at most this many bounded by the cap on a continuous surface (Task 9b ruling)
-OWNERSHIP_FACTOR = 1.5     # a static tessellation's cell's area within this factor of the area nearest the marker
+OWNERSHIP_FACTOR = 1.5     # a column's top cross-section (the division's A(0)) within this factor of the area nearest
+                           # its marker (Task 9b's ruling on the neighbour test, for the tangent-plane cells then)
 DEV_SETTINGS = SkinSettings(cell=SKIN_PRESETS["dev"])   # the development preset's skins (20 um cells)
 
 
@@ -45,15 +46,16 @@ def seeded(mesh, phi, spacing, lo, material=None, settings=DEV_SETTINGS):
     return Markers.create(mesh, phi, np.sort(order[first]), material=material, settings=settings, spacing=spacing)
 
 
-def nearest_ratio(mk, mesh, phi):
-    """Each marker's tangent-plane cell's area (`Markers.cell_area`, the cells its faces bound; its area itself is the
-    area of phi it owns since Task 11's fix round 1, C1) over the area of phi nearer to it than to any other marker
-    (surface samples a sixteenth of the spacing across), the two scaled to the same total: how well the tessellation
-    found the true neighbours."""
+def nearest_ratio(mk, mesh, phi, division):
+    """Each marker's column's top cross-section in `division` (a `division.Division` of the markers `mk`: its A(0), the
+    column's volume per unit depth at phi, which the skins fill and the runoff's cells cross; plan 03b Task 6) over the
+    area of phi nearer to the marker than to any other (surface samples a sixteenth of the spacing across), the two
+    scaled to the same total: how well the division found each marker's own part of the surface."""
     y, w = surface_samples(mesh, phi, mk.spacing / 16.0)
     _, j = cKDTree(mk.x).query(y)
     near = np.bincount(j, w, minlength=mk.n)
-    return mk.cell_area / near * near.sum() / mk.cell_area.sum()
+    top = np.asarray(division.area[:, 0], dtype=float)
+    return top / near * near.sum() / top.sum()
 
 
 def refined(base, level, fine):

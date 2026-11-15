@@ -2,15 +2,16 @@
 through the depth with its response, the thickness and capillary terms implicit in the heights, the implicit upwind
 transport across the markers' faces with the arrival rule, the landing conduction and the flow sub-steps' count. The
 strip cases are the skyscrapers' (tests/test_reentry_model_skin.py: landing velocity ~1625, runoff onto cold metal
-~2051; the pushed plate, tests/test_reentry_model_skinbody.py ~926), built here on straight strips of markers whose faces
-are given directly, with no mesh."""
+~2051; the pushed plate, tests/test_reentry_model_skinbody.py ~926), built here on straight strips of markers whose
+faces are given directly, with no mesh, by the sheet's constructor (`grid_sheet`); the body's faces are its division's
+(`Sheet.from_division`, plan 03b Tasks 4 and 6), tested at the end."""
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from reentry_model.levelset import runoff
-from reentry_model.levelset.markers import Faces, Markers
+from reentry_model.levelset.markers import Markers
 from reentry_model.levelset.skin import Skins, SkinSettings
 from reentry_model.shared.material import Material
 
@@ -31,21 +32,43 @@ def aa7075():
 
 def grid_markers(nx, ny, h=1e-3):
     """Markers on a flat regular grid of nx by ny points h apart in the plane z = 0, normals +z, each with a square cell
-    of area h^2 and a face of length h to each of its four grid neighbours (the exact Voronoi tessellation), built with
-    no mesh. Returns the markers (faces set) and each marker's grid indices (ix, iy)."""
+    of area h^2, built with no mesh (their faces are `grid_sheet`'s). Returns the markers and each marker's grid indices
+    (ix, iy)."""
     ix, iy = np.meshgrid(np.arange(nx), np.arange(ny), indexing="ij")
     ix, iy = ix.ravel(), iy.ravel()
     x = np.column_stack([ix * h, iy * h, np.zeros(ix.size)])
     n = len(x)
-    idx = np.arange(n).reshape(nx, ny)
-    i = np.r_[idx[:-1, :].ravel(), idx[:, :-1].ravel()]
-    j = np.r_[idx[1:, :].ravel(), idx[:, 1:].ravel()]
-    normal = x[j] - x[i]
-    normal /= np.linalg.norm(normal, axis=1)[:, None]
     mk = Markers(x, np.tile([0.0, 0.0, 1.0], (n, 1)), np.full(n, h * h), np.zeros((n, 2)), np.arange(n),
                  np.full(n, -1), h)
-    mk.faces = Faces(i, j, np.full(len(i), h), normal)
     return mk, ix, iy
+
+
+def sheet_of_faces(mk, i, j, length, normal, skins=None):
+    """The sheet of the markers `mk` carrying `skins` (default mk.skins) with the faces between the markers i < j (E,) of
+    the lengths `length` (E,) [m] and unit normals `normal` (E, 3) from i toward j given, each the same at every depth:
+    `runoff.Sheet`'s constructor in the skins' row order, f = length normal and w = length / |x_j - x_i| (as `Sheet.of`
+    made it from the tessellation's faces until plan 03b Task 6 retired them)."""
+    skins = mk.skins if skins is None else skins
+    rows = mk.skin_index
+    marker = np.empty(skins.n, dtype=np.int64)
+    marker[rows] = np.arange(len(rows))
+    x = mk.x[marker]
+    a, b = rows[i], rows[j]
+    length = np.asarray(length, dtype=float)
+    return runoff.Sheet(mk.normal[marker], x, a, b, length[:, None] * np.asarray(normal, dtype=float),
+                        length / np.linalg.norm(x[b] - x[a], axis=1), skins.area, marker)
+
+
+def grid_sheet(mk, h=1e-3):
+    """The sheet of `grid_markers`' markers carrying their skins: a face of length h to each of a marker's four grid
+    neighbours (the exact Voronoi tessellation of the grid), its normal along the grid (`sheet_of_faces`)."""
+    ix, iy = (np.rint(mk.x[:, k] / h).astype(np.int64) for k in (0, 1))
+    idx = np.full((ix.max() + 1, iy.max() + 1), -1, dtype=np.int64)
+    idx[ix, iy] = np.arange(mk.n)
+    i = np.r_[idx[:-1, :].ravel(), idx[:, :-1].ravel()]
+    j = np.r_[idx[1:, :].ravel(), idx[:, 1:].ravel()]
+    normal = mk.x[j] - mk.x[i]
+    return sheet_of_faces(mk, i, j, np.full(len(i), h), normal / np.linalg.norm(normal, axis=1)[:, None])
 
 
 def stacked(mk, temps, mat=None):
@@ -89,7 +112,7 @@ def test_the_pushes_point_along_the_meridian_away_from_the_stagnation_point():
     mk, ix, _ = grid_markers(12, 1)
     sk = stacked(mk, [[LIQUID] * 20 + [RIGID] * 5] * mk.n)
     f = flight_forcing(mk, STRIP_V_HAT, dp_ds=-2e4, tau=20.0, decel=50.0)
-    G, terms = runoff.pushes(mk, sk, f)
+    G, terms = runoff.pushes(grid_sheet(mk), sk, f)
     rho_l = sk.rho_l
     np.testing.assert_allclose(terms["pressure"], np.tile([2e4, 0.0, 0.0], (mk.n, 1)), rtol=1e-12)
     np.testing.assert_allclose(terms["deceleration"], np.tile([-0.6 * 50.0 * rho_l, 0.0, 0.0], (mk.n, 1)), rtol=1e-12)
@@ -112,7 +135,7 @@ def test_landed_metal_flows_on_at_its_arrival_velocity():
     sk.U = np.where((sk.valid & (sk.T() > 900.0))[..., None], u, 0.0)
     before = [a.copy() for a in (sk.m, sk.H, sk.count)]
     M0 = sk.m.sum()
-    book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+    book = runoff.transport(sk, grid_sheet(mk), 0.01)
     per = book.mass
     assert np.all(per[5:] > 0.0)                                         # 15 markers in one sub-step
     np.testing.assert_allclose(per[6:19] / per[5:18], 5.0 / 6.0, rtol=0.01)
@@ -142,7 +165,7 @@ def test_a_new_top_cell_that_receives_nothing_is_not_created():
     sk.install(m, H, count + np.array([1, 0, 0]))
     sk.U[0, 0] = [1e-40, 0.0, 0.0]                       # toward the second marker
     before = [a.copy() for a in (sk.m, sk.H, sk.count)]
-    book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+    book = runoff.transport(sk, grid_sheet(mk), 0.01)
     assert np.array_equal(sk.count, before[2]) and not book.landed.any()
     assert np.array_equal(sk.m, before[0]) and np.array_equal(sk.H, before[1])
     assert np.all(np.isfinite(sk.U)) and np.all(sk.m[sk.valid] > 0.0)
@@ -161,7 +184,7 @@ def test_a_round_off_arrival_joins_the_top_cell_instead_of_landing():
         sk.U[0, 0] = [speed, 0.0, 0.0]
         before = [a.copy() for a in (sk.m, sk.H, sk.count)]
         M0, E0, P0 = sk.m.sum(), sk.H.sum(), sk.totals()[2].sum(axis=0)
-        book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+        book = runoff.transport(sk, grid_sheet(mk), 0.01)
         assert bool(book.landed[1]) == lands and (sk.count[1] > before[2][1]) == lands
         assert sk.m.sum() == pytest.approx(M0, rel=1e-14) and sk.H.sum() == pytest.approx(E0, rel=1e-14)
         P1 = sk.totals()[2].sum(axis=0)
@@ -182,7 +205,7 @@ def test_nothing_passes_through_anchored_metal():
     sk.U[:] = [1.0, 0.0, 0.0]                                       # anchored cells too: they must not move
     m0, H0 = sk.m.copy(), sk.H.copy()
     anch = sk.anchored()
-    book = runoff.transport(sk, runoff.Sheet.of(mk), 1e-3)
+    book = runoff.transport(sk, grid_sheet(mk), 1e-3)
     assert sk.count[1] == 16 and book.landed[1] and not book.landed[0]
     assert np.array_equal(sk.m[1, 1:16], m0[1, :15]) and np.array_equal(sk.H[1, 1:16], H0[1, :15])
     assert np.array_equal(sk.m[0, 10:15], m0[0, 10:15]) and np.array_equal(sk.H[0, 10:15], H0[0, 10:15])
@@ -195,7 +218,7 @@ def test_nothing_passes_through_anchored_metal():
     crust = sk2.crust()
     assert crust[0, :3].all()
     m1 = sk2.m.copy()
-    book2 = runoff.transport(sk2, runoff.Sheet.of(mk2), 1e-3)
+    book2 = runoff.transport(sk2, grid_sheet(mk2), 1e-3)
     assert book2.landed[1] and sk2.count[1] == 16                     # the crust's metal (and only it) lands on top
     assert sk2.T()[1, 0] == pytest.approx(RIGID, abs=1e-6)          # rigid metal, the crust's own
     assert np.array_equal(sk2.m[1, 11:16], m1[1, 10:15])
@@ -203,43 +226,56 @@ def test_nothing_passes_through_anchored_metal():
 
 # -- the divergence-free flow on a sphere (Task 5's cell-closure ruling) ------------------------------------------------
 def test_a_divergence_free_flow_does_not_pile_up_mass():
-    """A uniform liquid skin on the 25 mm sphere's markers (2 mm cells), the cells' velocities held at a rigid rotation
-    omega x x about an axis -- divergence-free on the sphere -- for 20 transport sub-steps of 1 ms at 0.5 m/s at the
-    equator (10 mm, five markers' spacings): the total mass is exact and every skin's mass stays within PILE_BOUND of the
-    mean. The bound: the implicit upwind scheme on a divergence-free field moves no mass where the cells close and the
-    velocity is uniform across a cell; what remains is the Voronoi cells' non-closure (Task 5: median 1.5 %, max 2.6 %
-    of the perimeter) times the Courant number per sub-step, accumulated, plus the upwind error of the velocity's
-    variation over a cell (h / R about 0.08); see the report for the measured spread."""
-    from reentry_model.levelset.boxmesh import BoxBase, build
-    R, h0 = 25e-3, 2e-3
-    mesh = build(BoxBase.around((-31e-3,) * 3, (31e-3,) * 3, h0))
-    phi = np.linalg.norm(mesh.points, axis=1) - R
-    mat = LinearMeltMaterial()
-    mk = Markers.create(mesh, phi, None, material=mat, settings=SkinSettings(cell=20e-6))
-    mk.tessellate(mesh, phi)
+    """Liquid filling every column of a 10 mm sphere's division (the body's design cells, 0.7 mm at the surface; markers
+    seeded 2 mm apart and merged as the body seeds and settles them; plan 03b Task 6, on the division's depth-resolved
+    boundaries), the cells' velocities held at a rigid rotation omega x x about an axis (PILE_OMEGA, 0.2 m/s at the
+    equator) -- divergence-free on the sphere -- for 20 transport sub-steps of 1 ms: the total mass is exact and every
+    column's mass stays within PILE_BOUND of its own. The implicit upwind scheme on a divergence-free field moves no mass
+    where each column's boundary fluxes close (a rotation's normal velocity is the same either side of a boundary normal
+    to the markers' chord); what remains is the curved surface's own non-closure in the markers' tangent planes (on this
+    sphere at most 0.77 % of a column's perimeter, the division's boundaries within 0.2 % of the spherical Voronoi arcs
+    since `markers._dividing` counts a boundary along a mesh edge once) times the Courant number per sub-step,
+    accumulated until the surplus moves on. Measured once: 2.05e-2 at most (median 3.5e-3); the retired tangent-plane
+    faces gave 2.71e-2 on the same sphere and markers (718cf7e). (The test before plan 03b Task 6 held 1 % on a 25 mm
+    sphere, a fifth of this one's curvature, with one marker per patch.)"""
+    from cases import DESIGN_FINE, seeded
+    from reentry_model.levelset.boxmesh import BoxBase
+    from reentry_model.levelset.levelset import redistance
+    R = 10e-3
+    base = BoxBase.around((-R - 5.6e-3,) * 3, (R + 5.6e-3,) * 3, 2.8e-3)
+    level = lambda x: np.linalg.norm(x, axis=1) - R
+    mesh = build(base, lambda x, s: np.where((level(x) < 2 * DESIGN_FINE + 0.87 * s) &
+                                             (level(x) > -DEPTH_SETTINGS.depth - 2 * DESIGN_FINE - 0.87 * s),
+                                             DESIGN_FINE, np.inf))
+    phi = redistance(mesh, level(mesh.points), band=4e-3)
+    seeds = seeded(mesh, phi, DESIGN_SPACING, base.lo)
+    seeds.tessellate(mesh, phi)
+    while seeds.merge(DESIGN_SPACING):                    # as the body settles them (markers.MERGE_FRACTION)
+        seeds.tessellate(mesh, phi)
+    seeds.snap(mesh, phi)
+    d = divide(mesh, phi, DEPTH_SETTINGS.depth, seeds.x, seeds.normal)
+    mk = division_markers(seeds.x, seeds.normal, d, LinearMeltMaterial(), LIQUID)
     sk = mk.skins
-    sk.area[mk.skin_index] = mk.area
-    sk.kappa[mk.skin_index] = mk.kappa
-    sk.fill(mat.liquid.rho * sk.area * 0.2e-3, LIQUID)
-    sheet = runoff.Sheet.of(mk)
+    sheet = runoff.Sheet.from_division(d, mk)
     axis = np.array([0.3, -0.2, 0.93])
     axis /= np.linalg.norm(axis)
-    omega = 0.5 / R * axis
+    omega = PILE_OMEGA * axis
     U = np.zeros((sk.n, 3))
     U[mk.skin_index] = np.cross(omega, mk.x)
-    M0 = sk.m.sum()
+    M0, m0 = sk.m.sum(), sk.m.sum(axis=1)
     for _ in range(20):
         sk.U = np.where(sk.valid[..., None], U[:, None, :], 0.0)
         runoff.transport(sk, sheet, 1e-3)
         sk.regrid()
-    M = sk.m.sum(axis=1) / sk.area
-    spread = np.abs(M / M.mean() - 1.0).max()
-    print("divergence-free rotation: largest skin mass per area off the mean by", spread)
+    spread = np.abs(sk.m.sum(axis=1) / m0 - 1.0)
+    print("divergence-free rotation on the division: {} columns; the largest column's mass off its own by {:.2e} (median "
+          "{:.2e})".format(mk.n, spread.max(), np.median(spread)))
     assert sk.m.sum() == pytest.approx(M0, rel=1e-13)
-    assert spread < PILE_BOUND
+    assert spread.max() < PILE_BOUND
 
 
-PILE_BOUND = 0.01
+PILE_BOUND = 0.025         # of a column's mass (the docstring: 2.05e-2 measured once, 2.71e-2 with the retired faces)
+PILE_OMEGA = 20.0          # rad/s: the rotation (0.2 m/s at the 10 mm sphere's equator; the 25 mm sphere's 0.5 m/s before)
 
 
 # -- the landing conduction and runoff onto cold metal ------------------------------------------------------------------
@@ -275,7 +311,7 @@ def cold_runoff(landing=True, monkeypatch=None, cycles=10, tau=20.0, edge=10):
     f = flight_forcing(mk, STRIP_V_HAT, tau=tau)
     f.cycles = cycles
     start = (sk.m.sum(), sk.H.sum(), sk.totals()[2].sum(axis=0), sk.m.sum(axis=1))
-    book = runoff.flow_substeps(sk, mk, f, 0.01)
+    book = runoff.flow_substeps(sk, grid_sheet(mk), f, 0.01)
     return sk, book, ix, start
 
 
@@ -324,14 +360,15 @@ def test_a_pushed_face_runs_downstream():
     meridian = np.array([-np.sin(turn), -np.cos(turn), 0.0])    # away from the stagnation point
     v_hat = -np.sin(a) * meridian + np.array([0.0, 0.0, np.cos(a)])
     f = flight_forcing(mk, v_hat, FLIGHT_DP_DS, FLIGHT_TAU, FLIGHT_DECEL, sigma=sk.material.liquid.sigma)
-    G, _ = runoff.pushes(mk, sk, f)
+    sheet = grid_sheet(mk)
+    G, _ = runoff.pushes(sheet, sk, f)
     push = G[disc].mean(axis=0)
     assert push @ meridian > 0.0
     M0, E0, P0, m0 = sk.m.sum(), sk.H.sum(), sk.totals()[2].sum(axis=0), sk.m.sum(axis=1)
     flux = np.zeros(3)
     total = None
     for _ in range(5):
-        book = runoff.flow_substeps(sk, mk, f, 0.01)
+        book = runoff.flow_substeps(sk, sheet, f, 0.01)
         flux += (sk.dz()[..., None] * sk.U).sum(axis=(0, 1))
         total = book if total is None else (total.add(book) or total)
     gain = np.maximum(sk.m.sum(axis=1) - m0, 0.0)
@@ -388,7 +425,7 @@ def test_the_flow_sub_steps_release_after_the_landing_and_book_it():
     M0, E0, P0 = sk.m.sum(), sk.H.sum(), sk.totals()[2].sum(axis=0)
     runoff.landing_conduct = spy_landing
     try:
-        book = runoff.flow_substeps(sk, mk, f, 0.01, release=release)
+        book = runoff.flow_substeps(sk, grid_sheet(mk), f, 0.01, release=release)
     finally:
         runoff.landing_conduct = real_landing
     assert calls == [pytest.approx(0.0025)] * 4
@@ -413,24 +450,24 @@ def test_the_transport_books_its_corrections_and_does_not_fall_back_silently(mon
         return mk, sk
 
     mk, sk = strip()
-    book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+    book = runoff.transport(sk, grid_sheet(mk), 0.01)
     assert book.converged and book.corrections == 0          # one-way flow: the upwind order solves it at once
     # a flow with a cycle (metal running both ways across one face) needs corrections, which the book counts
     mk, sk = strip()
     sk.U[1::2] *= -1.0
-    book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+    book = runoff.transport(sk, grid_sheet(mk), 0.01)
     assert book.converged and book.corrections > 0
     # with none allowed it raises
     mk, sk = strip()
     sk.U[1::2] *= -1.0
     monkeypatch.setattr(runoff, "TRANSPORT_CORRECTIONS", 0)
     with pytest.raises(RuntimeError, match="did not converge"):
-        runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+        runoff.transport(sk, grid_sheet(mk), 0.01)
     monkeypatch.setattr(runoff, "TRANSPORT_FALLBACK", True)
     mk, sk = strip()
     sk.U[1::2] *= -1.0
     with pytest.warns(RuntimeWarning, match="did not converge"):
-        book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+        book = runoff.transport(sk, grid_sheet(mk), 0.01)
     assert not book.converged
 
 
@@ -506,11 +543,12 @@ def test_depth_faces_with_constant_lengths_transport_as_before():
     """On a flat face the division's boundaries have the same length at every level and its columns the same
     cross-section, to 1e-12. With exactly constant lengths and cross-sections the sheet of the division
     (`Sheet.from_division`: each cell's rate (u.n) L(z)/A(z) at its mid-depth, ruling 5) and the sheet of the markers
-    given the division's top faces (`Sheet.of`, stage 3's faces) carry the same metal: liquid over rigid metal (and four
-    columns rigid at the top, which metal lands on and flows over), running one way at speeds varying with the column
-    and the depth, one transport sub-step with a face push leaves the same cells and books to 1e-14, and a heat
-    sub-step's flow sub-steps (the pushes, the momentum, the thickness terms, the transport, the landing conduction) to
-    1e-12."""
+    given the division's top faces, the same at every depth (the sheet's constructor, `sheet_of_faces`, as stage 3's
+    `Sheet.of` built it, retired by plan 03b Task 6; the controller's ruling P3) carry the same metal: liquid over rigid
+    metal (and four columns rigid at the top, which metal lands on and flows over), running one way at speeds varying
+    with the column and the depth, one transport sub-step with a face push leaves the same cells and books to 1e-14, and
+    a heat sub-step's flow sub-steps (the pushes, the momentum, the thickness terms, the transport, the landing
+    conduction) to 1e-12."""
     x, normal, d = flat_division(6)
     B = len(d.levels) - 1
     assert np.all(d.length[:, 0] > 0.0)
@@ -533,8 +571,8 @@ def test_depth_faces_with_constant_lengths_transport_as_before():
     e = np.array([np.cos(angle), 0.0, np.sin(angle)])
     speed = 0.2 * rng.uniform(0.5, 1.5, n)[:, None] * (1.0 + z / DEPTH_SETTINGS.depth)
     sk.U = np.where((sk.valid & sk.flowing())[..., None], speed[..., None] * e, 0.0)
-    mk.faces = Faces(d.i, d.j, d.length[:, 0], d.normal)
-    old, new = runoff.Sheet.of(mk), runoff.Sheet.from_division(const, mk)
+    old = sheet_of_faces(mk, d.i, d.j, d.length[:, 0], d.normal)        # the constructor with today's f and w (ruling
+    new = runoff.Sheet.from_division(const, mk)                           # P3: `Sheet.of` is retired)
     assert new.length_z.shape == (len(d.i), B + 1) and np.array_equal(new.levels, d.levels)
     np.testing.assert_allclose(new.f, old.f, rtol=1e-15, atol=0.0)
     np.testing.assert_allclose(new.w, old.w, rtol=1e-15)
@@ -683,3 +721,61 @@ def test_landing_conduction_conducts_on_the_profile():
     assert np.abs(on_flat - on_profile).max() > 1e-3 * change
     assert sk.H[0, :k].sum() == pytest.approx(H0[0, :k].sum(), rel=1e-14)
     assert np.array_equal(sk.H[0, k:], H0[0, k:]) and np.array_equal(sk.H[1], H0[1]) and np.array_equal(sk.m, m0)
+
+
+# -- no metal across gas (plan 03b Task 6) -----------------------------------------------------------------------------
+SLOT_WIDTH = 1.0e-3        # m: the gas between the slot's two walls
+SLOT_FLOOR = -0.5e-3       # m: the slot's floor (y); its walls rise from it to the block's +y face at 3.5 mm
+SLOT_SPACING = 1.0e-3      # m: the markers' spacing there, the slot's width
+
+
+def test_no_metal_runs_across_a_slot():
+    """Plan 03b Task 6 (design 21.5: ownership never crosses gas, so neither does runoff): a block 7 x 7 x 5 mm with a
+    slot 1.0 mm wide cut 4 mm into it from its +y face through its whole height, its two walls facing each other across
+    the gas, on 0.35 mm cells through the layer; markers seeded 1 mm apart; the layer divided, every column liquid. The
+    first wall's markers more than a spacing above the slot's floor (whose columns do not reach it: the floor, narrower
+    than the spacing, has no marker of its own, and the walls' lowest columns meet on it face to face, design 21.11's
+    thin case) share no boundary with any column of the second wall, and a transport sub-step with every cell of theirs
+    moving at 1 m/s straight across the gap toward the second wall (and along their own) sends nothing to it: the second
+    wall's cells are unchanged to the last bit, while the first wall's metal does run to its own neighbours and the books
+    close."""
+    from cases import seeded
+    from reentry_model.levelset.boxmesh import BoxBase
+    from reentry_model.levelset.levelset import redistance
+    half, fine = np.array([3.5e-3, 3.5e-3, 2.5e-3]), 0.35e-3
+    off = np.array([0.13e-3, 0.07e-3, 0.11e-3])
+
+    def level(x):
+        q = x - off
+        block = np.max(np.abs(q) - half, axis=1)
+        cut = np.maximum(np.abs(q[:, 0]) - 0.5 * SLOT_WIDTH, SLOT_FLOOR - q[:, 1])      # negative inside the slot
+        return np.maximum(block, -cut)
+    base = BoxBase.around((-5.6e-3,) * 3, (5.6e-3,) * 3, 1.4e-3)
+    mesh = build(base, lambda x, s: np.where((level(x) < 2 * fine + 0.87 * s) &
+                                             (level(x) > -DEPTH_SETTINGS.depth - 2 * fine - 0.87 * s), fine, np.inf))
+    phi = redistance(mesh, level(mesh.points), band=3e-3)
+    seeds = seeded(mesh, phi, SLOT_SPACING, base.lo)
+    d = divide(mesh, phi, DEPTH_SETTINGS.depth, seeds.x, seeds.normal)
+    mk = division_markers(seeds.x, seeds.normal, d, LinearMeltMaterial(), LIQUID)
+    sk = mk.skins
+    q = mk.x - off
+    high = (q[:, 1] > SLOT_FLOOR + SLOT_SPACING + 0.2e-3) & (q[:, 1] < half[1] - 0.2e-3)
+    wa = high & (np.abs(q[:, 0] + 0.5 * SLOT_WIDTH) < 0.1e-3) & (mk.normal[:, 0] > 0.9)      # facing +x, across the gap
+    wb = (q[:, 1] > SLOT_FLOOR) & (np.abs(q[:, 0] - 0.5 * SLOT_WIDTH) < 0.1e-3) & (mk.normal[:, 0] < -0.5)   # all of it
+    across = (wa[d.i] & wb[d.j]) | (wb[d.i] & wa[d.j])
+    ra, rb = mk.skin_index[wa], mk.skin_index[wb]
+    rng = np.random.default_rng(4)
+    u = np.zeros((sk.n, 3))
+    u[ra] = np.column_stack([np.ones(len(ra)), rng.uniform(-1.0, 1.0, (len(ra), 2))])      # +x: across, toward wall b
+    sk.U = np.where(sk.valid[..., None], u[:, None, :], 0.0)
+    m0, H0, M0, E0 = sk.m.copy(), sk.H.copy(), sk.m.sum(), sk.H.sum()
+    book = runoff.transport(sk, runoff.Sheet.from_division(d, mk), 1e-4)
+    print("slot {:.1f} mm wide: walls of {} and {} markers; {} boundaries across the gap; the first wall gave {:.3e} kg to "
+          "its neighbours, the second gained {:.3e} kg".format(SLOT_WIDTH * 1e3, int(wa.sum()), int(wb.sum()),
+                                                                int(across.sum()), -book.mass[ra].sum(),
+                                                                book.mass[rb].sum()))
+    assert wa.sum() >= 6 and wb.sum() >= 6
+    assert not across.any()
+    assert book.mass[ra].sum() < 0.0                                     # the first wall's metal does run
+    assert np.array_equal(sk.m[rb], m0[rb]) and np.array_equal(sk.H[rb], H0[rb])
+    assert sk.m.sum() == pytest.approx(M0, rel=1e-14) and sk.H.sum() == pytest.approx(E0, rel=1e-14)

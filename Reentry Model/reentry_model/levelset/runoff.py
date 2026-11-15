@@ -1,10 +1,14 @@
-"""Runoff between the level set's markers (design section 20.6; level-set stage 3 Task 6): the skyscrapers' flow sub-steps
-(their skin.py `push`, `thickness_step`, `transport`, `landing_conduct`, `flow_cycles` and `flow_substeps`, matched by
-amendment, never imported) on the markers' faces instead of the corner columns' dual faces.
+"""Runoff between the level set's markers (design sections 20.6 and 21.5; level-set stage 3 Task 6, plan 03b Tasks 4 and
+6): the skyscrapers' flow sub-steps (their skin.py `push`, `thickness_step`, `transport`, `landing_conduct`,
+`flow_cycles` and `flow_substeps`, matched by amendment, never imported) across the shared boundaries of the division
+of the layer instead of the corner columns' dual faces.
 
-The sheet. Every skin is a column on one marker; the markers' tessellation (`Markers.tessellate`, Ruling 2) gives the
-faces between them, each a length and a unit tangent normal from i toward j; its face vector is f = length * normal [m].
-`Sheet.of(markers)` puts the markers' normals, positions and faces in the skins' row order. On the sheet:
+The sheet. Every skin is a column on one marker; the division of the layer between phi and beta among the markers
+(`division.divide`) gives the boundaries between the columns, each a length at every depth and a unit tangent normal
+from i toward j; its face vector at phi is f = length(0) * normal [m]. `Sheet.from_division(division, markers)` puts the
+markers' normals, positions and the division's boundaries in the skins' row order (the body's sheet, every part's).
+The constructor takes faces directly, each of one length at every depth (the tests' flat strips; stage 3's
+`Sheet.of` built such a sheet from the markers' tangent-plane faces until plan 03b Task 6 retired them). On the sheet:
 - the surface gradient of a per-marker quantity q at marker i is (1/A_i) sum_faces (q_j - q_i)/2 f_ij, projected onto
   i's tangent plane (Green-Gauss with the face value the mean, less q_i so that a constant has none however well the
   cell closes);
@@ -37,18 +41,19 @@ The thickness step's height change per unit volume added at the top is the colum
 measured profile's A(0) once the skins have one (the controller's ruling T5-a), the top area otherwise.
 
 Depth-resolved faces (plan 03b Task 4, design 21.5, planning ruling 5). `Sheet.from_division(division, markers)` takes
-the faces from the division of the layer (`division.divide`) instead of the tessellation: its shared boundaries, each
-with a length at every level from phi down to H (`length_z`, `levels`) and a unit normal from i toward j along the
-surface (`face_normal`). The surface's own operators (the gradient, the curvature's change, the thickness terms' face
-pushes) take the boundaries' lengths at phi, f = length(0) normal and w = length(0) / |x_j - x_i|. The transport takes
-each cell's own depth: across a boundary a moving cell k of the donor a sends at the rate (u_k . n)+ L(z_k) / A_a(z_k)
-[1/s], with the boundary's length L and the donor's cross-section A_a (`Skins.cell_section`) at the cell's mid-depth
-z_k (the length linear between the levels and held at its last level's value below H, where only an overfull column's
-cells reach), and a face push's part scaled by L(z_k) / L(0); landed metal flowing on, a new top cell, at L(0) / A(0).
-The thickness step's predicted fluxes take the same lengths, so it predicts the transport it precedes. The arrival rule
-is stage 3's (by fractions of the flowing depths), which puts metal at the depths it left where the two columns' flowing
-layers are equally deep. With lengths and cross-sections constant in depth this is the transport of `Sheet.of` to
-round-off. `Sheet.side_faces` gives the same boundaries for the skins' sideways conduction (`skin.SideFaces`).
+the faces from the division of the layer (`division.divide`): its shared boundaries, each with a length at every level
+from phi down to H (`length_z`, `levels`) and a unit normal from i toward j along the surface (`face_normal`). The
+surface's own operators (the gradient, the curvature's change, the thickness terms' face pushes) take the boundaries'
+lengths at phi, f = length(0) normal and w = length(0) / |x_j - x_i|. The transport takes each cell's own depth: across
+a boundary a moving cell k of the donor a sends at the rate (u_k . n)+ L(z_k) / A_a(z_k) [1/s], with the boundary's
+length L and the donor's cross-section A_a (`Skins.cell_section`) at the cell's mid-depth z_k (the length linear between
+the levels and held at its last level's value below H, where only an overfull column's cells reach), and a face push's
+part scaled by L(z_k) / L(0); landed metal flowing on, a new top cell, at L(0) / A(0). The thickness step's predicted
+fluxes take the same lengths, so it predicts the transport it precedes. The arrival rule is stage 3's (by fractions of
+the flowing depths), which puts metal at the depths it left where the two columns' flowing layers are equally deep. With
+lengths and cross-sections constant in depth this is the transport of a sheet of the same faces at one length at every
+depth (the constructor's) to round-off. `Sheet.side_faces` gives the same boundaries for the skins' sideways conduction
+(`skin.SideFaces`), which the body passes to `Skins.conduct` (plan 03b Task 6).
 
 Every number here is a numerical setting of the skyscrapers' rules (named with its source); the physics is the shared
 package's."""
@@ -110,8 +115,8 @@ class Sheet:
     ends `i`, `j` (E,) (rows, i < j as markers), their vectors `f` (E, 3) [m] from i toward j, their two-point weights
     `w` (E,), the skins' top areas `area` (n,) [m2] and each row's marker `marker` (n,).
     From a division (`from_division`, plan 03b Task 4), the faces are depth-resolved: each face's length at every level
-    `length_z` (E, B + 1) [m], the levels `levels` (B + 1,) [m] and its unit normal `face_normal` (E, 3); None for the
-    tessellation's faces (`of`)."""
+    `length_z` (E, B + 1) [m], the levels `levels` (B + 1,) [m] and its unit normal `face_normal` (E, 3); None for faces
+    given to the constructor directly, each of one length at every depth."""
     normal: np.ndarray
     x: np.ndarray
     i: np.ndarray
@@ -123,24 +128,6 @@ class Sheet:
     length_z: np.ndarray = None
     levels: np.ndarray = None
     face_normal: np.ndarray = None
-
-    @classmethod
-    def of(cls, markers, skins=None):
-        """The sheet of `markers` (tessellated: `markers.faces` set) carrying `skins` (default markers.skins)."""
-        skins = markers.skins if skins is None else skins
-        if markers.faces is None:
-            raise ValueError("the markers have no faces: tessellate them first")
-        n, rows = skins.n, markers.skin_index
-        if len(np.unique(rows)) != len(rows) or len(rows) != n:
-            raise ValueError("every skin row must belong to exactly one marker")
-        marker = np.empty(n, dtype=np.int64)
-        marker[rows] = np.arange(len(rows))
-        normal, x = markers.normal[marker], markers.x[marker]
-        fi, fj, length, unit = markers.faces
-        i, j = rows[fi], rows[fj]
-        f = length[:, None] * unit
-        d = np.linalg.norm(x[j] - x[i], axis=1)
-        return cls(normal, x, i, j, f, length / d, skins.area, marker)
 
     @classmethod
     def from_division(cls, division, markers, skins=None):
@@ -215,10 +202,6 @@ class Sheet:
                              shape=(E, self.n))
 
 
-def _sheet(markers):
-    return markers if isinstance(markers, Sheet) else Sheet.of(markers)
-
-
 # -- the forcing and the pushes ----------------------------------------------------------------------------------------
 def along_meridian(normals, v_hat, magnitude):
     """Vectors of the given magnitudes (n,) in each tangent plane along the meridian away from the stagnation point (the
@@ -288,11 +271,10 @@ def _push(sheet, skins, dp_ds, g, v_hat, sigma, kappa, wet, H=None):
     return sum(terms.values()), terms
 
 
-def pushes(markers, skins, forcing, kappa=None, wet=None):
-    """The push [N/m3] (n, 3) on every layer of every skin (rows' order) and its four terms (module docstring), at the
-    skins' present heights; `kappa` (n,) per row the curvature to use (default the forcing's phi curvature) and `wet`
-    (n,) where the top flows (default `flowing_tops`)."""
-    sheet = _sheet(markers)
+def pushes(sheet, skins, forcing, kappa=None, wet=None):
+    """The push [N/m3] (n, 3) on every layer of every skin (rows' order) on the `sheet` and its four terms (module
+    docstring), at the skins' present heights; `kappa` (n,) per row the curvature to use (default the forcing's phi
+    curvature) and `wet` (n,) where the top flows (default `flowing_tops`)."""
     kappa = sheet.rows(forcing.kappa) if kappa is None else kappa
     wet = flowing_tops(skins) if wet is None else wet
     return _push(sheet, skins, sheet.rows(forcing.dp_ds), forcing.g, forcing.v_hat, forcing.sigma, kappa, wet)
@@ -876,8 +858,9 @@ class FlowBook:
         self.unconverged += other.unconverged
 
 
-def flow_substeps(skins, markers, forcing, dt, cycles=None, H_ref=None, release=None, after=None):
-    """The flow sub-steps of one heat sub-step dt [s] (module docstring): `cycles` of them (default forcing.cycles, or
+def flow_substeps(skins, sheet, forcing, dt, cycles=None, H_ref=None, release=None, after=None):
+    """The flow sub-steps of one heat sub-step dt [s] on the `sheet` (a `Sheet` of the skins' markers: the body's is its
+    division's, `Sheet.from_division`; module docstring): `cycles` of them (default forcing.cycles, or
     where that is None the count `flow_cycles` chooses from the skins' `flow_memory`, which they then update), each the
     regrid (from the second on), `pushes` with phi's curvature carried with the heights (kappa_phi + L (H - H_ref), H_ref
     the heights phi was made with, default those at the start), `Skins.momentum_step` with its response,
@@ -889,7 +872,8 @@ def flow_substeps(skins, markers, forcing, dt, cycles=None, H_ref=None, release=
     deepened a column past its curvature's room within one sub-step). Where nothing flows nothing moves and no sub-step is taken:
     any velocity left is booked to the wall and cleared, and the skins forget the flow. The heat sub-step's own regrid
     follows (the caller's). Returns a FlowBook."""
-    sheet = _sheet(markers)
+    if not isinstance(sheet, Sheet):
+        raise TypeError("flow_substeps runs on a Sheet (Sheet.from_division), not {}".format(type(sheet).__name__))
     n = skins.n
     book = FlowBook.zero(n)
     memory = skins.flow_memory
