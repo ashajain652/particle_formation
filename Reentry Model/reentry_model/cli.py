@@ -2,7 +2,10 @@
 
     python -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
-        [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+        [--thermal fem --heating sesam|physics --gas-loads similarity|classic ... --animate]
+                                                                       (Step 2: coupled 3D conduction; the gas loads of
+                                                                        every thermal run, the interim similarity loads by
+                                                                        default, classic named _loads-classic)
         [--architecture skyscrapers|levelset]                          (default skyscrapers; levelset exits 2 until built)
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
         [--surface-model skin|elements --skin-flow on|off --skin-base-cell MM --slurry-spray on|off --spread-limit DEG|off
@@ -36,6 +39,7 @@ import numpy as np
 
 from . import __version__, aero, atmosphere, compare, dispersion, fap, heating, material, sesam_io, spray, surface_flow, thermal, viz
 from .shared import melt_profile
+from .shared.gas_loads import GasLoads
 from .shared import rheology as viscosity_laws        # the module's name is a parameter name below
 from .skyscrapers import body, coupled, mesh, movemesh, restart, skin, skinbody
 from . import trajectory as tj
@@ -52,6 +56,19 @@ LEVELSET_NOT_BUILT = ("the level-set architecture is not built yet (design: "
 
 THERMAL_MODES = ("none", "fem")
 MELT_MODES = ("off", "on")
+# The surface gas loads of a thermal run (the interim gas loads, docs/superpowers/plans/2026-11-13-interim-gas-loads.md):
+# `similarity`, the default, one `shared.gas_loads.GasLoads` provider -- pressure round the whole body joined to Daniels and
+# Schwartzentruber's lee pressure, similarity shear and heating to separation, their shear above Kn_body 0.05 -- read by
+# every surface flow the run builds and, with --heating physics, by `heating.SimilarityHeating`, with the skins' sheltered
+# corners read in the separated wake (`skinbody.SHELTER_WAKE`); `classic`, the loads as they were (`PhysicsHeating`, a
+# `SurfaceFlow` without a provider), named _loads-classic. A run without a thermal model reads no surface loads and
+# ignores the option; a saved state keeps the loads its saved arguments name (`gas_loads_of_run` for one saved before them).
+GAS_LOADS = ("similarity", "classic")
+DEFAULT_GAS_LOADS = "similarity"
+# options the similarity heating does not read (it takes its stagnation flux from the provider, with no catalycity), which
+# a run on it records in the settings' "heating_unused"; given other than their defaults on it they exit 2 (ruling R20)
+SIMILARITY_UNUSED = ("stagnation", "catalycity")
+DEFAULT_STAGNATION, DEFAULT_CATALYCITY = "fay-riddell", 1.0
 # numpy's global generator is seeded with this at the start of every run (amendment of 2026-10-05): pyamg draws from it
 # the starting vector of the spectral-radius estimate that weights the prolongation smoother of every hierarchy it builds,
 # so an unseeded run differed from the next from the first solve on. 12345 is the seed the measurement harness of the
@@ -260,7 +277,7 @@ def removal_of(args):
 
 def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
                    deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True, dt_continuum="default",
-                   surface_model=DEFAULT_SURFACE_MODEL, skin_suffix="", spray_suffix=""):
+                   surface_model=DEFAULT_SURFACE_MODEL, skin_suffix="", spray_suffix="", gas_loads=DEFAULT_GAS_LOADS):
     """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
     run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
     (amendment of 2026-10-03) in `_moltencascade-off`, one with the rigid substrate off (amendment of 2026-10-06) in
@@ -268,8 +285,10 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
     `_dtcontinuum-off` or `_dtcontinuum-<s>`; a thermal run with the element model in `_surface-elements`, the layered
     skins being the default (spec 10.1; sub-plan 22 Task 3), and one with the skins in `skin_suffix`, their non-default
     settings (`skin_name_suffix`, empty for the defaults); a spraying run's release rules in `spray_suffix`
-    (`spray_name_suffix`: `_gates-before`, `_slipband-on`, sub-plan 22 Task 5i); and any run with a seed other than DEFAULT_SEED (amendment of
-    2026-10-05) in `_seed-<n>`. Without a thermal model there is no surface model and no suffix for it."""
+    (`spray_name_suffix`: `_gates-before`, `_slipband-on`, sub-plan 22 Task 5i); a thermal run on the classic gas loads in
+    `_loads-classic` (the interim gas loads, `GAS_LOADS`: the default `similarity` is unmarked); and any run with a seed other
+    than DEFAULT_SEED (amendment of 2026-10-05) in `_seed-<n>`. Without a thermal model there is no surface model and no
+    suffix for it, nor for the gas loads, which it does not read."""
     dtc_default = DEFAULT_DT_CONTINUUM if melt == "girin" else None
     dtc = dtc_default if dt_continuum == "default" else dt_continuum
     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
@@ -280,6 +299,7 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
             + ("" if not melt or dtc == dtc_default else "_dtcontinuum-off" if dtc is None else "_dtcontinuum-{:g}".format(dtc))
             + (("_surface-elements" if surface_model == "elements" else skin_suffix) if heating_name else "")
             + spray_suffix
+            + ("_loads-classic" if heating_name and gas_loads == "classic" else "")
             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
 
 
@@ -446,11 +466,22 @@ def build_parser():
     th.add_argument("--thermal", choices=THERMAL_MODES, default="none", help="none: Step 1 trajectory only (default); fem: coupled 3D conduction")
     th.add_argument("--heating", choices=heating.HEATING_NAMES, default="physics",
                     help="physics (default) or sesam: SESAM's uniform 0.27471 x q_stag on every patch -- a verification device, not physical")
-    th.add_argument("--stagnation", choices=heating.STAGNATION_NAMES, default="fay-riddell")
+    th.add_argument("--gas-loads", choices=GAS_LOADS, default=DEFAULT_GAS_LOADS,
+                    help="the surface gas loads of a --thermal fem run (the interim gas loads, 2026-11-13): similarity, one "
+                         "provider of wall pressure round the whole body (the model's windward law joined to Daniels and "
+                         "Schwartzentruber's lee pressure), Lees similarity shear and heating to separation and Daniels and "
+                         "Schwartzentruber's shear from body Knudsen number 0.05, read by the surface flow and, with --heating "
+                         "physics, the heating (Matting's bridging only; --stagnation and --catalycity not read, and refused "
+                         "other than at their defaults), the skins' "
+                         "corners the centroid test shelters read in the separated wake (default); classic, the loads as they "
+                         "were, Fay-Riddell and Lees heating and no loads on the lee (named _loads-classic). Ignored without "
+                         "--thermal fem; a resumed state keeps the loads it was saved with")
+    th.add_argument("--stagnation", choices=heating.STAGNATION_NAMES, default=DEFAULT_STAGNATION)
     th.add_argument("--bridging-heat", choices=heating.BRIDGING_HEAT_NAMES, default="matting")
     th.add_argument("--matting-n", type=float, default=1.0, help="Matting exponent n (default %(default)s)")
     th.add_argument("--accommodation", type=float, default=0.8, help="free-molecular energy accommodation A_cq (default %(default)s)")
-    th.add_argument("--catalycity", type=float, default=1.0, help="wall catalycity 0..1 in Fay-Riddell (default %(default)s)")
+    th.add_argument("--catalycity", type=float, default=DEFAULT_CATALYCITY,
+                    help="wall catalycity 0..1 in Fay-Riddell (default %(default)s)")
     th.add_argument("--material", default=None,
                     help="AA7075_nomelt | AA7075 | AA7075_range | AA7075_scheil | AA7075-empiricaldata | <DRAMA material JSON> "
                          "(default: AA7075_nomelt, or AA7075_scheil with --melt on)")
@@ -656,8 +687,17 @@ def build_parser():
 
 def build_thermal(args, settings, mass, spool=None):
     """(ThermalBody or MeltingBody, HeatingModel, settings-provenance dict) for --thermal fem [--melt on]; `spool`, a
-    directory for a spraying skin body's droplet records (SOURCE_SPOOL in the run's directory, sub-plan 22 Task 4)."""
+    directory for a spraying skin body's droplet records (SOURCE_SPOOL in the run's directory, sub-plan 22 Task 4).
+    On the similarity gas loads (--gas-loads, `GAS_LOADS`) one `GasLoads(gamma_pm=--gamma-pm, hold_s=--dt)` is given to every
+    surface flow built here and, with --heating physics, to `heating.SimilarityHeating`, and the skins read their sheltered
+    corners at `skinbody.SHELTER_WAKE`; the provider holds each solution for one --dt of flight, so each reader solves at most once per
+    --dt after the continuum switch (the element model's heating and surface flow solve separately, twice per --dt), and the
+    settings record that hold as `gas_loads_hold_s`. The heating's skip of the solve when the wall is as hot as the gas saves
+    a solve only where the surface flow does not read the provider as well (not on a melting skin flight, where the flow
+    then makes the solve; one of two at a window's start on the element model; every solve on a flight that does not melt). On `classic` the objects are
+    those built before the interim gas loads, with the same arguments."""
     radius = settings.diameter / 2.0
+    loads = GasLoads(gamma_pm=args.gamma_pm, hold_s=args.dt) if args.gas_loads == "similarity" else None  # shared, once a --dt
     melting = args.melt == "on"
     skins = args.surface_model == "skin"
     h_surface, h_core = args.h_surface * 1e-3 * args.mesh_size, args.h_core * 1e-3 * args.mesh_size
@@ -685,7 +725,7 @@ def build_thermal(args, settings, mass, spool=None):
         # exposed slurry too with --slurry-spray on; instant removal is instead of both
         flow = args.skin_flow == "on"
         flow_model = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm,
-                                              kn_body_shock=args.kn_body_shock) if flow else None
+                                              kn_body_shock=args.kn_body_shock, gas_loads=loads) if flow else None
         the_body = skinbody.SkinBody(the_mesh, mat, solver, mass, skin_settings(args), T0=args.temperature,
                                      emissivity=args.emissivity, T_ambient=args.t_ambient, deform_depth=args.deform_depth * 1e-3,
                                      remove=melting and not flow, demise_fraction=args.demise_fraction, flow=flow,
@@ -695,9 +735,11 @@ def build_thermal(args, settings, mass, spool=None):
                                      spool=spool if flow else None, spread_limit=spread_limit_of(args),
                                      part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args),
                                      sideways_pairing=args.sideways_heat, size_feedback=skin_size_feedback_of(args),
-                                     leeward_test=skin_leeward_test_of(args), geometry_stop=skin_geometry_stop_of(args))
+                                     leeward_test=skin_leeward_test_of(args), geometry_stop=skin_geometry_stop_of(args),
+                                     sheltered_angle=skinbody.SHELTER_WAKE if loads is not None else None)
     elif melting:
-        flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
+        flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock,
+                                        gas_loads=loads)
         spray_model = spray_model_of(args, mat)
         size_feedback = args.size_feedback or ("current" if args.removal == "girin" else "initial")
         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
@@ -710,6 +752,9 @@ def build_thermal(args, settings, mass, spool=None):
         the_body = body.ThermalBody(the_mesh, mat, solver, mass, T0=args.temperature, emissivity=args.emissivity, T_ambient=args.t_ambient)
     if args.heating == "sesam":
         heating_model = heating.SesamEquivalentHeating()
+    elif loads is not None:
+        heating_model = heating.SimilarityHeating(loads, bridging=args.bridging_heat, matting_n=args.matting_n,
+                                                  accommodation=args.accommodation)
     else:
         heating_model = heating.PhysicsHeating(stagnation=args.stagnation, bridging=args.bridging_heat, matting_n=args.matting_n,
                                                accommodation=args.accommodation, catalycity=args.catalycity)
@@ -718,7 +763,7 @@ def build_thermal(args, settings, mass, spool=None):
             "h_surface_mm": h_surface * 1e3, "h_core_mm": h_core * 1e3, "prism_layers": layers, "layer_thickness_mm": args.layer_thickness,
             "n_nodes": the_mesh.n_nodes, "n_elements": the_mesh.n_elements, "n_patches": the_body.surface.n_patches,
             "thermal_solver": args.thermal_solver, "linear_solver": args.linear_solver, "lumped_mass": not args.consistent_mass,
-            "k_scale": args.k_scale, "melt": args.melt, "surface_model": args.surface_model}
+            "k_scale": args.k_scale, "melt": args.melt, "surface_model": args.surface_model, "gas_loads": args.gas_loads}
     if skins:
         info["skin"] = {"min_thickness_mm": args.skin_min_thickness, "fine_zone_mm": args.skin_fine_zone,
                         "cell_um": skin_settings(args).cell * 1e6,
@@ -745,6 +790,10 @@ def build_thermal(args, settings, mass, spool=None):
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+        if loads is not None:                           # kept as given, and said to be unread by the similarity heating
+            info["heating_unused"] = list(SIMILARITY_UNUSED)
+    if loads is not None:                               # the provider's solution is held for one --dt of flight (s)
+        info["gas_loads_hold_s"] = loads.hold_s
     if melting and skins:
         info.update({"removal": args.removal, "T_solidus_K": mat.T_solidus, "T_liquidus_K": mat.T_liquidus,
                      "latent_heat_Jkg": mat.latent_heat})
@@ -808,7 +857,8 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     dispersion=dispersion_of(args) if spraying_skins_of(args)
                                                                     else None, base_cell_mm=args.skin_base_cell),
                                        spray_suffix=spray_name_suffix(args.spray_gates, args.slip_band == "on",
-                                                                      spraying_run(args)))
+                                                                      spraying_run(args)),
+                                       gas_loads=args.gas_loads)
 
 
 def cmd_run(args, parser):
@@ -835,6 +885,17 @@ def cmd_run(args, parser):
             parser.error("{} must be > 0".format(label))
     if not 0.0 <= args.catalycity <= 1.0:
         parser.error("--catalycity must be within [0, 1]")
+    if args.thermal == "fem" and args.heating == "physics" and args.gas_loads == "similarity" and args.bridging_heat != "matting":
+        parser.error("--bridging-heat {} needs --gas-loads classic: the similarity heating bridges to the free-molecular flux "
+                     "by Matting's law only".format(args.bridging_heat))
+    if args.thermal == "fem" and args.heating == "physics" and args.gas_loads == "similarity":
+        # ruling R20: an option the similarity heating would not read is refused rather than silently ignored
+        if args.stagnation != DEFAULT_STAGNATION:
+            parser.error("--stagnation {} needs --gas-loads classic: the similarity heating takes its stagnation flux from "
+                         "the gas-loads provider".format(args.stagnation))
+        if args.catalycity != DEFAULT_CATALYCITY:
+            parser.error("--catalycity {:g} needs --gas-loads classic: the similarity heating has no wall catalycity".format(
+                args.catalycity))
     if args.thermal == "none" and (args.animate or args.stills or args.frames_every):
         parser.error("--animate/--stills/--frames-every need --thermal fem")
     if args.melt == "on" and args.thermal != "fem":
@@ -1156,6 +1217,28 @@ def load_state(path, parser):
     return state
 
 
+def gas_loads_of_run(run):
+    """The gas loads a saved flight flies on (`GAS_LOADS`), from its objects, not its arguments: `similarity` where its
+    heating or its body's surface flow (the skins' `surface_flow`, the element model's `flow`) holds a provider, or its skin
+    body reads its sheltered corners at an angle other than the classic one; `classic` otherwise, as for every state saved
+    before the interim gas loads (no provider on any instance: the class attributes say None, and the classic angle). A run
+    on the similarity loads that reads no loads at all -- SESAM's heating on a body with no surface flow -- reads `classic`
+    here, which flies the same; `cmd_resume` therefore labels a state by its saved arguments' `gas_loads` and calls this
+    only for a state whose arguments have none (review T7-1)."""
+    body = run.body
+    wake = isinstance(body, skinbody.SkinBody) and body.sheltered_angle != skinbody.SHELTER_CLASSIC
+    return "similarity" if wake or gas_loads_provider_of_run(run) is not None else "classic"
+
+
+def gas_loads_provider_of_run(run):
+    """The gas-loads provider a saved flight's objects hold -- its heating's, or its body's surface flow's (the skins'
+    `surface_flow`, the element model's `flow`); one per flight, shared -- or None if none of them holds one."""
+    body = run.body
+    providers = (getattr(run.heating, "gas_loads", None), getattr(getattr(body, "surface_flow", None), "gas_loads", None),
+                 getattr(getattr(body, "flow", None), "gas_loads", None))
+    return next((p for p in providers if p is not None), None)
+
+
 def cmd_resume(args, parser):
     """Resume a saved flight (sub-plan 22 Task 5b; Asha, 2026-11-01): the state `--save-state-at` wrote, loaded as a new
     object graph and flown on by `CoupledRun.run(resume=state)` from the end of the saved macro step, with the saved
@@ -1164,6 +1247,10 @@ def cmd_resume(args, parser):
     state and what was changed. Only the droplet records after the resume are written."""
     state = load_state(args.state, parser)
     run, saved = state["run"], argparse.Namespace(**state["meta"]["args"])
+    # the loads it was flown on, which a resume does not change (interim gas loads): its arguments' label, and for a state
+    # saved before the option, whose arguments have none, the loads its objects hold; the objects fly either way
+    if "gas_loads" not in state["meta"]["args"]:
+        saved.gas_loads = gas_loads_of_run(run)
     run_dir = os.path.join(args.outdir, args.name)
     settings, changed = run.settings, {}
     if args.t_max is not None:
@@ -1365,7 +1452,7 @@ def cmd_resume(args, parser):
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
           "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, geometry stop {}, "
-          "rheology {}, skin base cell {}, spray gates {}, slip band {}, dispersion {}, save state at {}; files {}".format(
+          "rheology {}, skin base cell {}, spray gates {}, slip band {}, dispersion {}, gas loads {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
@@ -1383,6 +1470,7 @@ def cmd_resume(args, parser):
               run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
               ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
               run.body.spray.dispersion if getattr(run.body, "spray", None) is not None else "n/a",
+              saved.gas_loads,
               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
               os.path.join(args.outdir, args.name)), flush=True)
     history = run_flight(run, resume=state)
@@ -1392,6 +1480,11 @@ def cmd_resume(args, parser):
     thermal_info = {key: getattr(saved, key) for key in ("heating", "melt", "surface_model", "thermal_solver", "linear_solver",
                                                          "skin_flow", "slurry_spray")}
     thermal_info.update({"macro_step_s": saved.dt, "frames_every": settings.frames_every, "dt_continuum_s": settings.dt_continuum})
+    thermal_info["gas_loads"] = saved.gas_loads             # always, as `run` records it; classic for an older state
+    if saved.gas_loads == "similarity":
+        # the loaded provider's hold (s), as `run` records it: None for a provider saved before the hold, or for objects
+        # that hold no provider (SESAM's heating on the element model that does not melt)
+        thermal_info["gas_loads_hold_s"] = getattr(gas_loads_provider_of_run(run), "hold_s", None)
     if state_path is not None:
         thermal_info["save_state_at_s"] = args.save_state_at
     if skins and run.body.spread_limit is not None:

@@ -173,12 +173,21 @@ def flown(tmp_path_factory):
     return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
 
 
-def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_files(flown, tmp_path):
+def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_files(tmp_path):
     """`resume` on the state saved at 0.1875 s, with nothing changed: it writes the files `run` writes under its own name
     -- the history, the JSON, the droplet files -- the history starting with the saved step's row and repeating the
     unbroken flight's from there in every column, the droplet records those of the flight after the save, to the last bit,
-    and the JSON naming the state it came from with nothing changed (sub-plan 22 Task 5b, Asha 2026-11-06)."""
-    out, flight, records, state_path = flown
+    and the JSON naming the state it came from with nothing changed (sub-plan 22 Task 5b, Asha 2026-11-06). The flight is
+    its own, `FLIGHT` (the defaults: the hand-down off, the part count by the melting) to 0.2125 s saved at 0.1875 s as
+    `flown` is, because on the gas loads' hold (one solve per --dt) the `flown` flight releases nothing after 0.1875 s and
+    this one does, so the records' check is not empty (the test must use a flight that releases droplets after 0.1875 s; ruling P6 in
+    docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md)."""
+    pytest.importorskip("cantera")
+    out = str(tmp_path / "flown")
+    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
+    flight, state_path = rows_of(os.path.join(out, "f.csv")), os.path.join(out, "f.state.pkl")
+    records = dict(np.load(os.path.join(out, "f", "particles.npz")))
+    assert len(flight) == 17
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r"]) == 0
     assert rows_of(str(tmp_path / "r.csv")) == flight[14:]
     after = records["time_s"] > 0.1875 + 1e-9        # the saved step's records carry its end: 0.1875 and a round-off
@@ -1093,7 +1102,11 @@ def test_a_failure_in_the_first_step_of_a_resume_saves_the_resumed_step(flown, t
 
 
 def test_a_failure_after_the_droplet_records_were_spooled_resumes_without_repeating_them(tmp_path, monkeypatch):
-    assert cli.main(FLIGHT + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "u"]) == 0
+    # the flight names the classic gas loads, on which it sprays from the step ending 0.05 s (interim gas loads, Task 7): on
+    # the similarity loads, the default since, its first release comes at 0.0875 s (1.5 mg in 2 records, against 0.81 g in
+    # 606 records by then on the classic loads; measured 2026-11-14), so the failing step of 0.075 s would have spooled none
+    classic = FLIGHT + ["--gas-loads", "classic"]
+    assert cli.main(classic + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "u"]) == 0
     real, calls = coupled.CoupledRun._frame, {"n": 0}
     def frame(self, *a, **k):
         calls["n"] += 1
@@ -1101,7 +1114,7 @@ def test_a_failure_after_the_droplet_records_were_spooled_resumes_without_repeat
             raise RuntimeError("frame writer failed")
         return real(self, *a, **k)
     monkeypatch.setattr(coupled.CoupledRun, "_frame", frame)
-    assert cli.main(FLIGHT + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    assert cli.main(classic + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "f"]) == 1
     monkeypatch.undo()
     assert cli.main(["resume", str(tmp_path / "f.end.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
     whole = np.load(str(tmp_path / "u" / "particles.npz"))
@@ -1260,3 +1273,202 @@ def test_resuming_with_dispersion_table_cuts_its_columns_and_a_state_without_it_
     assert list(got) == spray.record_columns(36)
     assert all(np.array_equal(got[k][:2], held[:, i]) for i, k in enumerate(spray.SOURCE_COLUMNS))
     assert all(np.isnan(got[k][:2]).all() for k in spray.PROFILE_COLUMNS)
+
+
+# -- the interim gas loads (docs/superpowers/plans/2026-11-13-interim-gas-loads.md, Task 7; Review Focus 5) -------------------
+def test_a_flight_on_the_provider_saves_it_and_resumes_with_it(flown, tmp_path, capsys):
+    """The test flight flies on the similarity loads, the default: its state carries one `GasLoads` shared by the skins'
+    surface flow and the `SimilarityHeating` (pickle keeps the one object), with no solve cached (`GasLoads.__getstate__`),
+    and a skin body whose sheltered corners are read at pi (ruling R15). Resumed with nothing changed it repeats the flight
+    to the last bit (as `test_the_resume_command_repeats_the_flight_...` checks on the same state), says the loads in the line
+    before the flight, records them in the settings, and the state it saves keeps the provider."""
+    from reentry_model import heating
+    from reentry_model.shared.gas_loads import GasLoads
+    out, flight, records, state_path = flown
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["gas_loads"] == "similarity"
+    state = restart.load(state_path)
+    run = state["run"]
+    assert type(run.heating) is heating.SimilarityHeating and type(run.heating.gas_loads) is GasLoads
+    assert run.body.surface_flow.gas_loads is run.heating.gas_loads and run.heating.gas_loads._cache == {}
+    assert run.body.sheltered_angle == np.pi and state["meta"]["args"]["gas_loads"] == "similarity"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r", "--save-state-at", "0.2"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "gas loads similarity" in line
+    assert rows_of(str(tmp_path / "r.csv")) == flight[14:]
+    settings = json.load(open(str(tmp_path / "r.json")))["settings"]
+    assert settings["gas_loads"] == "similarity" and settings["gas_loads_hold_s"] == 0.025      # the provider's hold, --dt
+    again = restart.load(str(tmp_path / "r.state.pkl"))
+    assert type(again["run"].heating) is heating.SimilarityHeating
+    assert again["run"].body.surface_flow.gas_loads is again["run"].heating.gas_loads
+    assert again["run"].body.sheltered_angle == np.pi and again["meta"]["args"]["gas_loads"] == "similarity"
+
+
+def test_a_state_saved_before_the_gas_loads_resumes_on_the_classic_loads(tmp_path, capsys):
+    """A state saved before the interim gas loads has a `SurfaceFlow` with no `gas_loads` on the instance, a `PhysicsHeating`,
+    a skin body with no sheltered angle of its own and no `gas_loads` among its arguments: a flight on `--gas-loads classic`
+    saves exactly such objects, so one, with the argument removed, stands in for it. It resumes on the classic loads (the
+    class attributes: no provider, sheltered corners at 90 degrees plus a microradian), says and records `classic`, and
+    repeats the unbroken classic flight from the saved step to the last bit."""
+    from reentry_model import heating
+    pytest.importorskip("cantera")
+    out = str(tmp_path / "classic")
+    assert cli.main(FLIGHT + ["--gas-loads", "classic", "--t-max", "0.1", "--outdir", out, "--name", "f",
+                              "--save-state-at", "0.05"]) == 0
+    flight = rows_of(os.path.join(out, "f.csv"))
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["gas_loads"] == "classic"
+    state = restart.load(os.path.join(out, "f.state.pkl"))
+    run = state["run"]
+    assert "gas_loads" not in vars(run.body.surface_flow) and run.body.surface_flow.gas_loads is None
+    assert type(run.heating) is heating.PhysicsHeating and "sheltered_angle" not in vars(run.body)
+    assert run.body.sheltered_angle == 0.5 * np.pi + 1e-6
+    del state["meta"]["args"]["gas_loads"]                     # the arguments of a flight saved before the option existed
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    capsys.readouterr()
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "r", "--save-state-at", "0.075"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "gas loads classic" in line
+    assert len(flight) == 8 and rows_of(str(tmp_path / "r.csv")) == flight[state["step"]:]
+    doc = json.load(open(str(tmp_path / "r.json")))
+    assert doc["settings"]["gas_loads"] == "classic" and doc["resumed_from"]["changed"] == {"--save-state-at": 0.075}
+    assert "gas_loads_hold_s" not in doc["settings"]
+    again = restart.load(str(tmp_path / "r.state.pkl"))
+    assert again["run"].body.surface_flow.gas_loads is None and type(again["run"].heating) is heating.PhysicsHeating
+    assert again["meta"]["args"]["gas_loads"] == "classic"
+
+
+def test_a_resumed_state_keeps_the_gas_loads_its_arguments_name(tmp_path, capsys):
+    """A flight on the similarity loads whose objects hold no provider -- SESAM's heating on the element model that does not
+    melt, which has no surface flow -- records `similarity` (the loads its arguments chose), and its resume says and records
+    `similarity` too, from the saved arguments, while flying the same objects (the unbroken flight's rows, to the last bit);
+    the loads are inferred from the objects only for a state whose arguments do not name them (review T7-1; the state saved
+    before the option is `test_a_state_saved_before_the_gas_loads_resumes_on_the_classic_loads`)."""
+    from reentry_model import heating
+    pytest.importorskip("cantera")
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    elements[elements.index("--heating") + 1] = "sesam"
+    out = str(tmp_path / "f")
+    assert cli.main(elements + ["--t-max", "0.1", "--outdir", out, "--name", "f", "--save-state-at", "0.05"]) == 0
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["gas_loads"] == "similarity"
+    state = restart.load(os.path.join(out, "f.state.pkl"))
+    assert type(state["run"].heating) is heating.SesamEquivalentHeating and not hasattr(state["run"].body, "flow")
+    assert state["meta"]["args"]["gas_loads"] == "similarity" and cli.gas_loads_of_run(state["run"]) == "classic"
+    capsys.readouterr()
+    assert cli.main(["resume", os.path.join(out, "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "gas loads similarity" in line
+    flight, resumed = rows_of(os.path.join(out, "f.csv")), rows_of(str(tmp_path / "r.csv"))
+    assert len(flight) == 5 and resumed == flight[-3:]
+    settings = json.load(open(str(tmp_path / "r.json")))["settings"]
+    assert settings["gas_loads"] == "similarity" and settings["gas_loads_hold_s"] is None       # no provider to hold
+    assert restart.load(str(tmp_path / "r.end.state.pkl"))["meta"]["args"]["gas_loads"] == "similarity"
+
+
+def test_a_skin_flight_solves_one_meridian_per_dt_shared_by_the_heating_and_the_surface_flow(tmp_path, monkeypatch):
+    """One provider per flight, holding its solution for one --dt of flight (`GasLoads.hold_s`, plan 2026-11-14 Task 2):
+    the melting skins' test flight to 0.0625 s has five rows, the first and four macro steps (25 ms, then 12.5 ms ones from
+    the continuum switch at the first step), and the provider solves three times: at 0 s, the heating's alone for the
+    history's first row, then at 0.025 s and 0.05 s, one --dt (25 ms) apart, the heating's call solving and the surface
+    flow's at the same time and key finding the solution. Every other call, at 0.0375 s and 0.0625 s at the freestream of
+    its own time, is within a held window and returns the held solution (review T7-4 counted one solve a macro step
+    before the hold). Counted by wrapping `GasLoads.meridian` and `GasLoads._solve`, not by instrumenting the package."""
+    from reentry_model import heating, surface_flow
+    from reentry_model.shared.gas_loads import HOLD_TOL, GasLoads
+    pytest.importorskip("cantera")
+    calls, solves, caller = [], [], [None]
+    meridian, solve = GasLoads.meridian, GasLoads._solve
+
+    def tag(cls, label):
+        real = cls.evaluate
+
+        def evaluate(self, *a, **k):
+            caller.append(label)
+            try:
+                return real(self, *a, **k)
+            finally:
+                caller.pop()
+        monkeypatch.setattr(cls, "evaluate", evaluate)
+    tag(heating.SimilarityHeating, "heating")
+    tag(surface_flow.SurfaceFlow, "flow")
+    key_of = lambda state, radius, T_wall: (state.freestream.rho, state.freestream.T, state.V, radius, T_wall)
+
+    def counted_meridian(self, state, radius, T_wall):
+        got = meridian(self, state, radius, T_wall)
+        calls.append((caller[-1], state.t, key_of(state, radius, T_wall), got))
+        return got
+
+    def counted_solve(self, state, radius, T_wall):
+        got = solve(self, state, radius, T_wall)
+        solves.append((state.t, key_of(state, radius, T_wall), got))
+        return got
+    monkeypatch.setattr(GasLoads, "meridian", counted_meridian)
+    monkeypatch.setattr(GasLoads, "_solve", counted_solve)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f"]) == 0
+    rows = rows_of(str(tmp_path / "f.csv"))
+    times = [float(r["time_s"]) for r in rows]
+    assert times == pytest.approx([0.0, 0.025, 0.0375, 0.05, 0.0625], abs=1e-12)
+    assert [t for t, _, _ in solves] == pytest.approx([0.0, 0.025, 0.05], abs=1e-12)
+    assert len({key for _, key, _ in solves}) == 3
+    for who, t, key, got in calls:
+        t0, key0, held = [s for s in solves if s[0] <= t][-1]          # the latest solve at or before the call
+        assert got is held, (who, t)
+        assert key == key0 if t == t0 else 0.0 < t - t0 < 0.025 * (1.0 - HOLD_TOL), (who, t)
+    callers = {}
+    for who, t, _, _ in calls:
+        callers.setdefault(round(t, 9), []).append(who)
+    assert {t: sorted(w) for t, w in callers.items()} == {
+        round(t, 9): ["heating"] if t == 0.0 else ["flow", "heating"] for t in times}, callers
+    assert json.load(open(str(tmp_path / "f.json")))["settings"]["gas_loads_hold_s"] == 0.025      # --dt
+
+
+def test_a_flight_resumed_inside_a_hold_window_matches_the_unbroken_flight(tmp_path, monkeypatch):
+    """Review Focus 3: the test flight saved at 0.025 s, just after the provider solved there, carries the held solution
+    and its time in its state (`GasLoads.__getstate__` keeps them), so the resumed step to 0.0375 s flies on the held
+    solution without solving, and the next solve is at 0.05 s, one --dt after the held one, as in the unbroken flight.
+    The resumed rows are the flight's from the saved step on, to the last bit."""
+    from reentry_model.shared.gas_loads import GasLoads
+    pytest.importorskip("cantera")
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f", "--save-state-at", "0.025"]) == 0
+    flight = rows_of(str(tmp_path / "f.csv"))
+    state = restart.load(str(tmp_path / "f.state.pkl"))
+    loads = state["run"].heating.gas_loads
+    assert state["step"] == 1 and state["time_s"] == pytest.approx(0.025)
+    assert loads.hold_s == 0.025 and loads._held_t == state["time_s"] and loads._held is not None and loads._cache == {}
+    solves, solve = [], GasLoads._solve
+
+    def counted(self, s, radius, T_wall):
+        solves.append(s.t)
+        return solve(self, s, radius, T_wall)
+    monkeypatch.setattr(GasLoads, "_solve", counted)
+    assert cli.main(["resume", str(tmp_path / "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert solves == pytest.approx([0.05], abs=1e-12)           # the step to 0.0375 s flew on the held solution
+    assert len(flight) == 5 and rows_of(str(tmp_path / "r.csv")) == flight[1:]
+
+
+def test_a_state_whose_provider_has_no_hold_resumes_solving_every_step_and_records_none(flown, tmp_path, monkeypatch):
+    """Review Focus 4 on the resume command (a state saved before the hold must resume without it; ruling P9 in
+    docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md): the `flown` state with its provider stripped of the hold's
+    attributes stands in for a state saved before the hold. Resumed, it solves at both steps from 0.1875 s (0.2 and
+    0.2125 s, 12.5 ms apart), where the state as saved solves at 0.2 s only, one --dt after its held solve at 0.175 s,
+    and holds that solution at 0.2125 s; its JSON records
+    `gas_loads_hold_s` as null, the loaded provider's (no) hold; the resume of the state as saved records 0.025 s
+    (`test_a_flight_on_the_provider_saves_it_and_resumes_with_it`)."""
+    from reentry_model.shared.gas_loads import GasLoads
+    out, flight, records, state_path = flown
+    state = restart.load(state_path)
+    provider = state["run"].heating.gas_loads
+    for name in ("hold_s", "_held", "_held_t"):
+        del provider.__dict__[name]
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    solves, solve = [], GasLoads._solve
+
+    def counted(self, s, radius, T_wall):
+        solves.append(s.t)
+        return solve(self, s, radius, T_wall)
+    monkeypatch.setattr(GasLoads, "_solve", counted)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert solves == pytest.approx([0.2, 0.2125], abs=1e-12)
+    settings = json.load(open(str(tmp_path / "r.json")))["settings"]
+    assert settings["gas_loads"] == "similarity" and settings["gas_loads_hold_s"] is None

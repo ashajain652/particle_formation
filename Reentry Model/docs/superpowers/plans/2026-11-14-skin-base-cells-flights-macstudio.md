@@ -9,7 +9,7 @@
 expected to take more than about two hours go to the Mac Studio, side by side, one core each).
 
 **Design of record:** there is no separate design. The change, its single-column test and what is assumed are in
-`docs/model_assumptions.md` section 14 and fact 198 of `docs/superpowers/plans/melt-spraying-subplans/00-shared-context.md`;
+`docs/model_assumptions.md` section 16 (section 14 when this runbook was written) and fact 198 of `docs/superpowers/plans/melt-spraying-subplans/00-shared-context.md`;
 open item 7 of `docs/superpowers/plans/2026-11-12-skyscrapers-open-items.md` is the item these flights finish.
 
 ## 1. What this is and why it matters

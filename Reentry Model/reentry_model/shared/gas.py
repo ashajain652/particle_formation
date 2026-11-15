@@ -65,7 +65,21 @@ def wilke_viscosity(T, mole_fractions, molar_masses):
 
 class EquilibriumAir:
     """Normal shock + isentropic compression to rest in equilibrium air, and the wall state at (T_w, p_s). For
-    Ma <= 1.1 (no shock) the compression is isentropic from the freestream; above it a normal shock precedes it."""
+    Ma <= 1.1 (no shock) the compression is isentropic from the freestream; above it a normal shock precedes it.
+
+    `t_equilibrate` [K] is the temperature above which Cantera's equilibrium solver is used. It defaults (through the
+    class-level lookup below, which reads the module constant `T_EQUILIBRATE` at call time, so instances pickled before
+    this attribute existed behave as before) to `T_EQUILIBRATE`; `UnreactedAir` sets it to infinity."""
+
+    _t_equilibrate = None
+
+    @property
+    def t_equilibrate(self):
+        return T_EQUILIBRATE if self._t_equilibrate is None else self._t_equilibrate
+
+    @t_equilibrate.setter
+    def t_equilibrate(self, value):
+        self._t_equilibrate = value
 
     def __init__(self, mechanism="airNASA9.yaml"):
         import cantera as ct                    # imported here: only `--heating physics` needs Cantera
@@ -105,7 +119,7 @@ class EquilibriumAir:
         p_inf, h_inf = float(g.P), float(g.enthalpy_mass)
         mach = V / float(g.sound_speed)
         s_inf = float(g.entropy_mass)
-        equilibrate = T_inf + 0.5 * V * V / CP_AIR > T_EQUILIBRATE     # frozen air below ~1500 K (subsonic/low supersonic states)
+        equilibrate = T_inf + 0.5 * V * V / CP_AIR > self.t_equilibrate     # frozen air below ~1500 K (subsonic/low supersonic states)
         if mach <= 1.1:
             # No shock at Ma <= 1 (and the entropy jump of a Ma < 1.1 shock is < 0.1 %, so the fixed point's
             # contraction factor -> 1 near Ma 1 is not worth chasing): isentropic compression straight from
@@ -148,16 +162,27 @@ class EquilibriumAir:
         the boundary-layer edge state (Step 3, spec section 7)."""
         g = self.gas
         g.SPX = stag.s, p, AIR
-        if g.T > T_EQUILIBRATE:
+        if g.T > self.t_equilibrate:
             g.equilibrate("SP")
         return self._state()
 
     def wall(self, T_w, p):
         """Air at the wall temperature and stagnation pressure (equilibrium; equilibrated only above T_EQUILIBRATE (1500 K); molecular below)."""
         self.gas.TPX = T_w, p, AIR
-        if T_w > T_EQUILIBRATE:
+        if T_w > self.t_equilibrate:
             self.gas.equilibrate("TP")
         return self._state()
+
+
+class UnreactedAir(EquilibriumAir):
+    """Chemically frozen post-shock air: the composition stays N2:O2 = 0.79:0.21 through the normal shock and the
+    isentropic compression, expansion and wall states (no `equilibrate` call anywhere), while vibration stays in
+    equilibrium with temperature (Cantera's NASA-9 enthalpy at fixed composition). Used for boundary-layer loads on
+    the unreacted gas (interim gas loads)."""
+
+    def __init__(self, mechanism="airNASA9.yaml"):
+        super().__init__(mechanism)
+        self.t_equilibrate = math.inf
 
 
 def dkr(rho, V, radius):

@@ -3470,12 +3470,23 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
      (the model's own code, coupled by `skinbody`'s damped rule) holding a 28 mm pool on rigid metal, against a
      one-dimensional reference on 5 um cells: graded from the top alone the rigid front is 17-64 % too far (case A) or
      stuck and then 28 % too far (case B, heated); with 10 um cells throughout it matches; with a 0.2 mm base cell it is
-     within 1.2 % from 0.5 s on (`docs/model_assumptions.md` section 14 has every number). *The change.* `SkinSettings
+     within 1.2 % from 0.5 s on (`docs/model_assumptions.md` section 16 has every number). *The change.* `SkinSettings
      .base_cell` (0.2 mm by default; None for none): a cell's target is the smaller of the target from the top and
      `base_cell + (growth - 1) x` its height above the base (`Skins.targets`). `run --skin-base-cell MM` (0: none, named
      `_skinbase-off`; another value `_skinbase<mm>mm`; below the fine cell refused, exit 2) and `resume --skin-base-cell`;
      a state saved before the field resumes with None (`SkinSettings.__setstate__`). The run JSON records
      `skin.base_cell_mm`, a resumed one `settings.skin_base_cell_mm`. The test is `analysis/skin_base_cells/` with
-     `tests/test_skin_base_cells_column.py`. *Not yet known:* the effect on a flight (the 50 mm flight from 178.5 s would
-     show whether its faults go) and the cost there; the 3D model's 0.7 mm surface elements may be the next limit.
-     *The jump-fault test* stays as it was, with Task 5k's rule: it caught a real error.
+     `tests/test_skin_base_cells_column.py`. *The flight (2026-11-15).* The 50 mm state at 178.5 s resumed to 186.5 s
+     twice on the Mac Studio (runbook `2026-11-14-skin-base-cells-flights-macstudio.md`; results on the branch
+     `skin-base-cells-flights-macstudio`, c75fe87), base cell off and at 0.2 mm, the saved flight's settings otherwise:
+     jump faults 25,364 (Task 5k's rule) and 30,768 (bottom cell alone) off, 4 and 60 at 0.2 mm; the flights agree within
+     about 1 % to 185.0 s, then off grows the thickest skin to 46 against 31 mm and takes 12 g more metal into the skins
+     (0.1342 against 0.1222 kg drawn plus absorbed, 6.5 % of the sphere), with a thinner liquid layer (0.18 against
+     0.89 mm) and a mean surface 29 K cooler at the end; at 0.2 mm the first droplets, 0.22 g in the last 0.04 s. Wall
+     time 14.0 against 10.9 h, the difference the continuum step's switch at the first liquid (182.0 against 179.5 s;
+     open item 23), not the cells: on the same step the skins were 14 % cheaper at 0.2 mm with 4 to 7 % more cells
+     (`model_assumptions.md` section 16; Claude's comparison, `output/skin_base_cells_flights/comparison.md`,
+     git-ignored). *Not yet known:* the 3D model's 0.7 mm surface elements may be the next limit; the base cell with the
+     fitted-sphere loads, the interim gas loads, the composite law and the profile dispersion is not flown. *The
+     jump-fault test* stays as it was, with Task 5k's rule: it caught a real error. Merge after `near-wake-capture`
+     (Asha, 2026-11-15).
