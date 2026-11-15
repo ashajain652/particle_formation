@@ -174,7 +174,17 @@ class SimilarityHeating:
     heating reaches round the shoulder and onto the lee until the boundary layer separates:
         q = q_stag [(1 - w) q_sim(theta)/q_sim(0) + w max(cos theta, 0)] (H_e - h_w(T_patch))/(H_e - h_w(T_stag)),
     q_stag = Matting bridge of q_c = q_sim(0) and q_fm = accommodation rho V (H_e - h_w), w = 1 - q_stag/q_c.
-    The provider is solved at the stagnation patch's wall temperature; `T_mean` is ignored."""
+    The provider is solved at the stagnation patch's wall temperature; `T_mean` is ignored.
+
+    No solve is made when no part of the wall can be heated. The total enthalpy of the gas reaching the body (the
+    freestream enthalpy plus half the speed squared) does not change across the shock, so the trajectory alone fixes it
+    (`gas_loads.total_enthalpy`), and the enthalpy of gas at the stagnation wall's temperature is a table lookup. At the
+    stagnation point the edge speed is zero, so a wall at or above the total enthalpy receives no heat; elsewhere the gas
+    recovers less than the total enthalpy (recovery factor about the square root of the Prandtl number), so it receives
+    none either. The model already returned zero heating in exactly this case, after paying for the solve; the skip makes
+    the same decision before it, from the same two numbers, so no recorded value changes. Like the model, it neglects the
+    convective cooling of a wall hotter than the gas. Inside a hold window the held solution is used and the check is not
+    made, so the result there is the one the held solution gave before."""
 
     name = "physics"
 
@@ -188,7 +198,11 @@ class SimilarityHeating:
         rho, V = state.freestream.rho, state.V
         if rho <= 0.0 or V <= 0.0:
             return HeatingResult(np.zeros(theta.size), 0.0, 0.0, 0.0, 1.0)
-        L = self.gas_loads.meridian(state, radius, float(T_wall[int(np.argmin(theta))]))
+        T_stag = float(T_wall[int(np.argmin(theta))])
+        if self.gas_loads.held_loads(state) is None:
+            if self.gas_loads.total_enthalpy(state) - float(self.gas_loads.wall_enthalpy(T_stag)) <= 0.0:
+                return HeatingResult(np.zeros(theta.size), 0.0, float("nan"), 0.0, 1.0)
+        L = self.gas_loads.meridian(state, radius, T_stag)
         q_c = L.q_c0
         q_fm = self.accommodation * rho * V * (L.H_e - L.h_w)
         if q_c <= 0.0 or L.H_e - L.h_w <= 0.0:

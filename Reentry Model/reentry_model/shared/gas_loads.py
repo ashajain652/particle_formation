@@ -148,6 +148,13 @@ class GasLoads:
         self._build()
         return np.asarray(self._props._h(np.asarray(T, dtype=float)))
 
+    def total_enthalpy(self, state):
+        """Total enthalpy (J/kg) of the unreacted gas reaching the body at `state`, the `H_e` that `_solve` computes, without
+        the boundary-layer solve: it does not change across the shock, so the trajectory alone fixes it."""
+        self._build()
+        fs = state.freestream
+        return self._air.stagnation(fs.rho, fs.T, state.V).h
+
     def held_loads(self, state):
         """The held solution, if `state` falls within its window: a hold is set, `state.t` is not None, a solution is held
         and 0 < state.t - (its flight time) < hold_s (1 - HOLD_TOL); otherwise None. A call at the held time itself is

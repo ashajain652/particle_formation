@@ -1370,6 +1370,20 @@ measurement behind it; Asha's decisions are dated as in the design.
   (ruling R20). `--bridging-heat sesam-table` is refused in the same way, because the similarity heating bridges by
   Matting's law only (ruling R16) (`tests/test_reentry_model_cli.py`).
 - The droplet stage keeps `PhysicsHeating` unchanged (design A4b); its reproduction test still matches to 1e-9.
+- **The solve is skipped when no part of the wall can be heated** (Task 3 of the 2026-11-14 plan). The total enthalpy of
+  the gas reaching the body, the freestream enthalpy plus half the speed squared, does not change across the shock, so the
+  trajectory alone fixes it (`GasLoads.total_enthalpy`, which makes the same call `_solve` makes for H_e, with no
+  boundary-layer solve). The enthalpy of gas at the stagnation wall's temperature is a table lookup (`wall_enthalpy`). At
+  the stagnation point the edge speed is zero, so a wall at or above the total enthalpy receives no heat; elsewhere the
+  gas recovers less than the total enthalpy (the recovery factor is about the square root of the Prandtl number), so it
+  receives none either. The model already returned zero heating, a blend weight of 1.0 and a continuum flux q_c that no
+  caller records, in exactly this case (H_e - h_w at most zero), after paying for the solve; the skip makes the same
+  decision before the solve, from the same two numbers, so no recorded value changes. A skipped step returns q_c as not
+  a number, which only the unrecorded field shows. It neglects, as the model already does, the convective cooling of a
+  wall hotter than the gas. Inside a hold window (14.1) the held solution is used and the check is not made.
+  **(verified)** `test_similarity_heating_skips_the_solve_when_the_wall_is_hotter_than_the_total_enthalpy`,
+  `test_skip_matches_the_solved_result` (one state each side of H_e = h_w, equal to the same call with the skip disabled),
+  `test_skip_when_the_wall_enthalpy_equals_the_total_enthalpy` and `test_skip_is_not_taken_inside_a_hold_window`.
 
 ### 14.5 Sheltered corners, `--gas-loads classic`, saving and resuming
 
@@ -1504,6 +1518,14 @@ Each item below was measured once, on the flights named; none is a sweep.
   (the first item), the 39 solves saved in each 0.5 s of flight after the switch on the skins are about 17 to 113 s of
   solving, and the 78 saved on the element model about 34 to 226 s. A flight whose step is `--dt` throughout solves as
   often as before. The wall time of a long melting flight on the hold has not been measured.
+- Steps with no solve at all (14.4, the skip). On the Step 2 flights, which do not melt, the wall warms until it holds
+  more enthalpy than the arriving gas, and from then on the heating is zero and no solve is made. Counted in the
+  flights' histories as the rows whose stagnation flux `q_stag_Wm2` is 0 and whose heating blend `heating_blend_f` is
+  1.0: 398 of the 734 rows of the 100 mm flight, from flight time 168 s on, and 553 of the 1119 rows of the 50 mm
+  flight, from 283 s on (each flight's first row included). That is about 54 % and 49 % of the steps. These walls reach
+  about 1878 K (the value reported when the task was set) because the reference flights do not melt; a melting wall
+  stays near 900 K, so the skip starts much later there (only below about 1.2 km/s, where half the speed squared falls to
+  the enthalpy of gas at that wall temperature). The time saved on a melting flight was not measured.
 - The elapsed time is the JSON's `results.runtime_s`, which `CoupledRun.run` (`skyscrapers/coupled.py`) times from the
   start of the flight to its results. It therefore leaves out the mesh (gmsh or the mesh cache), the construction of the
   body and the heating, and the writing of the CSV, JSON and droplet files afterwards, and it includes the history's

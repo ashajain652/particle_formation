@@ -211,3 +211,76 @@ def test_wall_enthalpy_vectorised_and_matches_meridian(provider):
     assert h.shape == (2,) and h[1] == pytest.approx(L.h_w, rel=1e-12) and h[0] < h[1]
     assert provider.wall_enthalpy(1500.0).shape == ()
     assert _gl.GasLoads().wall_enthalpy(np.array([300.0, 600.0])).shape == (2,)
+
+
+# --- the skip: no boundary-layer solve when no part of the wall can be heated ---------------------------------------
+
+def _slow_state(t=None, mach=2.0, h_km=30.0):
+    """A state at the given Mach number in the standard atmosphere at `h_km` (a slow, cold-gas state)."""
+    T = 226.5
+    rho = 0.018
+    V = mach * math.sqrt(1.4 * _R_AIR * T)
+    fs = atmosphere.Freestream(rho, T, rho * _R_AIR * T, M_BAR_AIR, np.zeros(3))
+    return tj.AeroState(h_km * 1e3, 0.0, 0.0, fs, np.array([V, 0.0, 0.0]), V, _aero.knudsen(rho, M_BAR_AIR, 0.2),
+                        mach, 1.0, np.zeros(3), 0.5 * rho * V * V, t)
+
+
+def _count_solves(monkeypatch):
+    calls = []
+    real = _gl.GasLoads._solve
+
+    def counted(self, *a, **k):
+        calls.append(a)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(_gl.GasLoads, "_solve", counted)
+    return calls
+
+
+def test_similarity_heating_skips_the_solve_when_the_wall_is_hotter_than_the_total_enthalpy(monkeypatch):
+    prov = _gl.GasLoads(bin_deg=1.0)
+    calls = _count_solves(monkeypatch)
+    st = _slow_state()
+    assert prov.total_enthalpy(st) < float(prov.wall_enthalpy(1500.0))
+    res = heating.SimilarityHeating(prov).evaluate(st, np.radians([0.0, 60.0, 120.0]), np.full(3, 1500.0), 0.1)
+    assert np.all(res.q_conv == 0.0) and res.q_stag == 0.0 and res.blend == 1.0
+    assert calls == []
+
+
+def test_skip_matches_the_solved_result(monkeypatch):
+    th, Tw = np.radians([0.0, 60.0, 120.0]), np.full(3, 1500.0)
+    for st in (_slow_state(), hb_state(1.007e-4)):
+        prov = _gl.GasLoads(bin_deg=1.0)
+        a = heating.SimilarityHeating(prov).evaluate(st, th, Tw, _RADIUS_HB)
+        monkeypatch.setattr(_gl.GasLoads, "total_enthalpy", lambda self, s: float("inf"))
+        b = heating.SimilarityHeating(_gl.GasLoads(bin_deg=1.0)).evaluate(st, th, Tw, _RADIUS_HB)
+        monkeypatch.undo()
+        assert np.array_equal(a.q_conv, b.q_conv) and a.q_stag == b.q_stag and a.blend == b.blend
+    assert a.q_stag > 0.0       # the second state is on the heated side of H_e = h_w
+
+
+def test_skip_when_the_wall_enthalpy_equals_the_total_enthalpy(monkeypatch):
+    prov = _gl.GasLoads(bin_deg=1.0)
+    calls = _count_solves(monkeypatch)
+    st = hb_state(1.007e-4)
+    monkeypatch.setattr(_gl.GasLoads, "wall_enthalpy", lambda self, T: np.asarray(self.total_enthalpy(st)))
+    res = heating.SimilarityHeating(prov).evaluate(st, np.radians([0.0, 60.0]), np.full(2, 1500.0), _RADIUS_HB)
+    assert np.all(res.q_conv == 0.0) and res.q_stag == 0.0 and res.blend == 1.0 and calls == []
+
+
+def test_skip_is_not_taken_inside_a_hold_window(monkeypatch):
+    prov = _gl.GasLoads(bin_deg=1.0, hold_s=0.5)
+    model = heating.SimilarityHeating(prov)
+    th, Tw = np.radians([0.0, 60.0]), np.full(2, 1500.0)
+    first = model.evaluate(hb_state_t(1.007e-4, 0.0), th, Tw, _RADIUS_HB)
+    assert first.q_stag > 0.0
+    seen = []
+    monkeypatch.setattr(_gl.GasLoads, "total_enthalpy", lambda self, s: seen.append(s) or float("inf"))
+    calls = _count_solves(monkeypatch)
+    second = model.evaluate(hb_state_t(1.007e-4, 0.1), th, Tw, _RADIUS_HB)
+    assert seen == [] and calls == [] and second.q_stag == first.q_stag
+
+
+def hb_state_t(rho, t):
+    import dataclasses
+    return dataclasses.replace(hb_state(rho), t=t)
