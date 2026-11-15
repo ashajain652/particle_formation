@@ -1,5 +1,6 @@
-"""Tests of the level set's skins (design section 20.6, stage 3): the cells' storage, their grading below the fine zone,
-the regrid's exact books, the curved cross-section A(z) = A0 (1 - k1 z)(1 - k2 z), and the shared mixture density."""
+"""Tests of the level set's skins (design sections 20.6 and 21, stage 3 and plan 03b): the cells' storage, their grading
+below the fine zone, the regrid's exact books, the flat column and the measured cross-section (the curved one was
+retired by plan 03b Task 5), and the shared mixture density."""
 import numpy as np
 import pytest
 
@@ -20,8 +21,8 @@ def column(mat, thick, T, kappa=(0.0, 0.0), settings=None, area=AREA):
 
 def test_settings_defaults_and_presets():
     s = SkinSettings()
-    assert (s.cell, s.fine_zone, s.growth, s.stub, s.substep, s.swell, s.depth) == \
-        (10e-6, 0.4e-3, 1.10, 0.8e-3, 0.010, True, 1.2e-3)
+    assert (s.cell, s.fine_zone, s.growth, s.substep, s.swell, s.depth) == (10e-6, 0.4e-3, 1.10, 0.010, True, 1.2e-3)
+    assert not hasattr(s, "stub")                            # retired with the full-depth skins (plan 03b Task 5)
     assert SKIN_PRESETS == {"production": 10e-6, "dev": 20e-6}
     for cell in SKIN_PRESETS.values():                       # every preset passes the depth checks
         assert SkinSettings(cell=cell).depth == 1.2e-3
@@ -33,8 +34,6 @@ def test_settings_defaults_and_presets():
         SkinSettings(depth=0.0, fine_zone=0.0)
     with pytest.raises(ValueError, match="two fine cells"):
         SkinSettings(cell=0.25e-3)                          # fewer than two fine cells in the fine zone
-    with pytest.raises(ValueError, match="two fine cells"):
-        SkinSettings(cell=0.25e-3, fine_zone=0.6e-3, stub=0.4e-3)   # the stub's own check stays until Task 5
 
 
 def test_cells_grade_ten_percent_below_the_fine_zone():
@@ -79,29 +78,6 @@ def test_regrid_conserves_mass_enthalpy_and_momentum():
     v = sk.valid
     assert np.all(dz[v] <= 1.5 * t[v])
     assert np.all(((dz >= 0.5 * t) | (sk.count[:, None] == 1))[v])
-
-
-def test_the_curved_cross_section_holds_a_spherical_shell():
-    R = 25e-3
-    mat = ConstMaterial()
-    for t_flat in (0.3e-3, 3e-3, 8e-3):                      # R/3 = 8.33 mm fills the sphere
-        sk = column(mat, t_flat, 500.0, kappa=(1 / R, 1 / R))
-        sk.regrid()
-        t = sk.thickness()[0]
-        vol = sk.totals()[0][0] / mat.rho
-        shell = (4 * np.pi / 3) * (R ** 3 - (R - t) ** 3) / (4 * np.pi * R ** 2) * AREA   # per 4 pi R^2 of top area
-        assert shell == pytest.approx(vol, rel=1e-12)
-        assert t > t_flat                                                     # a convex column narrows with depth
-    # a concave column widens with depth: thinner than flat, and each cell of one mass is thinner than the one above
-    sk = column(mat, 3e-3, 500.0, kappa=(-1 / R, -1 / R))
-    assert sk.thickness()[0] < 3e-3
-    dz = sk.dz()[0, :sk.count[0]]
-    assert np.all(np.diff(dz) < 0.0)
-    A = sk.cross_section(np.array([[0.0, 1e-3, 2e-3]]))[0]
-    assert np.all(np.diff(A) > 0.0) and A[0] == AREA
-    # a skin deeper than its radius of curvature has no positive cross-section: refused, not given negative areas
-    with pytest.raises(ValueError, match="radius of curvature"):
-        column(mat, 9e-3, 500.0, kappa=(1 / 5e-3, 0.0)).dz()
 
 
 def test_a_flat_skin_has_the_flat_thickness():
@@ -195,7 +171,9 @@ def test_steady_ablation_recedes_at_the_energy_limited_speed_with_the_exponentia
     for i in range(steps):
         sk.conduct(dt, q, T0, 0.0, T0)
         mass, _ = sk.remove_feed()
-        sk.draw(T0, 0.0, m_min)
+        short = m_min - sk.totals()[0]                  # the column kept full at its base (plan 03b Task 5's fill)
+        if short[0] > 0.0:
+            sk.exchange_base([0], short / sk.rho_s, T0)
         sk.regrid()
         if i >= settle:
             gone += mass[0]
@@ -212,7 +190,7 @@ def test_steady_ablation_recedes_at_the_energy_limited_speed_with_the_exponentia
 def test_conduction_books_close():
     mat = LinearMeltMaterial(rho_l=2800.0)
     R = 20e-3
-    sk = Skins(mat, np.array([AREA, 2 * AREA]), np.array([[1 / R, 0.5 / R], [-1 / R, 0.0]]), SkinSettings())
+    sk = Skins(mat, np.array([AREA, 2 * AREA]), np.zeros((2, 2)), SkinSettings())
     sk.fill(mat.rho * sk.area * 1.2e-3, np.array([880.0, 700.0]))
     q, T_amb, eps, T_b, dt = np.array([3e6, 1e6]), 300.0, 0.8, np.array([850.0, 690.0]), 0.010
     E_base = np.zeros(2)
@@ -240,19 +218,23 @@ def test_conduction_books_close():
     assert a + b * T_b == pytest.approx(E_base / (3 * dt), rel=1e-12)
 
 
+TRIAL_FD_RTOL = 1e-5    # the trial derivative against the central difference over +-0.01 K, relative: the heat sub-steps'
+                        # Newton tolerance (NEWTON_TOL, 1e-6 K) sets the difference's own error (5.0e-6 measured once,
+                        # with constant k, once plan 03b Task 5 took the draw and its exact share of the derivative out;
+                        # 1e-6 held with it)
+
+
 @pytest.mark.parametrize("mat", [LinearMeltMaterial(rho_l=2800.0), VariableKMaterial(rho_l=2800.0)],
                          ids=["constant_k", "variable_k"])
 def test_the_trial_sensitivity_is_the_derivative_of_the_base_heat(mat):
     # rho_l = rho: the sub-step's geometry does not move with T_b, so the linearised step's derivative is exact; mushy
-    # cells exercise the latent heat's cp_eff, a draw with a gradient the profile; with k rising with T (Task 4) the
-    # conductances move with the temperatures and the Jacobian's dk/dT terms carry it
+    # cells exercise the latent heat's cp_eff; with k rising with T (Task 4) the conductances move with the temperatures
+    # and the Jacobian's dk/dT terms carry it. (Plan 03b Task 5 retired the draw within a pass, and with it the drawn
+    # metal's sensitivity and the feed removal between sub-steps this test once ran: without the draw's refill the top
+    # cells reach T_feed within the four sub-steps, and a removal is not differentiable in T_b.)
     def start():
-        sk = layered(mat, [(0.2e-3, 900.0), (0.3e-3, 885.0), (0.4e-3, 800.0)], settings=SkinSettings(swell=False))
-        sk.H[0, -1] *= 0.5                                         # the bottom cell half a cell: the draw has room
-        sk.m[0, -1] *= 0.5
-        return sk
-    m_min = start().totals()[0] * 1.02
-    q, T_amb, eps, dt, g = 4e6, 300.0, 0.8, 0.010, 3e4
+        return layered(mat, [(0.2e-3, 900.0), (0.3e-3, 885.0), (0.4e-3, 800.0)], settings=SkinSettings(swell=False))
+    q, T_amb, eps, dt = 4e6, 300.0, 0.8, 0.010
 
     def run(T_b, trial):
         sk = start()
@@ -263,8 +245,6 @@ def test_the_trial_sensitivity_is_the_derivative_of_the_base_heat(mat):
             E += book.E_base[0]
             if trial:
                 dE += book.dE_base_dTb[0]
-            sk.remove_feed()
-            sk.draw(T_b, g, m_min)
             sk.regrid()
         return E, dE, sk
 
@@ -272,99 +252,10 @@ def test_the_trial_sensitivity_is_the_derivative_of_the_base_heat(mat):
     E, dE, sk = run(T_b, True)
     E_hi, E_lo = run(T_b + d, False)[0], run(T_b - d, False)[0]
     assert dE < 0.0
-    assert dE == pytest.approx((E_hi - E_lo) / (2 * d), rel=1e-6)
+    assert dE == pytest.approx((E_hi - E_lo) / (2 * d), rel=TRIAL_FD_RTOL)
     a, b = sk.base_law(4 * dt)
     assert b[0] == pytest.approx(dE / (4 * dt), rel=1e-14)
     assert a[0] + b[0] * T_b == pytest.approx(E / (4 * dt), rel=1e-12)
-
-
-def test_draw_and_hand_down_are_exact():
-    mat = LinearMeltMaterial()
-    sk = Skins(mat, np.array([AREA, AREA, 2 * AREA]), np.array([[30.0, 10.0], [0.0, 0.0], [-20.0, 0.0]]),
-               SkinSettings())
-    sk.fill(mat.rho * sk.area * np.array([0.3e-3, 2.5e-3, 0.5e-3]), np.array([950.0, 700.0, 850.0]))
-    sk.regrid()
-    # the minimum: a stub of solid metal over the base's cross-section
-    z_b = sk.thickness()
-    A_b = sk.cross_section(z_b[:, None])[:, 0]
-    assert sk.minimum_mass() == pytest.approx(mat.rho * A_b * sk.settings.stub, rel=1e-14)
-    M0, E0, _ = sk.totals()
-    m_min = sk.minimum_mass()
-    T_b, g = np.array([890.0, 600.0, 920.0]), np.array([2e4, 0.0, 1e4])
-    mass, H = sk.draw(T_b, g, m_min)
-    M1, E1, _ = sk.totals()
-    assert np.all(np.abs(M1 - M0 - mass) <= 1e-14 * M1)
-    assert np.all(np.abs(E1 - E0 - H) <= 1e-14 * np.abs(E1))
-    assert mass == pytest.approx(np.maximum(m_min - M0, 0.0), rel=1e-14)
-    assert mass[1] == 0.0 and mass[0] > 0.0 and mass[2] > 0.0
-    # the profile enthalpy: T(s) = T_b - g s capped at T_rigid, averaged over the depth the shortfall takes as solid
-    dd = mass / (mat.rho * A_b)
-    s = np.linspace(0.0, 1.0, 20001)[None, :] * dd[:, None]
-    h = mat.enthalpy(np.minimum(T_b[:, None] - g[:, None] * s, mat.T_rigid))
-    h_avg = 0.5 * (h[:, 1:] + h[:, :-1]).mean(axis=1)
-    assert H[0] / mass[0] == pytest.approx(h_avg[0], rel=1e-6)
-    assert H[2] / mass[2] == pytest.approx(h_avg[2], rel=1e-6)
-    sk.regrid()
-    # hand-down: column 1 is all rigid, so everything deeper than the stub below its top leaves, whole cells only
-    M1, E1, _ = sk.totals()
-    dz = sk.dz()
-    z_top = np.cumsum(dz, axis=1) - dz
-    leaving = sk.valid & (z_top >= sk.settings.stub * (1 - 1e-12))
-    rho = sk.density(sk.T())
-    m_before, H_before = sk.m.copy(), sk.H.copy()
-    mass, H, vol = sk.hand_down(sk.settings.stub)
-    M2, E2, _ = sk.totals()
-    assert np.all(np.abs(M1 - M2 - mass) <= 1e-14 * M1)
-    assert np.all(np.abs(E1 - E2 - H) <= 1e-14 * np.abs(E1))
-    assert mass[1] == pytest.approx(m_before[1][leaving[1]].sum(), rel=1e-14)
-    assert H[1] == pytest.approx(H_before[1][leaving[1]].sum(), rel=1e-14)
-    assert vol[1] == pytest.approx((m_before[1] / rho[1])[leaving[1]].sum(), rel=1e-14)
-    assert mass[1] > 0.0 and mass[0] == 0.0          # column 0: its anchored run is only the drawn metal, under the stub
-    assert sk.thickness()[1] >= sk.settings.stub * (1 - 1e-12)
-    assert sk.thickness()[1] <= sk.settings.stub + sk.dz()[1, :sk.count[1]].max() * (1 + 1e-12)
-
-
-def test_a_crust_is_never_handed_down():
-    mat = LinearMeltMaterial()
-    stub = 0.8e-3
-    # rigid crust 0.3 mm over 0.2 mm of melt over 2 mm of rigid metal joined to the floor
-    sk = layered(mat, [(0.3e-3, 850.0), (0.2e-3, 950.0), (2.0e-3, 800.0)])
-    n = sk.count[0]
-    crust, anch = sk.crust()[0, :n], sk.anchored()[0, :n]
-    assert crust[:30].all() and not crust[30:].any()
-    assert anch[50:].all() and not anch[:50].any()
-    top = sk.m[0, :50].copy(), sk.H[0, :50].copy()
-    mass, H, vol = sk.hand_down(stub)
-    assert sk.count[0] == 50 + 80                                # the anchored run keeps its shallowest 0.8 mm
-    assert mass[0] == pytest.approx(mat.rho * AREA * 1.2e-3, rel=1e-12)
-    assert vol[0] == pytest.approx(AREA * 1.2e-3, rel=1e-12)
-    assert np.array_equal(sk.m[0, :50], top[0]) and np.array_equal(sk.H[0, :50], top[1])
-    # with the melt down to the floor nothing is anchored: the crust above it stays whatever the depth
-    sk = layered(mat, [(0.3e-3, 850.0), (2.0e-3, 950.0)])
-    assert not sk.anchored().any() and sk.crust()[0, :30].all()
-    M0 = sk.totals()[0]
-    mass, H, vol = sk.hand_down(stub)
-    assert mass[0] == 0.0 and H[0] == 0.0 and vol[0] == 0.0 and sk.totals()[0] == M0
-
-
-def test_a_hand_down_keeps_the_minimum_mass():
-    """Stage 3 Task 9: with `m_keep` a hand-down never takes a skin below that mass -- the bottom cells leave only while
-    what stays holds at least m_keep -- so that the hand-down (by depth, at each cell's own density) and the draw (by the
-    minimum mass, at the solid's density) cannot hand down and draw back the same metal step after step where the
-    rigid metal is less dense than the solid (a Scheil alloy's mushy metal below T_rigid)."""
-    mat = LinearMeltMaterial()
-    stub = 0.8e-3
-    sk = layered(mat, [(2.0e-3, 800.0)])
-    sk2 = layered(mat, [(2.0e-3, 800.0)])
-    free, _, _ = sk.hand_down(stub)
-    keep = mat.rho * AREA * 1.5e-3
-    mass, H, vol = sk2.hand_down(stub, m_keep=np.array([keep]))
-    assert free[0] == pytest.approx(mat.rho * AREA * 1.2e-3, rel=1e-12)
-    assert 0.0 < mass[0] <= mat.rho * AREA * 0.5e-3 * (1 + 1e-12)
-    assert sk2.totals()[0][0] >= keep * (1 - 1e-12)
-    assert sk2.totals()[0][0] < keep + sk2.m[0, :sk2.count[0]].max()     # whole cells: at most one cell over
-    nothing, _, _ = layered(mat, [(2.0e-3, 800.0)]).hand_down(stub, m_keep=np.array([1.0]))
-    assert nothing[0] == 0.0
 
 
 def test_a_skin_reduced_to_one_cell_keeps_its_books():
@@ -373,7 +264,7 @@ def test_a_skin_reduced_to_one_cell_keeps_its_books():
     mc = mat.rho * AREA * 4e-6                                   # one cell of 4 um, thinner than a fine cell
     sk.install(np.array([[mc], [mc]]), np.array([[mc * mat.enthalpy(890.0)], [mc * mat.enthalpy(1000.0)]]),
                np.array([1, 1]))
-    m_min = sk.minimum_mass()
+    m_min = sk.totals()[0].copy()                               # each column kept at its mass by the base (the fill)
     dt, q, T_b = 0.010, np.array([2e6, 2e6]), np.array([880.0, 880.0])
     for _ in range(3):
         M0, E0, _ = sk.totals()
@@ -385,13 +276,17 @@ def test_a_skin_reduced_to_one_cell_keeps_its_books():
         gone, gone_H = sk.remove_feed()
         M2, E2, _ = sk.totals()
         assert np.all(M2 + gone == M1) and np.all(np.abs(E2 + gone_H - E1) <= 1e-14 * np.abs(E1))
-        drawn, drawn_H = sk.draw(T_b, 0.0, m_min)
+        short = np.maximum(m_min - M2, 0.0)
+        rows = np.flatnonzero(short > 0.0)
+        ex = sk.exchange_base(rows, short[rows] / sk.rho_s, T_b[rows])
+        drawn, drawn_H = np.zeros(2), np.zeros(2)
+        drawn[rows], drawn_H[rows] = ex.mass, ex.H
         M3, E3, _ = sk.totals()
         assert np.all(np.abs(M3 - M2 - drawn) <= 1e-14 * M3)
         assert np.all(np.abs(E3 - E2 - drawn_H) <= 1e-14 * np.abs(E3))
         sk.regrid()
         assert np.all(sk.m[sk.valid] > 0.0) and np.all(sk.count >= 1)
-    # the liquid column lost its one cell on the first removal and was refilled by the draw at the base's enthalpy
+    # the liquid column lost its one cell on the first removal and was refilled at its base at the base's enthalpy
     assert sk.totals()[0] == pytest.approx(m_min, rel=1e-14)
     # an empty column passes its heat straight to the base
     sk.take_top(np.array([0]), np.array([sk.count[0]]))
@@ -458,19 +353,24 @@ def test_linear_couette():
     assert momentum_closes(sk, P0, book)
 
 
-def test_a_curved_column_carries_the_shear_force_through_every_interface():
-    """On a convex column the cross-section narrows with depth, so at steady state the force tau A0 passes through each
-    interface, A(z_i) D_i (u_i - u_(i+1)), and the stress rises as A0 / A(z_i)."""
+def test_a_narrowing_column_carries_the_shear_force_through_every_interface():
+    """On a column whose measured cross-section narrows with depth (beside a convex edge; plan 03b Task 5 retired the
+    curved law this test once used, and Task 3's review asked for momentum under a profile) at steady state the force
+    tau A0 passes through each interface, A(z_i) D_i (u_i - u_(i+1)), and the stress rises as A0 / A(z_i): 0.5 mm of
+    liquid over 0.1 mm of rigid metal, the cross-section falling by 60 % to H."""
     mat = liquid_mat()
-    sk = layered(mat, [(0.5e-3, 950.0), (0.1e-3, 850.0)], kappa=(1 / 2e-3, 1 / 4e-3), settings=SkinSettings())
+    area = AREA * (1.0 - 0.6 * LEVELS / DEPTH)
+    sk = profiled(mat, area[None, :])
+    z = np.linspace(0.0, 0.6e-3, 61)
+    stack(sk, [(z, np.where(np.arange(60) < 50, 950.0, 850.0))])
     sk.momentum_step(STEADY, 1.0 * X, np.zeros(3))
     dz = sk.dz()[0, :50]
-    z = np.cumsum(dz)[:-1]
-    A = sk.cross_section(z[None, :])[0]
-    force = A * MU / (0.5 * dz[:-1] + 0.5 * dz[1:]) * (sk.U[0, :49, 0] - sk.U[0, 1:50, 0])
+    zi = np.cumsum(dz)
+    A = sk.cell_section(zi[None, :])[0]
+    force = A[:-1] * MU / (0.5 * dz[:-1] + 0.5 * dz[1:]) * (sk.U[0, :49, 0] - sk.U[0, 1:50, 0])
     np.testing.assert_allclose(force, 1.0 * AREA, rtol=1e-9)
-    A_b = sk.cross_section(np.array([[dz.sum()]]))[0, 0]
-    assert A_b * MU / (0.5 * dz[-1]) * sk.U[0, 49, 0] == pytest.approx(1.0 * AREA, rel=1e-9)
+    assert A[-1] * MU / (0.5 * dz[-1]) * sk.U[0, 49, 0] == pytest.approx(1.0 * AREA, rel=1e-9)
+    assert A[-1] < 0.8 * AREA
 
 
 def test_half_parabola_second_order():
@@ -645,24 +545,6 @@ def test_cut_refuses_bad_fractions_and_an_open_trial():
     sk.conduct(1e-3, 0.0, 0.0, 0.0, 800.0, trial=True)
     with pytest.raises(RuntimeError, match="trial pass"):
         sk.cut([0], [0.5])
-
-
-def test_append_bottom_adds_whole_cells_and_refuses_a_gap():
-    """Stage 3 Task 10 (`Skins.append_bottom`, the volume's metal a top-zone skin takes when it turns full-depth): new
-    cells at rest below each column's bottom, top first, the books adding exactly; a row's trailing zeros end it, but a
-    zero-mass cell with metal after it is refused (fix round 1: it was silently dropped, with the metal after it)."""
-    mat = ConstMaterial()
-    sk = Skins(mat, np.full(2, 1e-6), np.zeros((2, 2)), SkinSettings(cell=20e-6))
-    sk.fill(mat.rho * 1e-6 * 0.4e-3, 600.0)
-    M0, E0 = sk.m.sum(), sk.H.sum()
-    c0 = sk.count.copy()
-    m = np.array([[1e-9, 2e-9, 0.0], [3e-9, 0.0, 0.0]])
-    sk.append_bottom([0, 1], m, 1e3 * m)
-    assert np.array_equal(sk.count, c0 + [2, 1])
-    assert sk.m.sum() == pytest.approx(M0 + m.sum(), rel=1e-15) and sk.H.sum() == pytest.approx(E0 + 1e3 * m.sum(), rel=1e-15)
-    assert np.all(sk.U == 0.0)
-    with pytest.raises(ValueError, match="zero"):
-        sk.append_bottom([0], [[1e-9, 0.0, 2e-9]], [[1e-6, 0.0, 2e-6]])
 
 
 # -- one skin depth: measured cross-sections, the base exchange and combining by depth (plan 03b Task 3) ---------------
@@ -979,8 +861,9 @@ def test_profiled_columns_divide_cut_and_combine_with_their_profiles():
 
 def test_an_overfull_column_continues_below_its_end():
     """Between a gain at its top and the next fill a column may hold more than its volume (here 5 % more). Its cells
-    then reach below its end at `cell_section`'s cross-section -- a column with a base at its base's, A(H), continued,
-    one that pinches at its mean cross-section -- so every cell keeps a positive area, while the column itself
+    then reach below its end at `cell_section`'s cross-section -- the larger of its end's and its mean (plan 03b Task 5:
+    the narrowing column's mean, above its base's A(H); a column that pinches at its mean) -- so every cell keeps a
+    positive area, while the column itself
     (`cross_section`) still ends there and a column that pinches still has no base. The heat books close, and a
     return of the excess at the base leaves both exactly full, ending at H and at the pinch."""
     mat = ConstMaterial()
@@ -991,7 +874,7 @@ def test_an_overfull_column_continues_below_its_end():
     extra = 0.05 * V
     sk.fill(mat.rho * (V + extra), 600.0)
     sk.regrid()
-    A_ext = np.array([narrow[-1], V[1] / PINCH])
+    A_ext = np.array([V[0] / DEPTH, V[1] / PINCH])
     np.testing.assert_allclose(sk.thickness(), np.array([DEPTH, PINCH]) + extra / A_ext, rtol=1e-12)
     z = np.array([[1.3e-3], [1.0e-3]])
     np.testing.assert_allclose(sk.cell_section(z)[:, 0], A_ext, rtol=1e-14)

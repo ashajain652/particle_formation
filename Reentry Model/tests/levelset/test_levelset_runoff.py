@@ -19,7 +19,7 @@ from materials import LinearMeltMaterial
 LIQUID, RIGID, COLD = 950.0, 880.0, 700.0     # K: all liquid; rigid (AA7075's T_rigid 895.1 K); the cold metal runoff
                                               # lands on (the skyscrapers' strip cases, test_reentry_model_skin.py)
 CELL = 1.0e-5                                 # m: each stacked cell holds 10 um of solid metal's mass (their `stacked`)
-SETTINGS = SkinSettings(cell=10e-6, fine_zone=0.4e-3, stub=0.4e-3)   # their CELLS_04 geometry
+SETTINGS = SkinSettings(cell=10e-6, fine_zone=0.4e-3)   # their CELLS_04 geometry (no stub since plan 03b Task 5)
 # the skyscrapers' PUSHES["flight"] (analysis/skin_plate.py): the 100 mm sphere's shoulder 45 degrees from the stagnation
 # point at 93 s -- dp/ds [Pa/m], gas shear [Pa], deceleration [m/s2] -- copied as data
 FLIGHT_ALPHA, FLIGHT_DP_DS, FLIGHT_TAU, FLIGHT_DECEL = 45.0, -3.424e5, 80.29, 29.77

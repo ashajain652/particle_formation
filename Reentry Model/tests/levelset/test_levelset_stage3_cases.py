@@ -50,7 +50,7 @@ def test_the_cases_use_only_the_shared_physics_and_the_level_set():
     for src in ("from reentry_model import skin", "from reentry_model.skyscrapers import skinbody", "import reentry_model.aero",
                 "from reentry_model.material import Material"):
         assert _escapes(ast.parse(src).body[0]), src
-    for src in ("from reentry_model.shared.material import Material", "from reentry_model.levelset import modes",
+    for src in ("from reentry_model.shared.material import Material", "from reentry_model.levelset import division",
                 "from reentry_model import OUTPUT_DIR"):
         assert not _escapes(ast.parse(src).body[0]), src
 
@@ -62,7 +62,7 @@ class _Stalled:
         self.time = 1.5
         self.markers = SimpleNamespace(x=np.zeros((2, 3)))
 
-    def _modes(self, tally, update=True, check_core=False):
+    def _rebuild(self, tally, surface=None, check_core=False):
         return None
 
 
@@ -81,7 +81,7 @@ def test_a_failing_step_keeps_the_body_it_started_from(monkeypatch, tmp_path):
     assert rows == [] and failure["step"] == 1 and "did not converge" in failure["error"]
     with open(failure["state"], "rb") as fh:
         kept = pickle.load(fh)
-    assert kept.time == 1.5 and "_modes" not in kept.__dict__
+    assert kept.time == 1.5 and "_rebuild" not in kept.__dict__
 
 
 def test_a_case_s_summary_is_stamped_with_the_code_it_ran_on(monkeypatch, tmp_path):

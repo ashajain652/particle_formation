@@ -97,14 +97,13 @@ from scipy.spatial import cKDTree  # noqa: E402
 from reentry_model import OUTPUT_DIR  # noqa: E402
 from reentry_model.levelset import loads as loads_mod  # noqa: E402
 from reentry_model.levelset import markers as markers_mod  # noqa: E402
-from reentry_model.levelset import modes, skinbody, stepend  # noqa: E402
+from reentry_model.levelset import skinbody, stepend  # noqa: E402
 from reentry_model.levelset.boxmesh import BoxBase, build  # noqa: E402
-from reentry_model.levelset.criteria import kappa_max_nodal, make_target, nodal_average  # noqa: E402
+from reentry_model.levelset.criteria import BIG, finite_values, kappa_max_nodal, make_target, nodal_average  # noqa: E402
 from reentry_model.levelset.cutcell import cell_gradients, patches  # noqa: E402
 from reentry_model.levelset.cutthermal import CutThermal  # noqa: E402
 from reentry_model.levelset.levelset import redistance  # noqa: E402
 from reentry_model.levelset.skin import SKIN_PRESETS, SkinSettings  # noqa: E402
-from reentry_model.levelset.surfaces import outer_surface  # noqa: E402
 from reentry_model.levelset.transfer import interpolate, locate  # noqa: E402
 from reentry_model.shared import atmosphere, heating, spray, surface_flow  # noqa: E402
 from reentry_model.shared import trajectory as tj  # noqa: E402
@@ -250,14 +249,14 @@ class Profile:
         for owner, name, label in (
                 (B, "_interface", "interface (patch groups)"), (B, "_accept", "part books"),
                 (B, "mass_centroid", "loads"), (B, "_summary", "summary"),
-                (S, "_move_beta", "base moves"), (S, "_psi", "surfaces psi"), (S, "_settle", "markers"),
-                (S, "_repartition", "re-partition"), (S, "_modes", "mode changes"), (S, "_needs_rebuild", "remesh"),
+                (S, "_move_phi", "base moves"), (S, "_psi", "surfaces psi"), (S, "_settle", "markers"),
+                (S, "_repartition", "re-partition"), (S, "_divide", "division"), (S, "_needs_rebuild", "remesh"),
                 (S, "_target", "remesh"), (S, "_fill", "fill"), (S, "_release", "markers"),
                 (CutThermal, "move", "base moves volume"), (CutThermal, "remesh", "remesh carry"),
                 (markers_mod.Markers, "tessellate", "markers tessellate"), (markers_mod.Markers, "snap", "markers snap"),
                 (markers_mod.Markers, "split", "markers"), (markers_mod.Markers, "merge", "markers"),
                 (markers_mod.Markers, "trapped_markers", "markers"),
-                (stepend, "outer_surface", "surfaces phi"), (skinbody, "outer_surface", "surfaces phi"),
+                (stepend, "skin_base", "surfaces phi"), (skinbody, "skin_base", "surfaces phi"),
                 (stepend, "build", "remesh build"), (stepend, "redistance", self._within("redistance")),
                 (stepend, "correct_volumes", self._within("volume correction")), (stepend, "pieces", self._within("pieces")),
                 (skinbody, "pieces", "summary"), (skinbody, "cut_patches", "summary"),
@@ -301,7 +300,7 @@ SPLIT = {"loads": ("loads", "loads shadow", "loads spray plan"),
                     "remesh pieces"),
          "base moves": ("base moves", "base moves volume", "base moves redistance", "base moves volume correction",
                         "base moves pieces", "fill"),
-         "mode changes (own)": ("mode changes",), "step summary": ("summary",)}
+         "division": ("division",), "step summary": ("summary",)}
 
 
 def split_step(delta, wall):
@@ -310,12 +309,12 @@ def split_step(delta, wall):
     ex, inc, calls = delta["excl"], delta["incl"], delta["calls"]
     out = {k: round(sum(ex.get(lab, 0.0) for lab in labs), 3) for k, labs in SPLIT.items()}
     out["other"] = round(wall - sum(out.values()), 3)
-    out["inclusive"] = {k: round(inc.get(k, 0.0), 3) for k in ("base moves", "mode changes", "re-partition",
+    out["inclusive"] = {k: round(inc.get(k, 0.0), 3) for k in ("base moves", "division", "re-partition",
                                                                "loads shadow", "runoff", "markers", "base moves volume",
                                                                "base moves redistance", "base moves volume correction")}
     out["calls"] = {k: calls.get(k, 0) for k in ("base moves", "base moves volume", "cut-cell solve",
                                                  "cut-cell solve repeats", "skins trial", "skins repeats", "runoff",
-                                                 "re-partition", "remesh build", "mode changes")}
+                                                 "re-partition", "remesh build", "division")}
     return out
 
 
@@ -365,54 +364,15 @@ def phi_far_from_distance(body):
     return share, float(np.median(ang)), float(np.percentile(ang, 95)), float(ang.max())
 
 
-def settling_ratio(body):
-    """phi rebuilt from the settled skins (each node the thickness of the nearest base, as the step end builds it) over
-    the area of the phi they were settled on (Task 9b's settling)."""
-    rebuilt = outer_surface(body.mesh, body.beta, body._thickness_nodal(), band=body.band)
-    return float(patches(body.mesh, rebuilt).area.sum() / patches(body.mesh, body.phi).area.sum())
+def melt_depth(mesh, psi, x):
+    """The depth [m] (k,) from phi to psi at the points x (k, 3) on phi: psi's P1 value there, at least zero; infinite
+    where psi is (no rigid metal). (Stage 3 Task 10's `modes.melt_depth`, retired with the modes by plan 03b Task 5.)"""
+    cell, b = locate(mesh, x)
+    h = np.maximum(np.einsum("ni,ni->n", b, finite_values(psi)[mesh.tets[cell]]), 0.0)
+    return np.where(h > 0.5 * BIG, np.inf, h)
 
 
-class ModeWatch:
-    """phi's fall where markers change mode at a step end (the density limitation, Task 10): wraps the body's `_modes`;
-    for each step end that changed modes and kept the markers' count, the changed markers' phi after the change at their
-    positions before it (phi is a distance near the surface: its value is the fall, positive inward) against the depth
-    their skins handed (thickness before less after, positive to the volume)."""
-
-    def __init__(self, body):
-        self.events = []
-        orig = body._modes
-
-        def watched(tally, update=True, check_core=False):
-            mk, sk = body.markers, body.skins
-            x, top, n = mk.x.copy(), mk.top.copy(), mk.n
-            H = sk.thickness()[mk.skin_index].copy()
-            out = orig(tally, update=update, check_core=check_core)
-            if body.markers.n == n:
-                changed = np.flatnonzero(body.markers.top != top)
-                if len(changed):
-                    fall = interpolate(body.mesh, body.phi, x[changed])
-                    handed = H[changed] - body.skins.thickness()[body.markers.skin_index[changed]]
-                    self.events.append({"changed": int(len(changed)), "to_top": int(body.markers.top[changed].sum()),
-                                        "fall_mm": fall * 1e3, "handed_mm": handed * 1e3})
-            return out
-        body._modes = watched
-
-    def take(self):
-        out, self.events = self.events, []
-        if not out:
-            return None
-        fall = np.concatenate([e["fall_mm"] for e in out])
-        handed = np.concatenate([e["handed_mm"] for e in out])
-        ok = np.abs(handed) > 1e-3
-        ratio = fall[ok] / handed[ok]
-        return {"changed": int(sum(e["changed"] for e in out)), "to_top": int(sum(e["to_top"] for e in out)),
-                "fall_mm_median": float(np.median(fall)), "fall_mm_max": float(np.max(fall)),
-                "handed_mm_median": float(np.median(handed)),
-                "fall_over_handed_median": float(np.median(ratio)) if len(ratio) else None,
-                "fall_over_handed_range": [float(ratio.min()), float(ratio.max())] if len(ratio) else None}
-
-
-def step_row(body, book, wall, x_before, delta, watch):
+def step_row(body, book, wall, x_before, delta):
     """One macro step's record: the books, the parts, the cost split and the carried measurements."""
     mk = body.markers
     share, ang_med, ang_95, ang_max = phi_far_from_distance(body)
@@ -427,8 +387,7 @@ def step_row(body, book, wall, x_before, delta, watch):
            "mass_removed_kg": book.mass_removed, "mass_sprayed_kg": book.mass_sprayed,
            "mass_volume_kg": book.mass_volume, "mass_skins_kg": book.mass_skins,
            "n_markers": book.n_markers, "markers_trapped": book.markers_trapped, "marker_splits": book.marker_splits,
-           "marker_merges": book.marker_merges, "n_top": book.n_top, "modes_to_top": book.modes_to_top,
-           "modes_to_full": book.modes_to_full, "cells": int(len(body.mesh.tets)),
+           "marker_merges": book.marker_merges, "cells": int(len(body.mesh.tets)),
            "cells_at_floor": int((body.mesh.size <= body.cell_floor * (1 + 1e-9)).sum()),
            "snap_fallback": book.snap_fallback, "snap_slide_max_m": book.snap_slide_max,
            "volume_correction_max": book.volume_correction_max,
@@ -437,8 +396,7 @@ def step_row(body, book, wall, x_before, delta, watch):
            # carried 1: uneven patch groups
            "group_area_ratio_min": book.group_area_ratio_min, "group_area_ratio_max": book.group_area_ratio_max,
            "group_area_ratio_trimmed_max": book.group_area_ratio_trimmed_max,
-           # carried 3: settling, and phi's move at the markers' old positions
-           "settling_area_ratio": settling_ratio(body),
+           # carried 3: phi's move at the markers' old positions
            "phi_move_max_m": float(move.max()), "phi_move_median_m": float(np.median(move)),
            # carried 4: sideways mixing
            "area_repartitioned_share": book.area_repartitioned_share, "stretch_min": book.stretch_min,
@@ -446,23 +404,19 @@ def step_row(body, book, wall, x_before, delta, watch):
            # carried 5: phi against a distance function
            "grad_phi_below_bound_share": share, "phi_beta_angle_median_deg": ang_med,
            "phi_beta_angle_p95_deg": ang_95, "phi_beta_angle_max_deg": ang_max,
-           # carried 6: the density limitation where skins changed mode
-           "mode_phi_fall": watch.take() if watch is not None else None,
+           # the layer (plan 03b Task 5): the division's closure, the fills, the moves of phi, the columns with no base
+           "layer_factor_max": book.layer_factor_max, "fill_miss_max": book.fill_miss_max,
+           "move_miss_max": book.move_miss_max, "n_baseless": book.n_baseless, "density_carry_m3": book.density_carry_m3,
            # carried 7: owed heat
-           "owed_share_of_heat_in": max(pend - book.residual_modes_J, 0.0) / heat,
+           "owed_share_of_heat_in": pend / heat,
            "pending_share_of_heat_in": pend / heat, "interface_mismatch_share": book.interface_mismatch_J / heat,
            "residual_newton_J": book.residual_newton_J, "residual_move_J": book.residual_move_J,
            "residual_remesh_J": book.residual_remesh_J,
-           "enthalpy_modes_J": book.enthalpy_modes_J, "residual_modes_J": book.residual_modes_J,
-           "modes_owed_share": book.residual_modes_J / book.enthalpy_modes_J if book.enthalpy_modes_J else None,
            # carried 8: churn and pieces
            "mass_drawn_kg": book.mass_drawn, "mass_handed_kg": book.mass_handed,
-           "mass_modes_handed_kg": book.mass_modes_handed, "mass_modes_absorbed_kg": book.mass_modes_absorbed,
            "n_pieces": book.n_pieces, "pieces_used_up": book.pieces_used_up,
-           # Task 11's fix: the islands a base move filled from the handed columns (item 3), the groups the area guard
-           # replaced (item 1), the non-rigid metal the full-depth skins absorbed (item 4)
+           # Task 11's fix: the islands a move filled from the skins (item 3), the groups the area guard replaced (item 1)
            "island_nodes": getattr(book, "island_nodes", 0), "groups_guarded_max": getattr(book, "groups_guarded_max", 0),
-           "mass_absorbed_kg": getattr(book, "mass_absorbed", 0.0),
            "pending_flux_max_Wm2": book.pending_flux_max, "surface_flux_max_Wm2": book.surface_flux_max}
     if delta is not None:
         row["cost_split_s"] = split_step(delta, wall)
@@ -544,7 +498,7 @@ def _json_default(v):
 
 def save_state(body, path):
     """Pickle the body to `path` (large; never committed), the cases' own wrappers of its methods left out."""
-    over = {k: body.__dict__.pop(k) for k in ("_modes", "_psi", "_target", "_needs_rebuild") if k in body.__dict__}
+    over = {k: body.__dict__.pop(k) for k in ("_rebuild", "_psi", "_target", "_needs_rebuild") if k in body.__dict__}
     try:
         with open(path, "wb") as fh:
             pickle.dump(body, fh)
@@ -562,7 +516,6 @@ def run_steps(body, advance, steps, label, extra=None, before_step=None):
     tag = label.replace(" ", "_")
     states = os.environ.get("STAGE3_STATE_DIR")
     with Profile() as prof:
-        watch = ModeWatch(body)                            # inside the profiler, so that it wraps the profiled _modes
         for k in range(steps):
             if before_step is not None:
                 before_step(k)
@@ -581,7 +534,7 @@ def run_steps(body, advance, steps, label, extra=None, before_step=None):
                 print(label, "FAILED:", failure, flush=True)
                 break
             wall = time.perf_counter() - t0
-            row = step_row(body, book, wall, x0, Profile.since(snap, prof.snapshot()), watch)
+            row = step_row(body, book, wall, x0, Profile.since(snap, prof.snapshot()))
             if extra is not None:
                 row.update(extra(body, book))
             rows.append(row)
@@ -592,7 +545,7 @@ def run_steps(body, advance, steps, label, extra=None, before_step=None):
                 save_state(body, os.path.join(states, "{}_t{:.2f}.pkl".format(tag, row["t"])))
             print("{} t={:.2f}s wall {:.1f}s parts {} mass {:.1e} energy {:.1e} {}".format(
                 label, row["t"], wall, row["parts"], row["mass_residual"], row["enthalpy_residual"],
-                {k: v for k, v in row.items() if k.endswith("_mm") or k in ("n_top", "n_markers")}), flush=True)
+                {k: v for k, v in row.items() if k.endswith("_mm") or k == "n_markers"}), flush=True)
     return rows, failure
 
 
@@ -612,7 +565,7 @@ def plate_body(case, preset, mat=None):
     st = skin_settings(preset)
     w = PLATE_WIDTH
     base = BoxBase.around((-w / 2, -w / 2, -PLATE_DEPTH), (w / 2, w / 2, PLATE_GAS), H0)
-    body = skinbody.LevelSetSkinBody(mat, base, lambda x: x[:, 2] + st.stub, T0, st, remove="feed", spacing=w)
+    body = skinbody.LevelSetSkinBody(mat, base, lambda x: x[:, 2], T0, st, remove="feed", spacing=w)
     if body.markers.n != 1:
         raise RuntimeError("the plate's face should carry one marker, got {}".format(body.markers.n))
     return body
@@ -668,7 +621,7 @@ def plate(case, preset="dev", every_second=False, steps=None, save=True):
         T_patch = b.solver.patch_T()
         return {"recession_mm": (top0 - plate_top(b)) * 1e3,
                 "removed_recession_mm": removed[0] / (mat.rho * area) * 1e3,
-                "nonrigid_mm": float(modes.melt_depth(b.mesh, b.psi, mk.x)[0] * 1e3),
+                "nonrigid_mm": float(melt_depth(b.mesh, b.psi, mk.x)[0] * 1e3),
                 "skin_flowing_mm": float(b.skins.depth_above(mat.T_rigid)[mk.skin_index][0] * 1e3),
                 "skin_thickness_mm": float(b.skins.thickness()[mk.skin_index][0] * 1e3),
                 "base_excess_K": float((T_patch * b.solver.P.area).sum() / b.solver.P.area.sum() - mat.T_rigid),
@@ -718,19 +671,19 @@ def plate(case, preset="dev", every_second=False, steps=None, save=True):
 
 
 # -- the q6p box -------------------------------------------------------------------------------------------------------
-def box_beta0(stub):
-    def beta0(x):
+def box_phi0():
+    def phi0(x):
         y, z = x[:, 1] - BOX_OFF, x[:, 2] - BOX_OFF
         return np.maximum.reduce([-(x[:, 0] - BOX_OFF), x[:, 0] - BOX_OFF - BOX_LENGTH, np.abs(y) - BOX_HALF,
-                                  np.abs(z) - BOX_HALF]) + stub
-    return beta0
+                                  np.abs(z) - BOX_HALF])
+    return phi0
 
 
 def box_body(preset="dev", mat=None):
     mat = material() if mat is None else mat
     st = skin_settings(preset)
     base = BoxBase.around((-H0, -BOX_HALF - H0, -BOX_HALF - H0), (BOX_LENGTH + H0, BOX_HALF + H0, BOX_HALF + H0), H0)
-    return skinbody.LevelSetSkinBody(mat, base, box_beta0(st.stub), COLD_T0, st, remove="feed", v_hat=(-1.0, 0.0, 0.0))
+    return skinbody.LevelSetSkinBody(mat, base, box_phi0(), COLD_T0, st, remove="feed", v_hat=(-1.0, 0.0, 0.0))
 
 
 def box_face(body):
@@ -781,9 +734,8 @@ def box(preset="dev", steps=None, save=True):
         top, dist, edge = box_face(b)
         rec = (top - face_x0) * 1e3
         mk = b.markers
-        side = np.abs(mk.normal[:, 0]) < 0.5
         tilted = (mk.normal[:, 0] <= -0.5) & (mk.normal[:, 0] >= -FACE_NORMAL)
-        S, A_group, _, _ = b._interface()                   # the face skins' groups now (Task 11's fix, item 1)
+        S, A_group, _ = b._interface()                      # the face skins' groups now (Task 11's fix, item 1)
         face_rows = b.markers.skin_index[b.markers.normal[:, 0] < -FACE_NORMAL]
         fr = A_group[face_rows] / b.skins.base_area()[face_rows]
         return {"recession_mm": (c - c0) * 1e3, "centre_marker_off_axis_mm": d * 1e3,
@@ -800,8 +752,6 @@ def box(preset="dev", steps=None, save=True):
                 if (mk.normal[:, 0] < -0.5).any() else None,
                 "heat_coverage_by_normals": heat_coverage(b, v_hat),
                 "heat_coverage_projected": heat_coverage(b, v_hat, projected_heat(b, BOX_Q, v_hat), BOX_Q),
-                "top_zone": {"face": int(mk.top[mk.normal[:, 0] < -FACE_NORMAL].sum()), "edges": int(mk.top[tilted].sum()),
-                             "sides": int(mk.top[side].sum()), "back": int(mk.top[mk.normal[:, 0] > 0.5].sum())},
                 "skin_thickness_max_mm": float(b.skins.thickness().max() * 1e3),
                 "edge_skin_thickness_max_mm": float(b.skins.thickness()[mk.skin_index[tilted]].max() * 1e3)
                 if tilted.any() else None}
@@ -845,13 +795,13 @@ def shoulder_v_hat():
     return np.array([-math.sin(a), 0.0, math.cos(a)])
 
 
-def shoulder_beta0(stub):
+def shoulder_phi0():
     c, R = SHOULDER_CENTRE, SHOULDER_R
 
-    def beta0(x):
+    def phi0(x):
         return np.maximum.reduce([np.linalg.norm(x - c, axis=1) - R, np.abs(x[:, 0]) - SHOULDER_HALF_X,
-                                  np.abs(x[:, 1]) - SHOULDER_HALF_Y, -x[:, 2] - SHOULDER_DEPTH]) + stub
-    return beta0
+                                  np.abs(x[:, 1]) - SHOULDER_HALF_Y, -x[:, 2] - SHOULDER_DEPTH])
+    return phi0
 
 
 def curved(mk):
@@ -882,7 +832,7 @@ def shoulder_body(preset="dev", mat=None):
     lo = (-SHOULDER_HALF_X - H0, -SHOULDER_HALF_Y - H0, -SHOULDER_DEPTH - H0)
     hi = (SHOULDER_HALF_X + H0, SHOULDER_HALF_Y + H0, H0)
     base = BoxBase.around(lo, hi, H0)
-    body = skinbody.LevelSetSkinBody(mat, base, shoulder_beta0(st.stub), COLD_T0, st, loads=PushedLoads(),
+    body = skinbody.LevelSetSkinBody(mat, base, shoulder_phi0(), COLD_T0, st, loads=PushedLoads(),
                                      remove="spray", v_hat=shoulder_v_hat(), cell_floor=0.7e-3)
     return body
 
@@ -980,7 +930,7 @@ def sphere_body(preset, mat=None):
     st = SkinSettings(cell=SKIN_PRESETS[preset])
     L = SPHERE_R + 2 * H0
     base = BoxBase.around((-L,) * 3, (L,) * 3, H0)
-    return skinbody.LevelSetSkinBody(mat, base, lambda x: np.linalg.norm(x, axis=1) - (SPHERE_R - st.stub), SPHERE_T0,
+    return skinbody.LevelSetSkinBody(mat, base, lambda x: np.linalg.norm(x, axis=1) - SPHERE_R, SPHERE_T0,
                                      st, loads=gl, spray_model=model, emissivity=0.2, T_ambient=200.0,
                                      v_hat=(1.0, 0.0, 0.0))
 

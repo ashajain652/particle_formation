@@ -12,8 +12,8 @@ the cascade lives per architecture, pinned by a test comparing the two on the sa
 
 The plan (`spray_plan`, once a macro step, at its start), per marker, in the markers' order:
 - b, and the regime test's depth, the viscous film's floor and the lubrication's layer: the skin's flowing depth
-  `depth_above(T_rigid)` (b_mode "skin"), or on a top-zone skin (b_mode "phi_psi") the depth from phi to psi given per
-  marker (nan where the marker's skin is full-depth, which then reads its own flowing depth; design 20.6);
+  `depth_above(T_rigid)` (every skin is one skin depth deep, design 21.3, so b is always the skin's: plan 03b Task 5
+  retired the top-zone skins' depth from phi to psi);
 - delta_m from `spray_layer` (the slip band through it where the model's `slip_band` is on), v_s from
   `lubrication(tau, G, b, delta_m, mu_l, b_layer=b)`;
 - the droplet's cap depth: the skin's liquid depth `depth_above(T_liquidus)`, or with `slurry` its flowing depth; the
@@ -21,12 +21,6 @@ The plan (`spray_plan`, once a macro step, at its start), per marker, in the mar
   contiguous region of markers with liquid on the markers' face graph (`Markers.faces`);
 - with `slurry`, the exposed slurry's own mode per marker (`_slurry_modes`), a second `SprayModel` with the slurry's
   properties at the shear rate of its own sheared layer, found by fixed point.
-
-On a top-zone skin (stage 3 Task 10, decision D2 and the controller's ruling (b) of 2026-11-12) the melt beneath is the
-volume's, held, and its depth is phi to psi: b, the cap depth, the Rayleigh-Taylor pool, and the slurry's layer (from
-its cell's top down to psi), its cap and the region its wave must fit in (b at least B_MIN) all read it. The film mass
-and the release stay the skin's own (`Skins.take_top_mass`): what leaves comes from the skin's top cells, and the skin's
-base draw then refills it from the melt beneath (`modes.draw_cap`).
 
 No renewal limit (ruling of 2026-11-11): design 9.5's cap on liquid deeper than delta_m, rho_l delta_m A per renewal time
 delta_m^2/nu_l, belongs to the two-zone skin of 2026-10-07 and is not built; the layered skins resolve the velocity
@@ -48,8 +42,6 @@ from ..shared import spray as spray_mod
 from ..shared.lubrication import lubrication
 from ..shared.material import LiquidProperties
 from .skin import SHEAR_PASSES, SHEAR_TOL
-
-B_MODES = ("skin", "phi_psi")
 
 
 # -- the cascade and the release (the skyscrapers' cascade_mass and release_top, matched by amendment) ---------------
@@ -253,21 +245,16 @@ class SprayPlan:
         return out
 
 
-def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, nose_radius, slurry=False, b_mode="skin",
-               depth_phi_psi=None, top=None, theta=None, centre=None, v_hat=None):
+def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, nose_radius, slurry=False, theta=None,
+               centre=None, v_hat=None):
     """Girin's spraying from each marker's skin for the macro step about to run (module docstring): a SprayPlan, per
     marker in the markers' order. `skins` the markers' skins (marker i's is row `markers.skin_index[i]`); `markers`
     tessellated (its faces are the wave's domain graph); `flow` the shared SurfaceFlowResult per marker; `state` the
     aero state; `model` the shared SprayModel; `windward` bool (n,) and `w_n` [m/s2] (n,) the normal deceleration
     W cos(theta) (the loads' leeward test and angles); `dt` [s] the macro step; `radius` [m] the body radius of the
     quarter cap; `nose_radius` [m] the radius the slip band's integrated shear was taken at. `slurry` the exposed slurry's
-    mode too (`--slurry-spray on`); `b_mode` "skin" or "phi_psi" with `top` (n,) bool, the markers whose skins are
-    top-zone (`Markers.top`), and `depth_phi_psi` [m] (n,), the depth from phi to psi, read where `top` (module
-    docstring);
-    `theta` [rad] (n,) the markers' angles to the flow (the slip band and the records; nan if not given); `centre` [m]
+    mode too (`--slurry-spray on`); `theta` [rad] (n,) the markers' angles to the flow (the slip band and the records; nan if not given); `centre` [m]
     and `v_hat` for the records' release angle."""
-    if b_mode not in B_MODES:
-        raise ValueError("b_mode must be one of {}, got {!r}".format(B_MODES, b_mode))
     if markers.faces is None:
         raise ValueError("the markers have no faces: tessellate them first")
     if model.slip_band and theta is None:
@@ -278,17 +265,7 @@ def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, no
     T, flowing, liquid = _phases(skins)
     F_skin = skins.depth_above(mat.T_rigid)[rows]
     L = skins.depth_above(mat.T_liquidus)[rows]
-    if b_mode == "phi_psi":
-        if top is None or depth_phi_psi is None:
-            raise ValueError("b_mode 'phi_psi' needs the top-zone markers (top) and the depth from phi to psi per marker")
-        top = np.asarray(top, dtype=bool).reshape(n)
-        d = np.asarray(depth_phi_psi, dtype=float).reshape(n)
-        if not np.all(np.isfinite(d[top]) & (d[top] >= 0.0)):
-            raise ValueError("b_mode 'phi_psi' needs a finite, non-negative depth from phi to psi at every top-zone marker")
-        b = np.where(top, d, F_skin)
-    else:
-        top = np.zeros(n, dtype=bool)
-        b = F_skin
+    b = F_skin
     n_flow = np.cumprod(flowing, axis=1).sum(axis=1)[rows]
     n_liq = np.cumprod(liquid, axis=1).sum(axis=1)[rows]
     on_slurry = n_flow > n_liq
@@ -302,13 +279,12 @@ def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, no
     extent = spray_mod.region_extent(edges, L > 0.0, area)
     run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
     m_f = (skins.m * run).sum(axis=1)[rows]
-    cap = np.where(top, b, F_skin if slurry else L)
+    cap = F_skin if slurry else L
     res = model.evaluate(flow, state, b, delta_m, v_s, windward, dt, area, m_f, radius, b_layer=b, extent=extent,
-                         deceleration_n=w_n, regime_layer=b, on_slurry=on_slurry, rt_layer=np.where(top, b, L),
-                         cap_depth=cap)
+                         deceleration_n=w_n, regime_layer=b, on_slurry=on_slurry, rt_layer=L, cap_depth=cap)
     if slurry:
         rate_s, modes = _slurry_modes(skins, rows, T, flow, state, model, windward, w_n, area, edges, radius, dt, b,
-                                      np.where(top, b, F_skin), n_liq, n_flow, theta, nose_radius)
+                                      F_skin, n_liq, n_flow, theta, nose_radius)
     else:
         rate_s, modes = np.zeros(n), spray_mod.no_slurry(n)
     return SprayPlan(res.mdot, rate_s, res, modes, b, L, cap, on_slurry, rows, bool(slurry), theta=theta_arr,
@@ -323,7 +299,7 @@ def _slurry_modes(skins, rows, T, flow, state, model, windward, w_n, area, edges
     stage 3 Task 8): this reads the skins for it -- where a flowing cell that is not fully liquid lies beneath the liquid
     run on the windward face, that cell's temperature, solid fraction and mixture density, its layer from the cell's top
     to T_rigid, the slurry run's mass, the flowing region (b at least B_MIN) the wave must fit in and the cap (the
-    flowing depth; on a top-zone skin `F_skin` is phi to psi, module docstring) -- with the skins' SHEAR_PASSES and SHEAR_TOL for the fixed point on the shear rate. Returns (rate
+    flowing depth) -- with the skins' SHEAR_PASSES and SHEAR_TOL for the fixed point on the shear rate. Returns (rate
     [kg/(m2 s)], the per-marker dict)."""
     sel = np.flatnonzero((n_flow > n_liq) & windward)
     if not sel.size:

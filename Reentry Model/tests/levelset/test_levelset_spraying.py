@@ -23,7 +23,7 @@ from materials import LinearMeltMaterial
 
 LIQUID, SLURRY, RIGID = 950.0, 902.0, 880.0    # K: all liquid; 30 % solid, flowing; rigid (AA7075's T_rigid 895.1 K)
 CELL = 1.0e-5                                  # m: each stacked cell holds 10 um of solid metal's mass
-SETTINGS = SkinSettings(cell=10e-6, fine_zone=0.4e-3, stub=0.4e-3)
+SETTINGS = SkinSettings(cell=10e-6, fine_zone=0.4e-3)
 H = 1.0e-3                                     # m: the markers' spacing on the flat grid
 SOLID_TOL = 1.0e-9                             # the D4 test's tolerance on the solid released (its docstring)
 TAU_RENEWAL = 20.0                             # Pa: the gas shear of the renewal test (supercritical: We_s above 3.08
@@ -195,70 +195,6 @@ def test_the_exposed_slurry_mode_matches_the_skyscrapers_on_one_column():
     np.testing.assert_array_equal(plan.slurry["branch"], modes["branch"])
     for key in ("r", "mu", "gamma", "delta_m", "depth", "rho", "T"):
         np.testing.assert_allclose(plan.slurry[key], modes[key], rtol=1e-9, atol=0.0, err_msg=key)
-
-
-TOP_ZONE = [[LIQUID] * 40, [LIQUID] * 10 + [SLURRY] * 30]      # top-zone skins: the fine zone over thick melt
-
-
-def test_a_top_zone_skin_sprays_by_its_depth_from_phi_to_psi():
-    """Design 20.6 and decision D2 (the controller's ruling (b) of Task 10): on a top-zone skin -- the top 0.4 mm over
-    thick melt the volume holds -- the plan reads the depth from phi to psi (b_mode "phi_psi") for the melt depth b (the
-    regime test and the lubrication's layer with it), the cap depth, the Rayleigh-Taylor pool and the slurry's layer, its
-    cap and the extent its wave must fit in (b at least B_MIN); a full-depth skin beside it (nan) reads its own. The
-    liquid's mode is the shared model's called with those depths and the skin's own film mass; the release takes only
-    the skin's own top cells; and the skin's base draw then refills it from the melt beneath, at the melt's temperature,
-    to its fine zone's mass."""
-    from reentry_model.levelset import modes
-    mat = aa7075()
-    cols = MIXED[:2] + TOP_ZONE
-    n = len(cols)
-    top = np.array([False, False, True, True])
-    d = np.array([np.nan, np.nan, 3.0e-3, 2.0e-3])                        # phi to psi at the top-zone markers [m]
-                                                                          # (read only where top)
-    mk = row_markers(n, h=0.05)
-    sk = stacked(mk, cols, mat)
-    flow, model = gas(n, tau=TAU_RENEWAL), model_of(mat)
-    theta = np.full(n, 0.3)
-    windward, w_n = np.ones(n, bool), flow.deceleration * np.cos(theta)
-    plan = spraying.spray_plan(sk, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.05, slurry=True,
-                               b_mode="phi_psi", depth_phi_psi=d, top=top, theta=theta)
-    # the mode is given, not read off the depths: without it, or with no depth at a top-zone marker, the plan refuses
-    with pytest.raises(ValueError, match="top"):
-        spraying.spray_plan(sk, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.05, b_mode="phi_psi",
-                            depth_phi_psi=d, theta=theta)
-    with pytest.raises(ValueError, match="depth"):
-        spraying.spray_plan(sk, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.05, b_mode="phi_psi",
-                            depth_phi_psi=np.where(top, np.nan, 1e-3), top=top, theta=theta)
-    F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
-    b = np.where(top, d, F)
-    np.testing.assert_array_equal(plan.flowing, b)
-    np.testing.assert_array_equal(plan.cap_depth, b)                      # with the slurry: the flowing depth, or d
-    T = sk.T()
-    flowing, liquid = sk.flowing(T), sk.liquid(T)
-    run = np.cumprod(flowing, axis=1).astype(bool)
-    delta_m = spray.spray_layer(flow, model.liquid, model.slip_band, theta, 0.05)
-    v_s = lubrication(flow.tau, flow.G, b, delta_m, model.liquid.mu, b_layer=b)[0]
-    extent = spray.region_extent(np.column_stack([mk.faces.i, mk.faces.j]), L > 0.0, sk.area)
-    n_flow, n_liq = np.cumprod(flowing, axis=1).sum(axis=1), np.cumprod(liquid, axis=1).sum(axis=1)
-    want = model.evaluate(flow, STATE, b, delta_m, v_s, windward, 0.5, sk.area, (sk.m * run).sum(axis=1), 0.05,
-                          b_layer=b, extent=extent, deceleration_n=w_n, regime_layer=b, on_slurry=n_flow > n_liq,
-                          rt_layer=np.where(top, d, L), cap_depth=b)
-    np.testing.assert_array_equal(plan.result.mdot, want.mdot)
-    np.testing.assert_array_equal(plan.result.branch, want.branch)
-    assert plan.rate[2] > 0.0 and plan.result.branch[2] == spray.BRANCH_THICK      # 3 mm of melt: the thick branch
-    # the slurry exposed on the second top-zone skin: its layer runs from the slurry cell's top down to psi
-    dz = sk.dz(T)
-    assert plan.on_slurry[3]
-    assert plan.slurry["depth"][3] == pytest.approx(d[3] - dz[3, :10].sum(), rel=1e-12)
-    # the release takes the skin's own top cells only, and the base draw refills it from the melt beneath
-    M0 = sk.m.sum(axis=1)
-    released = sum(plan.release(sk, 0.0125).mass for _ in range(8))
-    assert released[2] > 0.0 and np.all(released <= M0 * (1 + 1e-14))
-    keep = modes.minimum_mass(sk, top)
-    assert sk.m[2].sum() < keep[2]
-    drawn, dH = sk.draw(LIQUID, 0.0, keep, cap=modes.draw_cap(sk, top))
-    assert drawn[2] > 0.0 and sk.m[2].sum() == pytest.approx(keep[2], rel=1e-14)
-    assert dH[2] / drawn[2] == pytest.approx(float(sk.props.enthalpy(np.array([LIQUID]))[0]), rel=1e-12)
 
 
 def test_the_cascade_takes_liquid_first_and_never_rigid_metal():
@@ -453,7 +389,7 @@ def test_girin_cases_through_the_level_set_path():
     model = spray.SprayModel(LiquidProperties(Iron.rho, Iron.mu, Iron.sigma), spray_gates="2026-11-10")
     for W, lam_ref, tau_ref in zip(t["W_ms2"], t["lambda_star_m_eq14"], t["tau_star_s"]):
         mk = row_markers(1, h=1.0)                                     # 1 m2: the pool admits the fastest wave
-        sk = Skins(mat, mk.area, mk.kappa, SkinSettings(cell=20e-6, fine_zone=0.4e-3, stub=0.4e-3))
+        sk = Skins(mat, mk.area, mk.kappa, SkinSettings(cell=20e-6, fine_zone=0.4e-3))
         sk.fill(Iron.rho * lam_ref, 1000.0)                            # one wavelength deep, liquid
         flow = gas(1, closure=sf.CLOSURE_COUETTE, tau=0.0, decel=W)
         theta = np.zeros(1)

@@ -1,83 +1,70 @@
-"""The level set's skinned body (design sections 10.1, 12.2 and 20; level-set stage 3 Task 9): one macro step coupling the
-skins on the gas-surface markers to the cut-cell 3D solve of stage 2. It wires together the skins (`skin`), the markers
-(`markers`), the runoff (`runoff`), the gas loads (`loads`), the spraying (`spraying`), the thermal solve (`cutthermal`)
-and the geometry (`boxmesh`, `levelset`, `surfaces`, `criteria`); the physics is theirs and the shared package's. It
-mirrors the skyscrapers' macro step (their `SkinBody.advance` and its parts: the trial and real passes, the base law, the
-damped repetition, the deferred mismatch) by amendment, never by import.
+"""The level set's skinned body (design sections 10.1, 12.2, 20 and 21; level-set stage 3 Task 9, plan 03b Task 5): one
+macro step coupling the skins on the gas-surface markers to the cut-cell 3D solve of stage 2. It wires together the
+skins (`skin`), the markers (`markers`), the runoff (`runoff`), the gas loads (`loads`), the spraying (`spraying`), the
+thermal solve (`cutthermal`) and the geometry (`boxmesh`, `levelset`, `surfaces`, `division`, `criteria`); the physics
+is theirs and the shared package's. It mirrors the skyscrapers' macro step (their `SkinBody.advance` and its parts: the
+trial and real passes, the base law, the damped repetition, the deferred mismatch) by amendment, never by import.
 
-The body. Three surfaces (design 20.3): beta, the skin base, the evolved level set and the boundary of the volume's metal
-(the CutThermal solve runs on {beta < 0}); phi, the outer surface, rebuilt each macro step as beta moved outward by the
-skins' thickness (`surfaces.outer_surface`); psi, the molten-rigid surface, rebuilt from the temperature
-(`surfaces.molten_rigid_surface`), the volume's on its nodes and each skin's cell profile between beta and phi. The
-markers sit on phi (Ruling 1), one skin each (a row of `Skins`), carrying their skin's base at x - H n. Mass ownership:
-the volume owns rho V(beta < 0), the skins their cells; nothing is counted twice.
+The body (design 21.3-21.6). phi, the gas surface, is the evolved level set; beta, the skin base, is derived from it one
+skin depth H = `SkinSettings.depth` inside (`surfaces.skin_base`), and the CutThermal solve runs on {beta < 0}; psi, the
+molten-rigid surface, is rebuilt from the temperature (`surfaces.molten_rigid_surface`), the volume's on its nodes and
+each skin's cell profile between beta and phi. The markers sit on phi, one skin each (a row of `Skins`). The layer
+between phi and beta is divided among them (`division.divide`): each skin is the column its marker owns, its
+cross-section the division's (`Skins.set_profile`), and every column is exactly full after every acceptance. There are no
+skin modes: every skin is H deep, keeps its column full by drawing at its base from the volume and returning there, and
+treats its base as a no-slip floor. Mass ownership: the volume owns rho_s V(beta < 0) and the carry of the density
+difference (`stepend`), the skins their cells; nothing is counted twice.
 
 The interface (the skyscrapers' per-column law converted per area). Every patch of beta (the solve's boundary pieces)
-belongs to the markers that own, on phi, the part above it (`_beta_owners`: the patch moved out along its normal by the
-skins' thickness there, as phi is built from beta, and divided by the one partition of phi the markers' areas and the
-gas loads read, `markers.ownership`; stage 3 Task 11's fix round 1, C1), so that the skin above a piece of the base and
-the group below it are one marker: marker m's group G_m, the base beneath its own part of phi (stage 3 Task 11's fix,
-item 1: by nearest base point the q6p box's face skins' groups were 0.55 to 0.82 of their areas, the side faces' bases
-nearer the rim of the face's base, and the face buckled). GROUP_AREA_RANGE stays as a guard: a group outside it is grown
-from the patches nearest its base (`patch_groups`). A marker's base law a_m + b_m T_b [W, W/K, from its trial pass]
-reaches each patch p of its group by the area W_mp of p it holds, q0 = sum_m a_m W_mp / (A(G_m) A_p), q1 likewise with
-b_m, and its base temperature T_b is the area mean over its group of the patch temperatures the solve applies its law
-at -- so the volume receives exactly sum_m (a_m + b_m T_b,m) dt. (With one patch per marker this is the brief's q0 =
-sum a / A_patch.)
+belongs to the marker that owns its foot on phi (`_beta_owners`: each triangle's corners carried H along phi's recovered
+gradient to phi, the feet divided by `markers.ownership` with the same-side and same-piece rules, as `division.divide`
+divides its base level), so that the skin above a piece of the base and the group below it are one marker: marker m's
+group G_m. GROUP_AREA_RANGE stays as a guard: a group outside it is grown from the patches nearest its base point
+(`patch_groups`). A column with no base (`stepend.BASELESS_SHARE`) has no group and an insulated bottom (its base
+temperature NaN, `Skins.conduct`). A marker's base law a_m + b_m T_b [W, W/K, from its trial pass] reaches each patch p of
+its group by the area W_mp of p it holds, q0 = sum_m a_m W_mp / (A(G_m) A_p), q1 likewise with b_m, and its base
+temperature T_b is the area mean over its group of the patch temperatures the solve applies its law at -- so the volume
+receives exactly sum_m (a_m + b_m T_b,m) dt.
 
-One macro step (`advance`, design 10.1 with 20): the gas loads once per marker at the step's start (`loads.GasLoads`
-at the pieces of phi's patches each marker owns, each marker the mean over its own, `loads.by_patches`; the leeward
-test, the fitted nose), or a prescribed heating; the surface flow's forcing for the runoff (with an aero state
-or a deceleration); Girin's plan once (`spraying.spray_plan`, with a spray model and a state); then the step as parts
-(Ruling 7: none longer than PART_MAX while any top is at or above T_rigid or about to be, and a part whose base moves
-exceed MOVE_SHARE of the markers' target spacing rerun as shorter parts, at most SPLIT_DEPTH_MAX levels). Each part:
+One macro step (`advance`, design 10.1 with 20 and 21): the gas loads once per marker at the step's start
+(`loads.GasLoads` at the pieces of phi's patches each marker owns, each marker the mean over its own,
+`loads.by_patches`; the leeward test, the fitted nose), or a prescribed heating; the surface flow's forcing for the
+runoff (with an aero state or a deceleration); Girin's plan once (`spraying.spray_plan`, with a spray model and a
+state; b is always the skin's flowing depth); then the step as parts (Ruling 7: none longer than PART_MAX while any top
+is at or above T_rigid or about to be, and a part whose move of phi exceeds MOVE_SHARE of the markers' target spacing --
+the part ratio max |dV_i / A_i(0)| / (MOVE_SHARE spacing), A_i(0) the column's cross-section at phi -- rerun as shorter
+parts, at most SPLIT_DEPTH_MAX levels). Each part:
 
-1. the trial pass on saved skins (their cells, their flow memory, their curvatures, the plan's books): every heat
-   sub-step's conduction
-   with the trial sensitivity, the flow sub-steps with the release, the feed removal (remove="feed"), the draw and the
-   regrid, at the linearisation temperature T_lin; its base law (a, b) per marker;
+1. the trial pass on saved skins (their cells, their flow memory, their profile, the plan's books): every heat sub-step's
+   conduction with the trial sensitivity, the flow sub-steps with the release, the feed removal (remove="feed") and
+   the regrid, at the linearisation temperature T_lin; its base law (a, b) per marker (none for a column with no base);
 2. `CutThermal.step` with each patch's law and the pending load: the heat owed to the volume, delivered at its amount
    over the macro step's time left (at least PENDING_TIME_MIN), spread over the owing markers' patch groups;
 3. the real pass from the same saved state with T_b read from the 3D field as above;
 4. the mismatch per marker, E_base - (a + b T_b) dt, and the repetition from the saved states by the damped Aitken rule
    (omega0 DAMPED_OMEGA0, omega within DAMPED_OMEGA_RANGE, until the total relative mismatch is at most
    INTERFACE_TOLERANCE, no base moves more than DAMPED_TOL_K, or DAMPED_MAX_PASSES passes);
-5. the accepted part's hand-down (`Skins.hand_down` below the stub, keeping at least the minimum mass, so that a hand-down
-   by depth at the cells' own density and a draw by the solid's density never pass the same metal back and forth; a
-   shortfall below DRAW_SLACK of the minimum is round-off and not drawn) and its books; what the volume still owes -- each
-   marker's mismatch, and the solve's own residual (the heat its law applied less its stored enthalpy's change, the
-   Newton iteration's error), shared by the markers in proportion to their base heat -- is the next part's pending load,
-   so the enthalpy closes exactly; and each full-depth skin's absorption of the volume's non-rigid metal beneath it down
-   to a rigid stub (`_absorb`, design 20.6; stage 3 Task 11's fix, item 4), booked as a draw at the volume's own
-   temperature;
-6. beta moved by the part's draws and hand-downs: each marker's volume change (handed - drawn) / rho as a displacement
-   along the normal over its group's area, extended to the nodes from the nearest base point, beta - delta, reset to a
-   distance and corrected per piece to the exact volume target (`levelset.correct_volumes`); `CutThermal.move`, the
-   enthalpy it removed against what the skins took and gave booked as pending at the markers' bases.
+5. the accepted part's books: what the volume still owes -- each marker's mismatch, and the solve's own residual (the
+   heat its law applied less its stored enthalpy's change, the Newton iteration's error), shared by the markers in
+   proportion to their base heat -- is the next part's pending load, so the enthalpy closes exactly;
+6. the layer (planning ruling 3, `stepend.StepEnd._layer`): each column's volume change dV_i (its cells' change and
+   its carry), the move of phi by it, the per-piece correction to the metal's volume, beta derived, `CutThermal.move`,
+   the division and the profile, and the fill (the columns with no base from their neighbours, then those with one at
+   their bases); the enthalpy the move removed against what the fill took booked as pending at the bases; the
+   markers' areas, the top fluxes', given afresh on the moved phi (the markers themselves settle at the step's end). No
+   metal crosses beta within a pass (the in-pass draw of stage 3 is retired with its minimum mass).
 
-At the macro step's end (`stepend.StepEnd`, this class's mixin): phi and psi rebuilt, the mesh rebuilt where it no longer
-meets its refinement targets, and the markers settled on phi; see that module.
-
-The two modes (Task 10, `modes`; design 20.6): each marker's skin is full-depth or top-zone (`Markers.top`, read in the
-step as each row's `top`), set at the step's end by the thin test (`stepend.StepEnd._modes`). In the parts a top-zone
-skin keeps a solid fine zone's mass against the volume (`modes.minimum_mass`), returns every cell below its fine zone
-at the base whatever its phase (`modes.hand_down`), draws the thick melt beneath at the melt's own temperature
-(`modes.draw_cap`), and the momentum its base and its returned cells give goes to the held volume (`momentum_to_volume`,
-Ruling 4); between a full-depth and a top-zone skin only the top zones exchange (`runoff`, Ruling 3); Girin's plan reads
-a top-zone skin's depths from phi to psi (`spraying.spray_plan`'s b_mode "phi_psi", decision D2). A step that finds no
-rigid metal left anywhere stops with RuntimeError (`stepend.NO_CORE`): at its end, after its mode changes, or when a part
-fails and, the part having restored the state it started from, psi then finds no rigid metal (the part's error chained
-as the cause; if psi cannot be found the part's error stands). No run driver (Ruling 6): tests and scripts drive
-`advance` at prescribed gas states.
+At the macro step's end (`stepend.StepEnd._end_step`): the last part's carry moves phi, psi, the mesh rebuilt where it
+no longer meets its refinement targets (phi carried), the markers settled on phi, the layer divided and filled, and the
+thin-metal stop (`stepend.THIN_METAL`, also raised at construction); see that module. A step that finds no rigid metal
+left anywhere stops with RuntimeError (`stepend.NO_CORE`): at its end, or when a part fails and, the part having
+restored the state it started from, psi then finds no rigid metal (the part's error chained as the cause; if psi cannot
+be found the part's error stands). No run driver (Ruling 6): tests and scripts drive `advance` at prescribed gas
+states.
 
 A step that fails leaves the body in an undefined state (fix round 1 of Task 10): a part that fails in its passes restores
-the cells, the curvatures and the volume's temperatures it started from, but the parts accepted before it, a base move
-that failed partway (its earlier rounds are not undone, `stepend.StepEnd._move_beta`) and a failed step end are not
-undone. A body pickled after a failure is for diagnosis only, not for resuming.
-
-A skin deeper than its radius of curvature: each column's curvatures are capped (`stepend.cap_curvature`) before
-every part, every heat sub-step and every flow sub-step (runoff can gather metal into one column) and at every sync;
-the trial pass's caps are undone with its cells.
+the cells, the profile and the volume's temperatures it started from, but the parts accepted before it and a failed step
+end are not undone. A body pickled after a failure is for diagnosis only, not for resuming.
 
 The part count (Ruling 7; fix rounds 1 and 5 of Task 9; `split_part`, `next_hint`): the next step's parts are 1.25 times
 the largest move ratio, scaled to the macro step, of the parts that count (the skyscrapers' estimate), but at most 1.25
@@ -85,13 +72,10 @@ times the parts that count, at least 1 and at most PARTS_MAX. A part accepted wi
 ran as one of the step's parts or was split from one. A part accepted at the deepest split while still over its
 allowance does not, and neither does anything the same splitting produced: the part of the step it was split from counts
 as the one part it started as, with no move ratio. So the next step may take more than 1.25 times this step's parts only
-when parts that met their allowance after splitting ask for it, and a move that splitting does not shrink (a hand-down of
-a backlog, fix round 5) lets the count fall back instead of raising it by 1.25 every step to PARTS_MAX, as the
-skyscrapers' rule did in their stall of 2026-11-08 (and as this rule did before fix round 5, when every accepted part
-counted). A part that met its allowance only after deep splits within a short burst of draws gave an estimate of 1 000
-for a step that had taken 33 parts (measured once on the test cube); the limit by the parts that count holds that.
-The look-ahead to T_rigid follows each marker from the nearest marker of the last step's start, so it survives splits
-and merges.
+when parts that met their allowance after splitting ask for it, and a move that splitting does not shrink lets the count
+fall back instead of raising it by 1.25 every step to PARTS_MAX, as the skyscrapers' rule did in their stall of
+2026-11-08. The look-ahead to T_rigid follows each marker from the nearest marker of the last step's start, so it
+survives splits and merges.
 
 Every number here is a numerical setting (named with its source); the physics is the shared package's."""
 import math
@@ -106,24 +90,25 @@ from ..shared import spray as spray_mod
 from ..shared.droplets import SKIN_SUMMARY_COLUMNS
 from . import loads as loads_mod
 from . import markers as markers_mod
-from . import modes
 from .boxmesh import build
+from .criteria import nodal_average
 from .cutcell import cell_gradients, inside_volumes
 from .cutcell import patches as cut_patches
 from .cutthermal import CutThermal
-from .levelset import pieces, redistance
-from .transfer import interpolate
-from .markers import Markers
-from .modes import ModeSettings
+from .division import _marker_pieces
+from .levelset import pieces
+from .markers import Markers, _nearest
 from .runoff import FlowBook, Forcing, flow_substeps
 from .skin import SkinSettings
 from .spraying import spray_plan
-from .stepend import KAPPA_DEPTH_SHARE, MODES, NO_CORE, StepEnd, cap_curvature  # noqa: F401  (re-exported for the tests)
-from .surfaces import outer_surface
+from .stepend import (BASELESS_SHARE, FILL_ROUNDS, FILL_RTOL, LEAD, NO_CORE, REGION_SLACK,  # noqa: F401 (re-exported)
+                      THIN_METAL, StepEnd)
+from .surfaces import skin_base
+from .transfer import barycentric
 
 # the parts of a macro step (Ruling 7, the skyscrapers' skinbody.py rules, matched by amendment)
 PART_MAX = 0.0625                 # s: the longest part while any skin's top is at or above T_rigid, or about to be
-MOVE_SHARE = 0.25                 # of the markers' target spacing: the most a base moves in one part (Ruling 7, its
+MOVE_SHARE = 0.25                 # of the markers' target spacing: the most phi moves in one part (Ruling 7, its
                                   # "local spacing" read as the target spacing, fix round 1 of Task 9)
 SPLIT_DEPTH_MAX = 6               # a part is rerun shorter at most this many times over (Ruling 7)
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
@@ -135,8 +120,6 @@ PENDING_TIME_MIN = 0.010          # s: the pending heat is delivered at its amou
                                   # over less than this (the heat sub-step); what the step's last parts leave stays owed
                                   # into the next step (fix round 3: a whole deferral within a 2 ns part was 1e14 W/m2)
 PARTS_MAX = 1000                  # a macro step never starts with more parts: the next step's hint is capped here
-ABSORB_STEP = 0.05e-3             # m: the volume's field is sampled this far apart beneath a full-depth skin's base for
-                                  # where its metal turns rigid (`_absorb`; a fourteenth of the design's 0.7 mm cells)
 # the interface's damped repetition (the skyscrapers' "damped" rule, their skinbody.py and skin.py)
 INTERFACE_TOLERANCE = 1e-3        # of sum |E_top| + |E_base|: the total relative mismatch that ends the repetition
 DAMPED_MAX_PASSES = 12            # passes of a part at most (the last pass's mismatch is deferred)
@@ -145,18 +128,15 @@ DAMPED_OMEGA_RANGE = (0.02, 1.0)  # Aitken's factor kept within these
 DAMPED_TOL_K = 0.05               # K: converged when no base temperature moves more than this between passes
 # the markers and the geometry
 MARKER_SPACING = 2.0e-3           # m: the markers' target spacing (design 20.13: about 30 000 at 2 mm on the 100 mm sphere)
-INITIAL_REFINES = 2               # rebuilds of the first mesh from its own fields at the start
-DRAW_SLACK = 1e-12                # of the minimum mass: a shortfall below this is round-off, and is not drawn (a draw of
-                                  # 1e-21 kg would move beta)
-FILL_DRAWS = 60                   # draws at most that bring a new skin to its minimum mass
-FILL_TOL = 1e-15                  # of a skin's mass: the draw left when a new skin is full
-INITIAL_REBUILDS = 4              # then step-end rebuilds at most until one leaves the mesh as it was (a cold step's mesh)
+INITIAL_REFINES = 2               # rebuilds of the first mesh from phi0 alone (psi = phi) at the start
+INITIAL_REBUILDS = 4              # then rebuilds of the whole body from phi0 at most, until the step end's test would
+                                  # leave the mesh as it is (a cold step's mesh)
+INITIAL_SETTLES = 10              # settlings of the new markers at most, until one splits, merges and releases none (on
+                                  # the test cube's sharp edges a split and a merge alternate for two more settlings)
 BAND_FACTOR = 2.0                 # distance resets are limited to this times (fine_margin + the base cell)
 REMOVE_MODES = ("spray", "feed")  # liquid leaves by the spray release only, or as it reaches T_feed (the plates' flow off)
 
 SKIN_SUMMARY_KEYS = tuple(k for _, k in SKIN_SUMMARY_COLUMNS)
-
-
 
 
 @dataclass
@@ -164,51 +144,45 @@ class StepBook:
     """One macro step's books [kg, J, kg m/s] and the history's columns (design 12.2). In: `enthalpy_in` the convective
     heat taken at the tops (no mass enters). Out: `mass_sprayed`/`enthalpy_sprayed`/`momentum_sprayed` the release,
     `mass_removed`/`enthalpy_removed` the feed removal, `enthalpy_radiated`. Stored at the step's end: the volume's
-    (rho V(beta < 0) and its enthalpy) and the skins'; `pending_J` the heat still owed to the volume (deferred to
-    the next part). The residuals: (mass now - mass then + out) / mass then, and (stored + pending now - stored +
-    pending then - in + out) / (|stored then| + |in|). `parts` the parts the step took, `parts_next` the next step's
-    hint, and `parts_skyscrapers` the hint the skyscrapers' rule would have given (every accepted part's move ratio,
-    unlimited), `split_depth_max` the deepest split level a part reached, `parts_over` the parts accepted at the
+    (rho_s (V(beta < 0) + the density carry) and its enthalpy) and the skins'; `pending_J` the heat still owed to the
+    volume (deferred to the next part). The residuals: (mass now - mass then + out) / mass then, and (stored + pending
+    now - stored + pending then - in + out) / (|stored then| + |in|). `parts` the parts the step took, `parts_next` the
+    next step's hint, and `parts_skyscrapers` the hint the skyscrapers' rule would have given (every accepted part's move
+    ratio, unlimited), `split_depth_max` the deepest split level a part reached, `parts_over` the parts accepted at the
     deepest split while still over their move allowance. `snap_fallback` the markers the snap's last round
     (`stepend.StepEnd._snap`) brought onto phi by Newton steps from farther than `markers.NEWTON_REACH`, and
     `snap_slide_max` [m] the largest sideways slide (along the surface) of that round's Newton steps.
-    `pieces_used_up` the pieces of beta the step's base moves used up (`stepend.StepEnd._move_beta`).
-    `area_repartitioned_share` the area passed between markers at the step end, summed over its re-partitions, over the
+    `pieces_used_up` the pieces of phi the step's moves parted from the body holding no metal (no marker on them and
+    none of the volume's metal), lifted out (`stepend.StepEnd._move_phi`). `area_repartitioned_share` the area passed between markers at the step end, summed over its re-partitions, over the
     area the markers cover after it, and `stretch_min`, `stretch_max` the least and largest stretch of an old column in
     them (`repartition`, Task 9b; `LevelSetSkinBody.last_settle` keeps each re-partition).
-    `group_area_ratio_min`, `group_area_ratio_max` the least and largest
-    area of a marker's group of patches of beta over its skin's base area, over the step's parts (`patch_groups`), and
+    `group_area_ratio_min`, `group_area_ratio_max` the least and largest area of a marker's group of patches of beta over
+    its skin's base area, over the step's parts and the columns with a base (`patch_groups`), and
     `group_area_ratio_trimmed_max` the largest with the group's largest patch left out (a group formed again stops at
     the first patch that takes it past the base area, so only that one patch may carry it past the range; fix round
     5); `groups_guarded_max` the most groups that guard (GROUP_AREA_RANGE) replaced in any part (Task 11's fix, item 1).
-    `pending_flux_max` the largest
-    flux [W/m2] the pending heat put on a patch of beta in any part, `surface_flux_max` the largest convective flux on
-    a top. `mass_drawn`, `mass_handed` the exchange at the bases; `momentum_to_volume` the momentum the held
-    volume took over the step (the trapped markers' skins, Ruling 4; `LevelSetSkinBody.momentum_to_volume` keeps the
-    total since the start), `momentum_to_wall` what the skins' flow gave the wall over the step and
-    `momentum_removed` what the feed removal took. The modes (Task 10): `n_top` the top-zone markers after the step,
-    `modes_to_top` and `modes_to_full` the changes at its end, `mass_modes_handed` [kg] what top-zone skins gave the
-    volume at the step end (the cells below their fine zones: the changes to top-zone and what the re-partition gave
-    them) and `mass_modes_absorbed` [kg] what the skins turning full-depth took from it, `enthalpy_modes_J` the enthalpy
-    that passed either way and `residual_modes_J` the heat that left owed to the volume (in `residual_move_J` too; it
-    scales with what was handed, not with the step's heat in), `momentum_modes_normal` the normal part of the momentum
-    the step end handed the volume (in `momentum_to_volume` with the rest). `island_nodes` the volume's nodes the step's
-    base moves made apart from the old metal, which took the handing columns' temperatures (`stepend.StepEnd._seed`,
-    stage 3 Task 11, item 3). `mass_absorbed` [kg] what the full-depth skins absorbed of the volume's non-rigid metal
-    and the stub below it, and `enthalpy_absorbed` [J] its enthalpy (`LevelSetSkinBody._absorb`, Task 11's fix, item 4;
-    in `mass_drawn` too). `move_corrections` every volume correction's miss before it, in the order made: per
-    base move (one entry per round of a move made in rounds) and for the remesh, an entry {"kind": "part", "modes",
-    "release" or "remesh", what made it; "worst": the largest miss over its pieces as a share of the piece's target;
-    "body": the body's, the largest piece's, which is what the correction spreads (a speck's can exceed its target)};
-    their largest is `volume_correction_max` (stage 3 Task 11's review, I3: it shows when a step leans on the
-    correction; its re-review, minor item 1: the remesh's correction had no entry). The
-    heat deferred to the volume over the step, by source, each
-    the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own residual (the
-    heat its law applied less its stored enthalpy's change), `residual_move_J` the base moves' (their enthalpy
-    against what the skins took and gave), `residual_remesh_J` the remesh's; the interface mismatch is
-    `interface_mismatch_J`. History columns: the markers and their counters (cumulative), `interface_mismatch_J`
-    (the last part's sum of |mismatch|), `volume_correction_max`, `n_pieces`, `frontal_area_m2` (phi's area
-    projected on the flight direction) and `summary` (SKIN_SUMMARY_COLUMNS' keys and the release angle's)."""
+    `pending_flux_max` the largest flux [W/m2] the pending heat put on a patch of beta in any part, `surface_flux_max`
+    the largest convective flux on a top. `mass_drawn`, `mass_handed` [kg] the fills' exchange at the bases, each way;
+    `momentum_to_volume` the momentum the held volume took over the step (the cells the fills returned;
+    `LevelSetSkinBody.momentum_to_volume` keeps the total since the start), `momentum_to_wall` what the skins' flow gave
+    the wall over the step (every skin's floor is no-slip) and `momentum_removed` what the feed removal took.
+    `island_nodes` the volume's nodes the moves made apart from the old metal, which took the skins' temperatures there
+    (stage 3 Task 11, item 3). The layer (plan 03b Task 5): `layer_factor_max` the largest departure from one of a
+    piece's closure factor over the step's divisions (`division.Division.factor`; design 21.8 item 5, DIVISION_TOL the
+    tests' bound), `fill_miss_max` the largest share of its volume by which a column's cells missed it after a fill,
+    `move_miss_max` the largest miss of a group's swept volume against what it was asked (`levelset.Moved.miss`; what a
+    group cannot sweep the per-piece correction makes up, the controller's ruling T2-e), `n_baseless` the columns with no
+    base at the step's end, and `density_carry_m3` [m3] the carry left for the next step's first move (planning ruling
+    4: the step end's own fill's, in the volume's mass). `move_corrections` every volume correction's miss before it, in
+    the order made: one entry per move of phi and for the remesh, {"kind": "part", "carry" (the step end's move by the
+    last part's carry) or "remesh"; "worst": the largest miss over its pieces as a share of the piece's target; "body":
+    the body's, the largest piece's}; their largest is `volume_correction_max`. The heat deferred to the volume over the
+    step, by source, each the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own
+    residual (the heat its law applied less its stored enthalpy's change), `residual_move_J` the moves' and fills' (the
+    volume's move against what the skins took and gave), `residual_remesh_J` the remesh's; the interface mismatch is
+    `interface_mismatch_J`. History columns: the markers and their counters (cumulative), `interface_mismatch_J` (the
+    last part's sum of |mismatch|), `volume_correction_max`, `n_pieces`, `frontal_area_m2` (phi's area projected on the
+    flight direction) and `summary` (SKIN_SUMMARY_COLUMNS' keys and the release angle's)."""
     time: float
     dt: float
     parts: int
@@ -258,18 +232,13 @@ class StepBook:
     volume_correction_max: float
     n_pieces: int
     frontal_area_m2: float
-    n_top: int
-    modes_to_top: int
-    modes_to_full: int
-    mass_modes_handed: float
-    mass_modes_absorbed: float
-    enthalpy_modes_J: float
-    residual_modes_J: float
-    momentum_modes_normal: np.ndarray
+    layer_factor_max: float
+    fill_miss_max: float
+    move_miss_max: float
+    n_baseless: int
+    density_carry_m3: float = 0.0
     island_nodes: int = 0
     groups_guarded_max: int = 0
-    mass_absorbed: float = 0.0
-    enthalpy_absorbed: float = 0.0
     move_corrections: list = field(default_factory=list)
     summary: dict = field(default_factory=dict)
 
@@ -296,31 +265,26 @@ class _Tally:
         self.parts, self.passes, self.mismatch, self.correction = 0, 0, 0.0, 0.0
         self.depth = self.over = 0
         self.snap_fallback, self.snap_slide = 0, 0.0
-        self.pieces_used = 0
         self.ratio_all = 0.0
         self.group_min, self.group_max, self.group_trimmed = np.inf, 0.0, 0.0
         self.newton = self.move = self.remesh = 0.0
         self.elapsed, self.pending_flux = 0.0, 0.0
-        self.to_top = self.to_full = 0
-        self.fill_new = self.fill_done = 0             # the step end's move: nodes brought inside, those filled
-        self.mode_handed = self.mode_absorbed = self.mode_H = self.mode_owed = 0.0
-        self.mode_normal = np.zeros(3)
-        self.islands = 0                               # nodes the base moves' islands took from the handed columns
+        self.islands = 0                               # nodes the moves' islands took from the skins' temperatures
         self.guarded = 0                               # the most groups the guard replaced in a part
-        self.absorbed = 0.0                            # kg the full-depth skins absorbed of the volume's non-rigid metal
-        self.absorbed_H = 0.0                          # J its enthalpy
         self.corrections = []                          # every volume correction's miss before it, labelled
-                                                       # (`stepend.StepEnd._move_beta`, `_rebuild`)
+        self.layer_factor = 0.0                        # the divisions' largest |factor - 1|
+        self.fill_miss = 0.0                           # the fills' largest miss, a share of the column's volume
+        self.move_miss = 0.0                           # the moves' largest group miss
+        self.baseless = 0                              # the columns with no base at the last fill
+        self.pieces_used = 0                           # pieces of phi the moves left with no metal
 
 
 @dataclass
 class _Pass:
-    """What one real pass did, per skin row: the heat books [J], the draw, the feed removal and the flow's book."""
+    """What one real pass did, per skin row: the heat books [J], the feed removal and the flow's book."""
     E_top: np.ndarray
     E_rad: np.ndarray
     E_base: np.ndarray
-    drawn: np.ndarray
-    drawn_H: np.ndarray
     removed: np.ndarray
     removed_H: np.ndarray
     removed_p: np.ndarray
@@ -351,12 +315,12 @@ class PartCount:
 
 def split_part(run, dt, dt_macro, depth):
     """Ruling 7's splitting: `run(dt)` runs a part of length dt [s] and returns (its move ratio, accept, undo), the
-    largest base move over MOVE_SHARE of the target spacing; a ratio over one below SPLIT_DEPTH_MAX levels undoes the part
-    and runs it again as ceil(ratio) parts one level down, otherwise the part is accepted. Returns the `PartCount`. A
-    part split into shorter parts of which one was accepted at the deepest level still over its allowance counts as
-    failed, with nothing below it counted (fix round 5 of Task 9: a move that does not shrink with the part's length,
-    here a hand-down, is not helped by splitting, and the parts and move ratios the splitting produced around it --
-    sibling parts of a few nanoseconds -- must not set the next step's count)."""
+    largest move of phi over MOVE_SHARE of the target spacing; a ratio over one below SPLIT_DEPTH_MAX levels undoes the
+    part and runs it again as ceil(ratio) parts one level down, otherwise the part is accepted. Returns the `PartCount`.
+    A part split into shorter parts of which one was accepted at the deepest level still over its allowance counts as
+    failed, with nothing below it counted (fix round 5 of Task 9: a move that does not shrink with the part's length is
+    not helped by splitting, and the parts and move ratios the splitting produced around it -- sibling parts of a few
+    nanoseconds -- must not set the next step's count)."""
     ratio, accept, undo = run(dt)
     if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:
         undo()
@@ -384,21 +348,23 @@ def next_hint(counts):
     return min(max(1, min(estimate, used)), PARTS_MAX)
 
 
-def patch_groups(centroid, area, base, A_base, owner=None, report=False):
+def patch_groups(centroid, area, base, A_base, owner=None, report=False, insulated=None):
     """Each marker's group of patches of beta and how its base law is spread over them (fix round 2 of Task 9): (S, A_group).
     S (n, P), sparse and row-stochastic, holds marker m's share of each patch p of its group G_m, the area of p it holds
     over A(G_m); A_group (n,) [m2] the groups' areas. `owner` gives each row the patches beneath its part of phi
-    (`LevelSetSkinBody._beta_owners`: a sparse (n, P) of the area of each patch each row holds, stage 3 Task 11's fix round
-    1, C1; or (P,) one row per whole patch, Task 11's fix, item 1); without it every patch goes to the marker whose base
-    point (`base`, (n, 3)) is nearest its `centroid` (P, 3). A group whose area is outside GROUP_AREA_RANGE times its
-    marker's skin base area `A_base` (n,) [m2] (the guard) is replaced by the patches nearest that marker's base, whole,
-    taken in order of distance until their area first reaches A_base (shared with other groups where they overlap). With
-    `report`, the number of groups the guard replaced is returned third. A patch a shrunk group gave up and no other group
-    holds takes no law. The law stays exact whatever the groups: with q0 = S^T a / A_p, q1 = S^T b / A_p, sum q A over
-    the patches is sum a and sum b, and a marker's base temperature S T_p is the area mean over its group. A zero A_base
-    leaves the nearest-base groups (and a marker with none the patch nearest its base)."""
+    (`LevelSetSkinBody._beta_owners`: a sparse (n, P) of the area of each patch each row holds; or (P,) one row per
+    whole patch); without it every patch goes to the marker whose base point (`base`, (n, 3)) is nearest its `centroid`
+    (P, 3). A group whose area is outside GROUP_AREA_RANGE times its marker's skin base area `A_base` (n,) [m2] (the
+    guard) is replaced by the patches nearest that marker's base, whole, taken in order of distance until their area
+    first reaches A_base (shared with other groups where they overlap). The rows `insulated` (n,) bool (columns with no
+    base, plan 03b Task 5) take no group and are never formed again. With `report`, the number of groups the guard
+    replaced is returned third. A patch a shrunk group gave up and no other group holds takes no law. The law stays exact
+    whatever the groups: with q0 = S^T a / A_p, q1 = S^T b / A_p, sum q A over the patches is sum a and sum b over the
+    rows with groups, and a marker's base temperature S T_p is the area mean over its group. A zero A_base leaves the
+    nearest-base groups (and a marker with none the patch nearest its base)."""
     n, npatch = len(base), len(area)
     A_base = np.broadcast_to(np.asarray(A_base, dtype=float), (n,))
+    off = np.zeros(n, dtype=bool) if insulated is None else np.asarray(insulated, dtype=bool)
     if owner is None:
         _, owner = cKDTree(base).query(centroid)
     if sp.issparse(owner):
@@ -409,8 +375,8 @@ def patch_groups(centroid, area, base, A_base, owner=None, report=False):
     A_near = np.asarray(G.sum(axis=1)).ravel()
     lo, hi = GROUP_AREA_RANGE
     ratio = np.divide(A_near, A_base, out=np.full(n, np.inf), where=A_base > 0.0)
-    redo = np.flatnonzero(((ratio < lo) | (ratio > hi)) & (A_base > 0.0) | (A_near == 0.0))
-    keep = np.ones(n)
+    redo = np.flatnonzero((((ratio < lo) | (ratio > hi)) & (A_base > 0.0) | (A_near == 0.0)) & ~off)
+    keep = np.where(off, 0.0, 1.0)
     keep[redo] = 0.0
     G = (sp.diags(keep) @ G).tocoo()
     rows, cols, vals = [G.row], [G.col], [G.data]
@@ -446,35 +412,37 @@ _PLAN_BOOKS = ("mass", "mass_slurry", "number", "number_slurry", "enthalpy", "en
 
 class LevelSetSkinBody(StepEnd):
     """The skinned level-set body (module docstring). `material` the shared Material (or a test material with its
-    interface), `base` the mesh's BoxBase, `beta0` a function of points (k, 3) [m] giving the initial skin base's level
-    set (negative inside the metal), `T0` [K] the initial temperature, `settings` the SkinSettings. `loads` a
-    `loads.GasLoads` (needed with an aero state), `spray_model` the shared SprayModel (Girin's release, with an aero
-    state), `leeward` the leeward test ("shadow" or "centroid"), `emissivity` of the tops, `fine_margin`, `fine_size`,
-    `cell_floor` [m] the refinement (design 20.4-20.5), `remove` "spray" or "feed". Also: `spacing` [m] the markers'
-    target spacing, `v_hat` the flight direction in the body's frame, `T_ambient` [K] for the tops' radiation,
-    `slurry_spray` (`--slurry-spray`), `linear_solver` the volume's ("amg" or "direct"), `mode_settings` the thin test's
-    (`modes.ModeSettings`, design 20.5's defaults).
+    interface), `base` the mesh's BoxBase, `phi0` a function of points (k, 3) [m] giving the initial gas surface's level
+    set (negative inside the metal; its zero contour is the body), `T0` [K] the initial temperature, `settings` the
+    SkinSettings (its `depth` the skin depth H). `loads` a `loads.GasLoads` (needed with an aero state), `spray_model`
+    the shared SprayModel (Girin's release, with an aero state), `leeward` the leeward test ("shadow" or "centroid"),
+    `emissivity` of the tops, `fine_margin`, `fine_size`, `cell_floor` [m] the refinement (design 20.4-20.5), `remove`
+    "spray" or "feed". Also: `spacing` [m] the markers' target spacing, `v_hat` the flight direction in the body's frame,
+    `T_ambient` [K] for the tops' radiation, `slurry_spray` (`--slurry-spray`), `linear_solver` the volume's ("amg" or
+    "direct").
 
-    The skins start full-depth with the stub (`settings.stub`) of metal at T0 standing on beta, so phi starts the stub
-    outside beta0."""
+    The mesh is built from phi0 and refined from it (INITIAL_REFINES, then whole rebuilds until the step end's test would
+    keep the mesh, INITIAL_REBUILDS); phi is phi0 on its nodes, reset to a distance keeping its contour; beta is derived;
+    the markers are seeded one per voxel of the target spacing on phi's patches and settled; the layer is divided and
+    every skin filled at T0 exactly to its column. Metal thinner than twice the skin depth raises RuntimeError
+    (`stepend.THIN_METAL`)."""
 
-    def __init__(self, material, base, beta0, T0, settings=None, loads=None, spray_model=None, leeward="shadow",
+    def __init__(self, material, base, phi0, T0, settings=None, loads=None, spray_model=None, leeward="shadow",
                  emissivity=0.0, fine_margin=4e-3, fine_size=0.7e-3, cell_floor=0.25e-3, remove="spray",
                  spacing=MARKER_SPACING, v_hat=(1.0, 0.0, 0.0), T_ambient=0.0, slurry_spray=False,
-                 linear_solver="amg", mode_settings=None):
+                 linear_solver="amg"):
         if remove not in REMOVE_MODES:
             raise ValueError("remove must be one of {}, got {!r}".format(REMOVE_MODES, remove))
         if leeward not in loads_mod.LEEWARD_NAMES:
             raise ValueError("leeward must be one of {}, got {!r}".format(loads_mod.LEEWARD_NAMES, leeward))
-        if not callable(beta0):
-            raise ValueError("beta0 must be a function of the points (k, 3) giving the initial skin base's level set")
+        if not callable(phi0):
+            raise ValueError("phi0 must be a function of the points (k, 3) giving the initial gas surface's level set")
         self.material, self.base = material, base
         self.settings = settings if settings is not None else SkinSettings()
         self.loads, self.spray_model, self.leeward = loads, spray_model, leeward
         self.emissivity, self.T_ambient = float(emissivity), float(T_ambient)
         self.fine_margin, self.fine_size, self.cell_floor = float(fine_margin), float(fine_size), float(cell_floor)
         self.remove, self.spacing, self.slurry_spray = remove, float(spacing), bool(slurry_spray)
-        self.mode_settings = ModeSettings() if mode_settings is None else mode_settings
         self.v_hat = np.asarray(v_hat, dtype=float) / np.linalg.norm(v_hat)
         self.rho = float(material.rho)
         self.band = BAND_FACTOR * (self.fine_margin + base.h0)
@@ -487,23 +455,31 @@ class LevelSetSkinBody(StepEnd):
         self.source_rows = []
         self.last_step = None
         self.plan = None
-        stub = self.settings.stub
+        self.division = None
+        self.last_settle = []
 
-        # the mesh, refined from its own fields: beta0 and phi = beta0 moved out by the stub (all rigid at the start)
+        # the mesh, refined from phi0 (all rigid at the start), then the body built on it until it keeps its mesh
         mesh = build(base)
-        beta = redistance(mesh, np.asarray(beta0(mesh.points), float), band=self.band)
+        phi = self._reset(mesh, np.asarray(phi0(mesh.points), float))
         for _ in range(INITIAL_REFINES):
-            phi = redistance(mesh, beta - stub, band=self.band)
             psi = phi if T0 <= material.T_rigid else np.full(len(phi), np.inf)
             mesh = build(base, self._target(mesh, phi, psi))
-            beta = redistance(mesh, np.asarray(beta0(mesh.points), float), band=self.band)
-        self.mesh, self.beta = mesh, beta
-        self.solver = CutThermal(material, emissivity=0.0, linear_solver=linear_solver)
-        self.solver.setup(mesh, beta)
-        self.solver.set_temperature(T0)
+            phi = self._reset(mesh, np.asarray(phi0(mesh.points), float))
+        self._build_on(mesh, phi, T0, linear_solver)
+        for _ in range(INITIAL_REBUILDS):
+            target = self._target(self.mesh, self.phi, self.psi)
+            if not self._needs_rebuild(target, self._target(self.mesh, self.phi, self.psi, False,
+                                                            LEAD - REGION_SLACK * self.fine_size)):
+                break
+            mesh = build(base, target)
+            self._build_on(mesh, self._reset(mesh, np.asarray(phi0(mesh.points), float)), T0, linear_solver)
 
-        # the markers on phi, seeded one per voxel of the target spacing, each with the stub as its skin
-        phi = redistance(mesh, beta - stub, band=self.band)
+    def _build_on(self, mesh, phi, T0, linear_solver):
+        """The body on `mesh` with the gas surface `phi` (class docstring): beta, the markers seeded and settled, the
+        division (the thin-metal stop), the volume at T0 and every skin filled at T0 to its column; psi."""
+        material, base = self.material, self.base
+        self.mesh, self.phi = mesh, phi
+        self.beta = skin_base(mesh, phi, self.settings.depth, band=self.band)
         P = cut_patches(mesh, phi)
         key = np.floor((P.centroid - np.asarray(base.lo)) / self.spacing).astype(np.int64)
         order = np.lexsort((-P.area, key[:, 2], key[:, 1], key[:, 0]))
@@ -515,21 +491,53 @@ class LevelSetSkinBody(StepEnd):
         mk.tessellate(mesh, phi)
         while mk.merge(self.spacing):
             mk.tessellate(mesh, phi)
-        self._fill_stub(T0)
-        self.phi = outer_surface(mesh, beta, self._thickness_nodal(), band=self.band)
-        self.psi = self._psi(self.phi)
-        self._settle(_Tally(0))
-        for _ in range(INITIAL_REBUILDS):                # to the mesh the step's end rebuilds from these fields
-            self._fill_stub(T0)
-            if self._rebuild(_Tally(0)):
+        self._sync()
+        self.carry = np.zeros(mk.skins.n)
+        tally = _Tally(0)
+        self._divide(tally)
+        self._check_thin()
+        self.solver = CutThermal(material, emissivity=0.0, linear_solver=linear_solver)
+        self.solver.setup(mesh, self.beta)
+        self.solver.set_temperature(T0)
+        self._fill_at(T0)
+        for _ in range(INITIAL_SETTLES):
+            changes = mk.splits + mk.merges + mk.trapped
+            self._settle(tally)
+            if mk.splits + mk.merges + mk.trapped == changes:
                 break
-        self._fill_stub(T0)
+        self._divide(tally)
+        self._check_thin()
+        self._fill_at(T0)
+        self.psi = self._psi(phi)
+
+    def _fill_at(self, T0):
+        """Every skin anew: its column's volume of metal at T0 (at T0's density), regridded, and no carry."""
+        sk = self.skins
+        sk.fill(sk.density(np.full(sk.n, float(T0))) * sk.column_volume(), T0)
+        sk.regrid()
+        self.carry = np.zeros(sk.n)
 
     def __setstate__(self, state):
-        """Unpickling: a body from before Task 10 has no `mode_settings`; it takes the defaults (`modes.ModeSettings`)."""
+        """Unpickling: a body from before plan 03b Task 5 holds `mode_settings` (the retired modes', dropped) and has no
+        division and no carry: `advance` then adopts it (`_adopt`)."""
+        state = {k: v for k, v in state.items() if k != "mode_settings"}
         self.__dict__.update(state)
-        if "mode_settings" not in state:
-            self.mode_settings = ModeSettings()
+        if "division" not in state:
+            self.division = None
+        if "carry" not in state:
+            self.carry = np.zeros(self.skins.n)
+
+    def _adopt(self):
+        """A body from before plan 03b Task 5 on the one skin depth: beta derived from its phi and the volume moved to
+        it, the layer divided and every column filled at its base (the enthalpy the move removed against what the fill
+        took owed to the volume)."""
+        tally = _Tally(self.skins.n)
+        beta = skin_base(self.mesh, self.phi, self.settings.depth, band=self.band)
+        removed = self.solver.move(beta)
+        self.beta = beta
+        self._divide(tally)
+        owed = removed - self._fill(tally)
+        self._book_move(self._bases(), self.skins.area, owed)
 
     def _no_rigid_metal(self):
         """Whether psi, found now from the body's fields, finds no rigid metal (`stepend.StepEnd._check_core`); False if
@@ -539,35 +547,15 @@ class LevelSetSkinBody(StepEnd):
         except Exception:
             return False
 
-    def _fill_stub(self, T0):
-        """Every skin anew: the stub's depth of metal at T0 under its (capped) cross-section, then drawn at T0 up to its
-        minimum mass (a concave column's stub holds less than its minimum, rho_s A(z_bottom) stub) until no draw is
-        left above round-off, and regridded."""
-        mk, sk, stub = self.markers, self.skins, self.settings.stub
-        sk.area[mk.skin_index] = mk.area
-        sk.kappa[mk.skin_index] = cap_curvature(sk, mk.kappa, np.full(mk.n, stub))
-        s, p = sk.kappa.sum(axis=1), sk.kappa.prod(axis=1)
-        sk.fill(self.material.rho * sk.area * stub * (1.0 - stub * (0.5 * s - stub * p / 3.0)), T0)
-        for _ in range(FILL_DRAWS):
-            dm, _ = sk.draw(T0, 0.0, sk.minimum_mass())
-            if not np.any(dm > FILL_TOL * sk.m.sum(axis=1)):
-                break
-        sk.regrid()
-
     # -- small helpers ------------------------------------------------------------------------------------------------
-
-
-
-
-
-
     def volume_energy(self):
         return self.solver.energy()
 
     def books(self):
-        """The body's stored mass [kg] and enthalpy [J] now: the volume's, the skins' and the pending heat."""
+        """The body's stored mass [kg] and enthalpy [J] now: the volume's (rho_s (V(beta) + the carry): the density
+        carry is volume metal phi has yet to take, `stepend`), the skins' and the pending heat."""
         sk = self.skins
-        return {"mass_volume": self.rho * float(inside_volumes(self.mesh, self.beta).sum()),
+        return {"mass_volume": self.rho * (float(inside_volumes(self.mesh, self.beta).sum()) + float(self.carry.sum())),
                 "mass_skins": float(sk.m.sum()), "enthalpy_volume": self.solver.energy(),
                 "enthalpy_skins": float(sk.H.sum()), "pending_J": float(self.pending_J.sum())}
 
@@ -593,147 +581,174 @@ class LevelSetSkinBody(StepEnd):
         M = mv.sum() + sk.m.sum()
         return ((mv[:, None] * cen).sum(axis=0) + (sk.m[..., None] * at).sum(axis=(0, 1))) / M
 
-    # -- psi: the volume's temperatures and the skins' profiles --------------------------------------------------------
-
-
     # -- the interface ---------------------------------------------------------------------------------------------------
-    def _beta_owners(self, P, base):
-        """The area of each patch of beta each skin row owns, (rows, P) csr [m2]: the row of the marker whose part of phi
-        lies above it (module docstring). Each patch's triangles moved out along its normal by the thickness of the skin
-        whose base point is nearest its centroid (as phi is beta moved out by the nodal thickness of the nearest base,
-        `stepend.StepEnd._thickness_nodal`), divided among the markers as phi is (`markers.ownership`, the one partition
-        of phi; stage 3 Task 11's fix round 1, C1). Along the patch's own normal rather than a marker's: the patch then
-        lies where phi was built over it, whatever the markers' normals; at a rounded edge it lands on phi's rounding above
-        it. The columns sum to the patches' areas to round-off."""
-        mk = self.markers
-        H = self.skins.thickness()
-        _, near = cKDTree(base).query(P.centroid)
-        lift = (H[near][:, None] * P.normal)[P.tri_patch]
-        W = markers_mod.ownership(mk.x, P.tris + lift[:, None, :], P.tri_patch, len(P.area),
-                                  markers_mod.OWN_SHARE * mk.spacing).tocoo()
-        return sp.csr_matrix((W.data, (mk.skin_index[W.row], W.col)), shape=(self.skins.n, len(P.area)))
+    def _beta_owners(self, P):
+        """The area of each patch of beta each skin row owns, (rows, P) csr [m2] (module docstring): each triangle of
+        the patches P carried to phi, its corners p to p + H g(p) (phi = -H on beta; g phi's recovered gradient, the
+        nodal average of the cells' gradients, interpolated), the feet divided among the markers of the triangle's piece
+        of phi by `markers.ownership` with the same-side rule (as `division.divide` divides its base level), each
+        marker's share of a foot taken of the triangle's own area; a foot of no area goes whole to the marker owning its
+        centroid. The columns sum to the patches' areas to round-off."""
+        mesh, mk, sk = self.mesh, self.markers, self.skins
+        npatch = len(P.area)
+        if not len(P.tris) or not mk.n:
+            return sp.csr_matrix((sk.n, npatch))
+        cells = P.cell[P.tri_patch]
+        near = mesh.ring(np.unique(P.cell), 1)
+        G = nodal_average(mesh, cell_gradients(mesh, self.phi, near), near)
+        corners = P.tris.reshape(-1, 3)
+        rep = np.repeat(cells, 3)
+        g = np.einsum("ni,nik->nk", barycentric(mesh, rep, corners), G[mesh.tets[rep]])
+        feet = (corners + self.settings.depth * g).reshape(-1, 3, 3)
+        tri_area = 0.5 * np.linalg.norm(np.cross(P.tris[:, 1] - P.tris[:, 0], P.tris[:, 2] - P.tris[:, 0]), axis=1)
+        tn = P.normal[P.tri_patch]
+        label, n_pieces = pieces(mesh, self.phi)
+        piece = _marker_pieces(mesh, mk.x, label, cut_patches(mesh, self.phi))
+        tri_piece = label[cells]
+        size = markers_mod.OWN_SHARE * mk.spacing
+        rows, cols, vals = [], [], []
+        for p in range(n_pieces):
+            mq, tq = np.flatnonzero(piece == p), np.flatnonzero(tri_piece == p)
+            if not len(mq) or not len(tq):
+                continue
+            W = markers_mod.ownership(mk.x[mq], feet[tq], np.arange(len(tq)), len(tq), size, normals=mk.normal[mq],
+                                      tri_normal=tn[tq]).tocoo()
+            foot = np.bincount(W.col, W.data, minlength=len(tq))
+            ok = foot[W.col] > 0.0
+            r, c = W.row[ok], W.col[ok]
+            v = W.data[ok] / foot[c] * tri_area[tq[c]]
+            flat = np.flatnonzero(foot <= 0.0)
+            if len(flat):
+                o = _nearest(cKDTree(mk.x[mq]), feet[tq[flat]].mean(axis=1), 1, mk.normal[mq], tn[tq[flat]])[1][:, 0]
+                mine = o < len(mq)
+                r, c = np.concatenate([r, o[mine]]), np.concatenate([c, flat[mine]])
+                v = np.concatenate([v, tri_area[tq[flat[mine]]]])
+            rows.append(mk.skin_index[mq[r]]), cols.append(P.tri_patch[tq[c]]), vals.append(v)
+        if not rows:
+            return sp.csr_matrix((sk.n, npatch))
+        return sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+                             shape=(sk.n, npatch))
 
     def _interface(self):
-        """(S (n, P) sparse, row-stochastic: marker row m's share A_p / A(G_m) of each patch of its group; A(G) (n,) [m2];
-        the base points (n, 3); the base gradient dT/dn [K/m] per row) on the solve's present patches; the groups the
-        guard replaced in `last_guarded`."""
+        """(S (n, P) sparse, row-stochastic: row m's share A_p / A(G_m) of each patch of its group; A(G) (n,) [m2], zero
+        for a column with no base; the base points (n, 3)) on the solve's present patches; the groups the guard replaced
+        in `last_guarded`."""
         P = self.solver.P
         base = self._bases()
         S, A_group, self.last_guarded = patch_groups(P.centroid, P.area, base, self.skins.base_area(),
-                                                     owner=self._beta_owners(P, base), report=True)
-        g_patch = np.einsum("pk,pk->p", cell_gradients(self.mesh, self.solver.T, P.cell), P.normal)
-        return S, A_group, base, S @ g_patch
+                                                     owner=self._beta_owners(P), report=True,
+                                                     insulated=self._baseless())
+        return S, A_group, base
 
-    def _pending_per_patch(self, S, base):
-        """The pending heat [J] per patch of beta: each pending point's heat goes to the marker whose base point is
-        nearest it and is spread over that marker's group as its base law is (`patch_groups`, S), so that the sum is
-        exact. (Fix round 2: deposited whole on the single patch nearest each point, a few joules made -6e12 W/m2 on a
-        sliver over a 0.5 ms part and the volume went to -900 K inside the metal.)"""
+    def _pending_per_patch(self, S, base, has):
+        """The pending heat [J] per patch of beta: each pending point's heat goes to the row with a group (`has`) whose
+        base point is nearest it and is spread over that row's group as its base law is (`patch_groups`, S), so that the
+        sum is exact. (Fix round 2: deposited whole on the single patch nearest each point, a few joules made -6e12 W/m2
+        on a sliver over a 0.5 ms part and the volume went to -900 K inside the metal.)"""
         out = np.zeros(S.shape[1])
-        if len(self.pending_J):
-            _, row = cKDTree(base).query(self.pending_x)
-            out = S.T @ np.bincount(row, self.pending_J, minlength=S.shape[0])
+        rows = np.flatnonzero(has)
+        if len(self.pending_J) and len(rows):
+            _, k = cKDTree(base[rows]).query(self.pending_x)
+            out = S.T @ np.bincount(rows[k], self.pending_J, minlength=S.shape[0])
         return out
 
     # -- one pass of the skins -----------------------------------------------------------------------------------------
-    def _pass(self, dt, T_b, g, m_min, ctx, trial):
-        """The skins over one part dt [s] with the base held at T_b [K] (n,): per heat sub-step, the conduction, the flow
-        sub-steps with the release, the feed removal, the draw (each sub-step's layer below the last) and the regrid.
-        A trial pass returns its base law (a, b); a real pass its books (_Pass)."""
+    def _pass(self, dt, T_b, ctx, trial):
+        """The skins over one part dt [s] with the base held at T_b [K] (n,) (NaN: an insulated base): per heat
+        sub-step, the conduction, the flow sub-steps with the release, the feed removal and the regrid. A trial pass
+        returns its base law (a, b); a real pass its books (_Pass)."""
         sk, s = self.skins, self.settings
         n = sk.n
         N = max(int(math.ceil(dt / s.substep - 1e-9)), 1)
         h = dt / N
         z = np.zeros(n)
         E_top, E_rad, E_base = z.copy(), z.copy(), z.copy()
-        drawn, drawn_H, removed, removed_H, removed_p = z.copy(), z.copy(), z.copy(), z.copy(), np.zeros((n, 3))
+        removed, removed_H, removed_p = z.copy(), z.copy(), np.zeros((n, 3))
         fbook = FlowBook.zero(n)
-        s0 = np.zeros(n)
         release = ctx["plan"].release if ctx["plan"] is not None else None
         for _ in range(N):
-            self._cap()                                     # runoff may have deepened a column since the last sub-step
             hb = sk.conduct(h, ctx["q"], self.T_ambient, self.emissivity, T_b, trial=trial)
             E_top += hb.E_top
             E_rad += hb.E_rad
             E_base += hb.E_base
             if ctx["forcing"] is not None:
-                fbook.add(flow_substeps(sk, self.markers, ctx["forcing"], h, release=release,
-                                        after=lambda skins: self._cap()))
+                fbook.add(flow_substeps(sk, self.markers, ctx["forcing"], h, release=release))
             if self.remove == "feed":
                 mass, H = sk.remove_feed()
                 removed += mass
                 removed_H += H
                 removed_p += sk.momentum_out
-            A_b = sk.base_area()
-            dm, dH = sk.draw(T_b, g, m_min, s0, cap=ctx.get("cap"))   # None: T_rigid (full-depth)
-            s0 = s0 + dm / (sk.rho_s * A_b)
-            drawn += dm
-            drawn_H += dH
             sk.regrid()
         if trial:
             return sk.base_law(dt)
-        return _Pass(E_top, E_rad, E_base, drawn, drawn_H, removed, removed_H, removed_p, fbook)
+        return _Pass(E_top, E_rad, E_base, removed, removed_H, removed_p, fbook)
 
     def _save(self, ctx):
         sk, plan = self.skins, ctx["plan"]
         books = None if plan is None else {k: np.array(getattr(plan, k), copy=True) for k in _PLAN_BOOKS}
-        return self.solver.T.copy(), sk.state(), sk.flow_memory.copy(), sk.kappa.copy(), books
+        profile = None if sk.profile is None else (sk.profile_levels.copy(), sk.profile.copy())
+        return self.solver.T.copy(), sk.state(), sk.flow_memory.copy(), profile, books
 
     def _restore(self, saved, ctx, solver=True):
-        """Undo a pass: the cells, the flow memory, the curvatures (which the per-sub-step cap may have lowered) and
-        the plan's books, and with `solver` the volume's temperatures."""
-        T, state, memory, kappa, books = saved
+        """Undo a pass: the cells, the flow memory, the profile and the plan's books, and with `solver` the volume's
+        temperatures."""
+        T, state, memory, profile, books = saved
         if solver:
             self.solver.T = T.copy()
         self.skins.set_state(state)
         self.skins.flow_memory = memory.copy()
-        self.skins.kappa = kappa.copy()
+        if profile is not None:
+            self.skins.profile_levels, self.skins.profile = profile[0].copy(), profile[1].copy()
         if books is not None:
             for k, v in books.items():
                 setattr(ctx["plan"], k, np.array(v, copy=True))
 
     # -- one part --------------------------------------------------------------------------------------------------------
     def _part(self, dt, dt_macro, depth, ctx, tally):
-        """One part of a macro step (module docstring, steps 1-6), a part whose base moves exceed MOVE_SHARE of the
+        """One part of a macro step (module docstring, steps 1-6), a part whose move of phi exceeds MOVE_SHARE of the
         markers' target spacing run again as shorter parts (Ruling 7, `split_part`). Returns its `PartCount`."""
         return split_part(lambda h: self._part_once(h, dt_macro, ctx, tally), dt, dt_macro, depth)
 
     def _part_once(self, dt, dt_macro, ctx, tally):
-        """Run one part of length dt [s] (steps 1-5) and return (its move ratio, accept, undo): `accept()` books it and
-        moves beta (steps 5-6), `undo()` restores the state it started from."""
+        """Run one part of length dt [s] (steps 1-4) and return (its move ratio, accept, undo): `accept()` books it and
+        settles the layer (steps 5-6), `undo()` restores the state it started from."""
         sk, solver = self.skins, self.solver
-        self._cap()
-        S, A_group, base, g0 = self._interface()
+        S, A_group, base = self._interface()
+        has = A_group > 0.0
         tally.guarded = max(tally.guarded, self.last_guarded)
-        group_ratio = A_group / sk.base_area()
-        tally.group_min = min(tally.group_min, float(group_ratio.min()))
-        tally.group_max = max(tally.group_max, float(group_ratio.max()))
-        largest = S.max(axis=1).toarray().ravel() * A_group            # each group's largest patch [m2]
-        tally.group_trimmed = max(tally.group_trimmed, float(((A_group - largest) / sk.base_area()).max()))
+        A_b = sk.base_area()
+        ok = has & (A_b > 0.0)
+        if ok.any():
+            group_ratio = A_group[ok] / A_b[ok]
+            tally.group_min = min(tally.group_min, float(group_ratio.min()))
+            tally.group_max = max(tally.group_max, float(group_ratio.max()))
+            largest = S.max(axis=1).toarray().ravel() * A_group            # each group's largest patch [m2]
+            tally.group_trimmed = max(tally.group_trimmed, float(((A_group - largest)[ok] / A_b[ok]).max()))
         saved = self._save(ctx)
         try:
-            T_b0 = S @ solver.patch_T()
-            m_min = modes.minimum_mass(sk, ctx["top"]) * (1.0 - DRAW_SLACK)
+            T_b0 = np.where(has, S @ solver.patch_T(), np.nan)
             A_p = solver.P.area
             share = min(1.0, dt / max(dt_macro - tally.elapsed, PENDING_TIME_MIN))   # of the pending heat, this part's
-            q_pend = share * self._pending_per_patch(S, base) / (A_p * dt)              # (at its rate over the step's rest)
+            q_pend = share * self._pending_per_patch(S, base, has) / (A_p * dt)         # (at its rate over the rest)
             tally.pending_flux = max(tally.pending_flux, float(np.abs(q_pend).max(initial=0.0)))
             E_vol0 = solver.energy()
             T_lin = T_b0
             omega, r_prev = DAMPED_OMEGA0, None
             for attempt in range(DAMPED_MAX_PASSES):
-                a, b = self._pass(dt, T_lin, g0, m_min, ctx, trial=True)
+                a, b = self._pass(dt, T_lin, ctx, trial=True)
+                a, b = np.where(has, a, 0.0), np.where(has, b, 0.0)          # a column with no base gives no law
                 self._restore(saved, ctx, solver=False)
                 q0 = (S.T @ a) / A_p + q_pend
                 q1 = (S.T @ b) / A_p
                 Q = solver.step(dt, q0, q1)
-                T_b1 = S @ solver.patch_T()
-                book = self._pass(dt, T_b1, g0, m_min, ctx, trial=False)
-                mismatch = book.E_base - (a + b * T_b1) * dt
+                T_b1 = np.where(has, S @ solver.patch_T(), np.nan)
+                book = self._pass(dt, T_b1, ctx, trial=False)
+                mismatch = book.E_base - np.where(has, (a + b * np.nan_to_num(T_b1)) * dt, 0.0)
                 scale = np.abs(book.E_top) + np.abs(book.E_base)
                 total = float(np.abs(mismatch).sum() / max(scale.sum(), 1e-300))
-                r = T_b1 - T_lin
-                if total <= INTERFACE_TOLERANCE or np.abs(r).max() <= DAMPED_TOL_K or attempt == DAMPED_MAX_PASSES - 1:
+                r = np.where(has, np.nan_to_num(T_b1 - T_lin), 0.0)
+                if total <= INTERFACE_TOLERANCE or np.abs(r).max(initial=0.0) <= DAMPED_TOL_K or \
+                        attempt == DAMPED_MAX_PASSES - 1:
                     break
                 if r_prev is not None:                          # Aitken: omega from the change of the residual
                     dr = r - r_prev
@@ -743,91 +758,21 @@ class LevelSetSkinBody(StepEnd):
                 self._restore(saved, ctx)
                 T_lin, r_prev = T_lin + omega * r, r
             passes = attempt + 1
-            handed, handed_H, handed_P, given = modes.hand_down(sk, ctx["top"], self.settings.stub, cells=True)
-            moving = np.abs(book.drawn - handed) / (self.rho * sk.base_area())
-            book.absorbed, book.absorbed_H = self._absorb(ctx["top"], moving)
-            book.drawn, book.drawn_H = book.drawn + book.absorbed, book.drawn_H + book.absorbed_H
         except Exception as err:                            # the part failed: back to where it started
             self._restore(saved, ctx)
             err.part_restored = True                        # `advance` may then ask whether rigid metal is left
             raise
-        A_base = sk.base_area()
-        move = np.abs(book.drawn - handed) / (self.rho * A_base)
-        allowance = MOVE_SHARE * self.spacing
-        ratio = float((move / allowance).max()) if len(move) else 0.0
-        return ratio, lambda: self._accept(dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, given, A_base,
-                                           mismatch, Q, E_vol0, share, base, ctx["top"], tally), \
+        dC = sk.cells_volume() - sk.column_volume()          # the cells' volume change (planning ruling 3, step 1)
+        A0 = sk.profile[:, 0] if sk.profile is not None else sk.area
+        move = np.divide(np.abs(dC + self.carry), A0, out=np.zeros(sk.n), where=A0 > 0.0)
+        ratio = float(move.max() / (MOVE_SHARE * self.spacing)) if len(move) else 0.0
+        return ratio, lambda: self._accept(dt, dt_macro, ratio, passes, book, mismatch, Q, E_vol0, share, base, has,
+                                           dC, tally), \
             lambda: self._restore(saved, ctx)
 
-    def _absorb(self, top, moving):
-        """A full-depth skin runs from the gas down through the molten layer to a stub of rigid metal below psi (design
-        20.6, binding; stage 3 Task 11's fix, item 4): beneath every full-depth row whose base stands on metal above
-        T_rigid, the volume's metal from the base down to where it turns rigid (found within fine_margin below the base,
-        in the metal: a melt deeper than that, or with no rigid metal beneath, is thick melt, the thin test's to turn the
-        skin top-zone), plus the stub below that, joins the skin as new cells (`modes.to_thin`, as a mode change to full-depth absorbs), each at the volume's own temperature at
-        its middle, so that the books stay exact (beta then steps in by it with the part's draws). The base is beta's zero
-        along the row's marker's normal (from the marker, by two steps of beta's distance: the markers stay where the
-        step began while the skins and beta move within it); the volume's field is read from there every ABSORB_STEP down
-        to fine_margin. What a part absorbs is held within the part's move allowance (MOVE_SHARE of the target spacing)
-        less what its draws and hand-downs already move (`moving` [m] per row; the skyscrapers' absorption is held the
-        same way); the rest waits for the next part. Returns (mass [kg], enthalpy [J]) per row, as draws. (On the hot
-        plate the skin had held only its 0.8 mm minimum, all of it non-rigid, and the volume beneath stood 4.7 to 5.2 K
-        above T_rigid.)"""
-        sk, mat, mk = self.skins, self.material, self.markers
-        mass, H = np.zeros(sk.n), np.zeros(sk.n)
-        rows = np.flatnonzero(~np.asarray(top, bool))
-        if not np.isfinite(mat.T_rigid) or not len(rows):
-            return mass, H
-        m = self._row_marker()[rows]
-        x, normal = mk.x[m], mk.normal[m]
-        s_b = sk.thickness()[rows]
-        for _ in range(2):                                  # beta's zero along the normal (beta a distance near it)
-            s_b = s_b + interpolate(self.mesh, self.beta, x - s_b[:, None] * normal)
-        base = x - s_b[:, None] * normal
-        z = np.r_[ABSORB_STEP * 1e-3, ABSORB_STEP * np.arange(1, int(np.ceil(self.fine_margin / ABSORB_STEP)) + 1)]
-        hot = interpolate(self.mesh, self.solver.T, base - z[0] * normal) > mat.T_rigid
-        rows, base, normal = rows[hot], base[hot], normal[hot]
-        if not len(rows):
-            return mass, H
-        pts = (base[:, None, :] - z[None, :, None] * normal[:, None, :]).reshape(-1, 3)
-        T = interpolate(self.mesh, self.solver.T, pts).reshape(len(rows), len(z))
-        metal = interpolate(self.mesh, self.beta, pts).reshape(len(rows), len(z)) < 0.0
-        T = np.where(metal, T, -np.inf)                     # where the metal ends nothing more is absorbed
-        cold = T <= mat.T_rigid
-        found = cold.any(axis=1) & np.isfinite(T[np.arange(len(rows)), np.argmax(cold, axis=1)])
-        k = np.maximum(np.argmax(cold, axis=1), 1)          # a row whose melt is deeper than fine_margin, or reaches
-        i = np.arange(len(rows))                            # the metal's end, has no rigid metal to reach: thick melt is
-        T_hi, T_lo = T[i, k - 1], T[i, k]                   # the thin test's (it turns such a skin top-zone)
-        with np.errstate(invalid="ignore"):
-            f = np.where(np.isfinite(T_lo) & (T_hi > T_lo), (T_hi - mat.T_rigid) / np.where(T_hi > T_lo, T_hi - T_lo,
-                                                                                               1.0), 1.0)
-        rigid_at = z[k - 1] + np.clip(f, 0.0, 1.0) * (z[k] - z[k - 1])
-        room = np.maximum(MOVE_SHARE * self.spacing - np.asarray(moving, float)[rows], 0.0)
-        ends = np.where(metal.all(axis=1), z[-1], z[np.argmax(~metal, axis=1)] - ABSORB_STEP)   # the metal's end below
-        depth = np.minimum(np.minimum(rigid_at + self.settings.stub, room), ends)              # (an edge, a thin part)
-        go = found & (depth > ABSORB_STEP * 1e-3)
-        rows, depth, base, normal = rows[go], depth[go], base[go], normal[go]
-        if not len(rows):
-            return mass, H
-
-        def temperature(k_, s_):                            # the volume's field along each row's normal from its base
-            return interpolate(self.mesh, self.solver.T, base[k_] - s_[:, None] * normal[k_])
-        mid = 0.5 * depth[:, None] * np.array([[0.0, 0.5, 1.0]])      # the field must be the metal's along the span
-        ok = np.all(np.isfinite(temperature(np.repeat(np.arange(len(rows)), 3), mid.ravel()).reshape(-1, 3)), axis=1)
-        rows, depth, base, normal = rows[ok], depth[ok], base[ok], normal[ok]
-        if not len(rows):
-            return mass, H
-        ho = modes.to_thin(sk, rows, depth, temperature, self.rho, kappa_share=KAPPA_DEPTH_SHARE)
-        mass[rows], H[rows] = -ho.mass, -ho.enthalpy
-        return mass, H
-
-    def _accept(self, dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, given, A_base, mismatch, Q, E_vol0,
-                share, base, top, tally):
-        """The accepted part's books (step 5) and beta moved by its draws and hand-downs (step 6). What a top-zone skin
-        (`top`, per row) gives the volume beneath -- its returned cells' momentum, its base's drag -- goes to the held
-        volume (Ruling 4), a full-depth skin's base drag to the wall; the volume's nodes the move brings inside the metal
-        beneath a top-zone skin's returned cells (`given`, (mass, enthalpy) in place) take their profile
-        (`stepend.StepEnd._fill`, fix round 1 of Task 10)."""
+    def _accept(self, dt, dt_macro, ratio, passes, book, mismatch, Q, E_vol0, share, base, has, dC, tally):
+        """The accepted part's books (step 5) and the layer settled (step 6, `stepend.StepEnd._layer`): phi moved by the
+        columns' volume changes dC [m3] (n,) and their carry, beta derived, the division and every column filled."""
         solver = self.solver
         tally.parts += 1
         tally.elapsed += dt
@@ -838,17 +783,11 @@ class LevelSetSkinBody(StepEnd):
         tally.removed += float(book.removed.sum())
         tally.removed_H += float(book.removed_H.sum())
         tally.removed_p += book.removed_p.sum(axis=0)
-        tally.drawn += float(book.drawn.sum())
-        tally.absorbed += float(np.sum(getattr(book, "absorbed", 0.0)))
-        tally.absorbed_H += float(np.sum(getattr(book, "absorbed_H", 0.0)))
-        tally.handed += float(handed.sum())
         fb = book.flow
         tally.sprayed += float(fb.released.sum())
         tally.sprayed_H += float(fb.released_H.sum())
         tally.sprayed_p += fb.released_p.sum(axis=0)
-        tally.wall -= fb.wall[~top].sum(axis=0)
-        tally.to_volume -= fb.wall[top].sum(axis=0)
-        tally.to_volume += handed_P.sum(axis=0)
+        tally.wall -= fb.wall.sum(axis=0)                    # every skin's floor is no-slip (design 21.3)
         tally.mismatch = float(np.abs(mismatch).sum())
         # what the volume still owes: the mismatch per marker, and the solve's own residual shared by the base heat
         residual = Q - (solver.energy() - E_vol0)
@@ -856,29 +795,15 @@ class LevelSetSkinBody(StepEnd):
         w = np.abs(book.E_base)
         weight = w / w.sum() if w.sum() > 0.0 else np.full(len(w), 1.0 / max(len(w), 1))
         owed = self.pending_J * (1.0 - share)                    # what this part did not deliver stays owed
-        if len(owed):                                            # (merged onto the base nearest each point)
-            _, row = cKDTree(base).query(self.pending_x)
-            owed = np.bincount(row, owed, minlength=len(base))
+        rows = np.flatnonzero(has) if has.any() else np.arange(len(base))
+        if len(owed):                                            # (merged onto the base with a group nearest each point)
+            _, k = cKDTree(base[rows]).query(self.pending_x)
+            owed = np.bincount(rows[k], owed, minlength=len(base))
         else:
             owed = np.zeros(len(base))
         self.pending_x, self.pending_J = base.copy(), owed + mismatch + residual * weight
-        # beta moved by the draws and the hand-downs, the move's enthalpy against what the skins took and gave
-        dV = (handed - book.drawn) / self.rho
-        if np.any(dV != 0.0):
-            expected = float(handed_H.sum() - book.drawn_H.sum())
-            E0, beta0 = solver.energy(), self.beta.copy()
-            seed = [np.array(g, dtype=float, copy=True) for g in given]       # the move's seed: the top-zone skins'
-            whole = (seed[0].sum(axis=1) <= 0.0) & (handed > 0.0)            # cells in place, a full-depth skin's
-            seed[0][whole, -1], seed[1][whole, -1] = handed[whole], handed_H[whole]     # hand-down as one cell
-            self._move_beta(base, dV, dV / A_base, tally, given=(self._row_normals(), A_base, seed))
-            if np.any(given[0] > 0.0):
-                self._fill(beta0, base, self._row_normals(), A_base, given)
-            owed = expected + E0 - solver.energy()
-            tally.move += abs(owed)
-            self._book_move(base, np.abs(dV), owed)
-
-
-
+        if self._needs_move(dC + self.carry):
+            self._layer(dC, tally, "part")
 
     # -- the macro step --------------------------------------------------------------------------------------------------
     def advance(self, dt, state=None, decel_vec=None, q_prescribed=None):
@@ -887,15 +812,13 @@ class LevelSetSkinBody(StepEnd):
         (default the surface flow's deceleration along v_hat; with no state it alone turns the flow sub-steps on, with no
         pressure gradient or shear); `q_prescribed` the convective heating [W/m2] per marker (an array in the markers'
         order, or a function of the markers), instead of the state's. Returns a StepBook."""
+        if self.division is None:                            # a body pickled before plan 03b Task 5
+            self._adopt()
         mk, sk, mat = self.markers, self.skins, self.material
         start = self.books()
         M0 = start["mass_volume"] + start["mass_skins"]
         E0 = start["enthalpy_volume"] + start["enthalpy_skins"] + start["pending_J"]
-        splits0, merges0 = mk.splits, mk.merges
-        top_rows = np.zeros(sk.n, bool)
-        top_rows[mk.skin_index] = mk.top                    # each row's mode, fixed over the step's parts
-        ctx = {"q": np.zeros(sk.n), "forcing": None, "plan": None, "top": top_rows,
-               "cap": modes.draw_cap(sk, top_rows)}
+        ctx = {"q": np.zeros(sk.n), "forcing": None, "plan": None}
         T_top = self._top_T()[mk.skin_index]
         flow = None
         if state is not None:
@@ -917,12 +840,9 @@ class LevelSetSkinBody(StepEnd):
             if self.spray_model is not None:
                 windward = ang <= 0.5 * np.pi
                 w_n = float(np.linalg.norm(g)) * np.maximum(np.cos(ang), 0.0)
-                depth = np.full(mk.n, np.nan)                       # phi to psi at the top-zone markers only (D2)
-                depth[mk.top] = modes.melt_depth(self.mesh, self.psi, mk.x[mk.top])
                 ctx["plan"] = spray_plan(sk, mk, flow, state, self.spray_model, windward, w_n, dt,
-                                         self._radius(centroid), fit.used, slurry=self.slurry_spray, b_mode="phi_psi",
-                                         depth_phi_psi=depth, top=mk.top, theta=ang, centre=centroid,
-                                         v_hat=self.v_hat)
+                                         self._radius(centroid), fit.used, slurry=self.slurry_spray, theta=ang,
+                                         centre=centroid, v_hat=self.v_hat)
         elif decel_vec is not None:
             still = _StillGas(np.zeros(mk.n), np.zeros(mk.n))
             ctx["forcing"] = Forcing.from_surface_flow(still, np.asarray(decel_vec, float), self.v_hat,
@@ -960,9 +880,8 @@ class LevelSetSkinBody(StepEnd):
         tally.over = sum(c.over for c in counts)
         self.time += dt
 
-        # the step's end: phi, psi, the mesh, the markers
-        self._rebuild(tally, check_core=True)
-        self._modes(tally, check_core=True)
+        # the step's end: the last carry, psi, the mesh, the markers, the layer
+        self._end_step(tally, check_core=True)
         self.momentum_to_volume += tally.to_volume
         reps = self.last_settle
         passed = math.fsum(float(r.transfer.sum() - r.transfer.diagonal().sum()) for r in reps)
@@ -975,19 +894,18 @@ class LevelSetSkinBody(StepEnd):
         out_m = tally.sprayed + tally.removed
         out_E = tally.sprayed_H + tally.removed_H + tally.E_rad
         P = cut_patches(self.mesh, self.phi)
-        label, n_pieces = pieces(self.mesh, self.beta)
+        label, n_pieces = pieces(self.mesh, self.phi)
         mk = self.markers
         self.last_step = StepBook(
             time=self.time, dt=dt, parts=tally.parts, parts_next=self._hint,
             parts_skyscrapers=int(math.ceil(MOVE_HINT_MARGIN * tally.ratio_all)), split_depth_max=tally.depth,
             parts_over=tally.over, snap_fallback=tally.snap_fallback, snap_slide_max=tally.snap_slide,
-            pieces_used_up=tally.pieces_used,
-            area_repartitioned_share=passed / covered if covered > 0.0 else 0.0,
+            pieces_used_up=tally.pieces_used, area_repartitioned_share=passed / covered if covered > 0.0 else 0.0,
             stretch_min=min((float(r.stretch.min()) for r in reps), default=1.0),
             stretch_max=max((float(r.stretch.max()) for r in reps), default=1.0),
             group_area_ratio_min=tally.group_min, group_area_ratio_max=tally.group_max,
-            group_area_ratio_trimmed_max=tally.group_trimmed,
-            pending_flux_max=tally.pending_flux, surface_flux_max=float(np.max(ctx["q"], initial=0.0)), passes=tally.passes, enthalpy_in=tally.E_top,
+            group_area_ratio_trimmed_max=tally.group_trimmed, pending_flux_max=tally.pending_flux,
+            surface_flux_max=float(np.max(ctx["q"], initial=0.0)), passes=tally.passes, enthalpy_in=tally.E_top,
             mass_sprayed=tally.sprayed, enthalpy_sprayed=tally.sprayed_H, mass_removed=tally.removed,
             enthalpy_removed=tally.removed_H, enthalpy_radiated=tally.E_rad, mass_volume=end["mass_volume"],
             mass_skins=end["mass_skins"], enthalpy_volume=end["enthalpy_volume"], enthalpy_skins=end["enthalpy_skins"],
@@ -996,15 +914,12 @@ class LevelSetSkinBody(StepEnd):
             mass_drawn=tally.drawn, mass_handed=tally.handed, momentum_sprayed=tally.sprayed_p,
             momentum_removed=tally.removed_p, momentum_to_volume=tally.to_volume, momentum_to_wall=tally.wall,
             residual_newton_J=tally.newton, residual_move_J=tally.move, residual_remesh_J=tally.remesh,
-            n_markers=mk.n,
-            marker_splits=mk.splits, marker_merges=mk.merges, markers_trapped=mk.trapped,
+            n_markers=mk.n, marker_splits=mk.splits, marker_merges=mk.merges, markers_trapped=mk.trapped,
             interface_mismatch_J=tally.mismatch, volume_correction_max=tally.correction, n_pieces=int(n_pieces),
-            frontal_area_m2=float((P.area * np.maximum(P.normal @ self.v_hat, 0.0)).sum()), n_top=int(mk.top.sum()),
-            modes_to_top=tally.to_top, modes_to_full=tally.to_full, mass_modes_handed=tally.mode_handed,
-            mass_modes_absorbed=tally.mode_absorbed, enthalpy_modes_J=tally.mode_H, residual_modes_J=tally.mode_owed,
-            momentum_modes_normal=tally.mode_normal, island_nodes=tally.islands,
-            groups_guarded_max=tally.guarded, mass_absorbed=tally.absorbed,
-            enthalpy_absorbed=tally.absorbed_H, move_corrections=list(tally.corrections), summary=summary)
+            frontal_area_m2=float((P.area * np.maximum(P.normal @ self.v_hat, 0.0)).sum()),
+            layer_factor_max=tally.layer_factor, fill_miss_max=tally.fill_miss, move_miss_max=tally.move_miss,
+            n_baseless=tally.baseless, density_carry_m3=float(self.carry.sum()), island_nodes=tally.islands,
+            groups_guarded_max=tally.guarded, move_corrections=list(tally.corrections), summary=summary)
         return self.last_step
 
     def _radius(self, centroid):
@@ -1030,10 +945,3 @@ class LevelSetSkinBody(StepEnd):
                     "liquid_depth_mean_mm": float(np.mean(liquid) * 1e3) if len(liquid) else 0.0,
                     "flowing_depth_mean_mm": float(np.mean(flowing) * 1e3) if len(flowing) else 0.0})
         return out
-
-    # -- the step's end ----------------------------------------------------------------------------------------------------
-
-
-
-
-

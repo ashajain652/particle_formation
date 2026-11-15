@@ -106,9 +106,10 @@ def body_mesh(base, sdf, fine=BODY_FINE, floor=BODY_FLOOR):
     size, margin, lead and cell floor, the curvature of phi recovered within two base cells of it.
 
     This is not a body's own mesh (plan 03b Task 2, fix round 1, measured once). A body refines around its own phi, and
-    rebuilds its mesh from its fields at construction. Today's body builds phi from beta moved out by the 0.8 mm stub,
-    so its edges are rounded to the stub. On the stage 3 box, `box_body("dev")` has 38,324 nodes and 216,000 cells,
-    against 65,296 nodes and 371,776 cells here, and the two share 34,407 nodes. Here the sharp edges' curvature puts
+    rebuilds its mesh from its fields at construction. Before plan 03b Task 5 the body built phi from beta moved out by
+    the 0.8 mm stub, so its edges were rounded to the stub (since Task 5 phi is phi0 itself, the exact shape); then, on
+    the stage 3 box, `box_body("dev")` had 38,324 nodes and 216,000 cells, against 65,296 nodes and 371,776 cells here,
+    and the two shared 34,407 nodes. Here the sharp edges' curvature puts
     203,600 cells at the 0.175 mm floor, against the body's 62,672; within 2 mm of the surface the body's phi differs
     from the box's exact distance by up to 0.69 mm."""
     mesh = build(base)

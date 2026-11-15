@@ -1,6 +1,6 @@
-"""The derived surfaces: the skin base beta from the gas surface phi and the skin depth (design §21.4), the outer
-surface phi from the skin base beta and the skins' thickness (design §20.3, superseded by §21.4), and the molten-rigid
-surface psi from the temperature, keeping only rigid metal connected to the core (crusts float)."""
+"""The derived surfaces: the skin base beta from the gas surface phi and the skin depth (design §21.4), and the
+molten-rigid surface psi from the temperature, keeping only rigid metal connected to the core (crusts float). (The outer
+surface phi built from beta and the skins' thickness, design §20.3, was retired by plan 03b Task 5: phi is evolved.)"""
 import numpy as np
 
 from .levelset import pieces, redistance
@@ -8,19 +8,20 @@ from .levelset import pieces, redistance
 
 def skin_base(mesh, phi, depth, band=None):
     """beta, the skin base (design §21.4): the surface `depth` [m] inside the gas surface phi, the zero contour of
-    phi + depth, reset to a distance with `band` [m]. phi must be a signed distance (negative in the metal) reaching
-    beyond `depth` into the metal, so a band no deeper than `depth` raises ValueError (it should reach beyond by a
-    cell). Moving a surface inward by a distance keeps its convex edges sharp and rounds its concave corners to radius
-    `depth`."""
+    phi + depth exactly, reset to a distance with `band` [m] keeping that contour (`redistance(..., keep=True)`: the
+    nodes of the cells it cuts keep phi + depth). phi must be a signed distance (negative in the metal) reaching beyond
+    `depth` into the metal, so a band no deeper than `depth` raises ValueError (it should reach beyond by a cell).
+    Moving a surface inward by a distance keeps its convex edges sharp and rounds its concave corners to radius `depth`.
+
+    Why the contour is kept (plan 03b Task 5, against the controller's ruling T2-b's plain reset). The layer the division
+    measures is the metal of phi less that of phi + depth (`division.divide`), and the volume's metal is beta's; the
+    books close only if the two agree, cell by cell. The plain reset moves the contour wherever it bends within a cell,
+    inward at beta's convex edges: on the stage 3 box it held 0.67 mm3 less than phi + depth (Task 2's report), which
+    would leave the skins' columns and the volume overlapping or apart by that much at every acceptance."""
     if band is not None and band <= depth:
         raise ValueError("the skin base needs phi a distance beyond the depth {:.3e} m into the metal, but the band is "
                          "{:.3e} m".format(depth, band))
-    return redistance(mesh, np.asarray(phi, dtype=float) + depth, band=band)
-
-
-def outer_surface(mesh, beta, thickness, band=None):
-    """phi = the zero contour of beta moved outward by the nodal skin thickness (m), reset to a distance."""
-    return redistance(mesh, beta - thickness, band=band)
+    return redistance(mesh, np.asarray(phi, dtype=float) + depth, band=band, keep=True)
 
 
 def molten_rigid_surface(mesh, phi, T, T_rigid, core_point=None, band=None):

@@ -63,7 +63,7 @@ between the markers). This is the one partition of phi that the gas loads and th
 heat is its flux over the area it stands for and the beam's total is exact; with the tangent-plane cells' areas the q6p
 box's markers took 0.961 of a beam's projected heat at the start and 0.640 after its first melting step, and its face's
 central skins took the beam over cells 1.2 to 1.3 times the area beneath them. The tangent-plane cells now give only the
-faces (the runoff's exchange, the modes' adjacency, the spray's regions, the re-partition's neighbours; their lengths
+faces (the runoff's exchange, the spray's regions, the re-partition's neighbours; their lengths
 scaled by the square root of the factor that brings the cells' areas to phi's; the cells' areas so scaled are kept as
 `cell_area`, for diagnosis), the `capped` flag and the cells' longest direction (`axis`, for splits). A marker without a
 patch owns nothing (it is released at the step end).
@@ -71,8 +71,9 @@ patch owns nothing (it is released at the step end).
 Topology. `split` divides a marker above twice the target area into two half a target spacing apart along the longest
 direction of its Voronoi cell, each with the same profile and half the mass and area; `merge` joins markers closer than
 a third of the target spacing, their skins mixed by the hand-over rule (`Skins.combine`); `trapped_markers` finds the
-markers with no zero contour of phi within half a cell, and `release` removes markers with their skins and returns what
-the skins held, for the caller to book as a deferred load in the cell holding each. Every change of the markers changes
+markers with no zero contour of phi within half a cell, and `release` removes markers, each giving its skin to the
+nearest marker that stays, by depth (`Skins.combine(..., by="depth")`; plan 03b, planning ruling 6: the metal stays in
+the layer, where the next fill settles it). Every change of the markers changes
 the skins' rows with them and is counted (`splits`, `merges`, `trapped`).
 
 The re-partition of the skins' metal after a tessellation is `repartition`'s (Task 9b).
@@ -507,12 +508,8 @@ class Markers:
     spacing `spacing` [m] and the counters `splits`, `merges`, `trapped`. After `tessellate`: `faces`, `capped` (n,)
     and `axis` (n, 3), the longest direction of each Voronoi cell. `x_tess` and `normal_tess` (n, 3) are each marker's
     position and normal at the last tessellation (at creation before any), the owners of the area it was given there
-    (Task 9b, `repartition.transfer_matrix`); a split or a merge sets them to the new markers' own. `top` (n,) bool
-    each marker's mode (design 20.6: False a full-depth skin, True a top-zone skin) and `hold` (n,) the macro steps in a
-    row its thin test has given the other answer (`modes`, Task 10); a split's new half takes its parent's mode and
-    hold (the same surface: a new half alone could never make the group a change needs), a merge across modes the
-    top-zone marker's (the step end hands the volume what the mixed column holds below its fine zone) and otherwise the
-    first's, and a release drops them."""
+    (Task 9b, `repartition.transfer_matrix`); a split or a merge sets them to the new markers' own. (Every skin is one
+    skin depth deep, design section 21.3: stage 3 Task 10's modes, `top` and `hold`, are retired by plan 03b Task 5.)"""
 
     def __init__(self, x, normal, area, kappa, skin_index, patch, spacing, skins=None):
         self.x = np.array(x, dtype=float).reshape(-1, 3)
@@ -530,22 +527,18 @@ class Markers:
         self.capped = np.zeros(n, bool)
         self.axis = np.zeros((n, 3))
         self.x_tess, self.normal_tess = self.x.copy(), self.normal.copy()
-        self.top, self.hold = np.zeros(n, bool), np.zeros(n, np.int64)
 
     def __setstate__(self, state):
         """Unpickling: a state from before Task 9b has no `x_tess`, `normal_tess`; saved between steps, the markers'
-        last tessellation was where they are, so they are filled from `x` and `normal`. One from before Task 10 has no
-        `top`, `hold`: every skin was full-depth, with no hold counted. One from before Task 11's fix round 1 has no
-        `cell_area`: its areas were its tangent-plane cells'."""
+        last tessellation was where they are, so they are filled from `x` and `normal`. One from before Task 11's fix
+        round 1 has no `cell_area`: its areas were its tangent-plane cells'. One from Task 10 to plan 03b Task 5 holds the
+        retired modes, `top` and `hold`: they are dropped."""
+        state = {k: v for k, v in state.items() if k not in ("top", "hold")}
         self.__dict__.update(state)
         if "x_tess" not in state:
             self.x_tess = np.array(self.x, dtype=float)
         if "normal_tess" not in state:
             self.normal_tess = np.array(self.normal, dtype=float)
-        if "top" not in state:
-            self.top = np.zeros(len(self.x), bool)
-        if "hold" not in state:
-            self.hold = np.zeros(len(self.x), np.int64)
         if "cell_area" not in state:
             self.cell_area = np.array(self.area, dtype=float)
 
@@ -733,15 +726,14 @@ class Markers:
     def _append(self, src, x):
         """New markers copying the markers `src` at positions x, their skins' rows given later."""
         self.x = np.concatenate([self.x, x])
-        for name in ("normal", "area", "cell_area", "kappa", "patch", "capped", "axis", "x_tess", "normal_tess", "top",
-                     "hold"):
+        for name in ("normal", "area", "cell_area", "kappa", "patch", "capped", "axis", "x_tess", "normal_tess"):
             setattr(self, name, np.concatenate([getattr(self, name), getattr(self, name)[src]]))
 
     def _drop(self, idx):
         keep = np.ones(self.n, bool)
         keep[idx] = False
         for name in ("x", "normal", "area", "cell_area", "kappa", "patch", "capped", "axis", "skin_index", "x_tess",
-                     "normal_tess", "top", "hold"):
+                     "normal_tess"):
             setattr(self, name, getattr(self, name)[keep])
         self.faces = None
 
@@ -772,8 +764,7 @@ class Markers:
         """Markers closer than MERGE_FRACTION of `target_spacing` [m] merge in pairs, the closest first, each marker in
         at most one pair per call: the pair's first keeps the area-weighted position, normal and curvatures and the
         summed area; their skins are mixed by the hand-over rule (`Skins.combine`) and the second leaves. The caller
-        snaps and tessellates. Where the two differ in mode the merged marker is top-zone with the top-zone marker's hold
-        (`Markers.top`, `Markers.hold`). Returns the number of merges."""
+        snaps and tessellates. Returns the number of merges."""
         pairs = cKDTree(self.x).query_pairs(MERGE_FRACTION * target_spacing, output_type="ndarray")
         if not len(pairs):
             return 0
@@ -797,8 +788,6 @@ class Markers:
         self.kappa[keep] = fa[:, None] * self.kappa[keep] + fb[:, None] * self.kappa[gone]
         self.x_tess[keep], self.normal_tess[keep] = self.x[keep], self.normal[keep]
         self.area[keep] = A
-        across = self.top[gone] & ~self.top[keep]        # across modes the top-zone marker's mode and hold (Task 10)
-        self.top[keep], self.hold[keep] = self.top[keep] | across, np.where(across, self.hold[gone], self.hold[keep])
         if self.skins is not None:
             self.skins.combine(self.skin_index[keep], self.skin_index[gone])
         self._remove(gone)
@@ -833,14 +822,39 @@ class Markers:
         return np.flatnonzero(d > lim)
 
     def release(self, idx):
-        """Remove the markers `idx` (distinct; e.g. the trapped ones) and their skins, counting them as trapped.
-        Returns per removed marker, in the order of `idx`, (position (., 3), mass [kg], enthalpy [J], momentum
-        [kg m/s] (., 3)) of what its skin held, for the caller to book as a deferred load in the cell holding it."""
+        """Remove the markers `idx` (distinct; the trapped ones, or those left with no area), counting them as
+        trapped; each first gives its skin to the nearest marker that stays (by position), by depth
+        (`Skins.combine(..., by="depth")`, which takes the by-mass rule for a column with no volume of its own): plan
+        03b, planning ruling 6, the metal stays in the layer and the next fill settles both columns. Several released
+        markers giving to one keeper give in turn. Returns, per released marker in the order of `idx`, (its position
+        (., 3), the marker that took its skin as numbered after the release (.,), and the (mass [kg], enthalpy [J],
+        momentum [kg m/s] (., 3)) it gave). Mass, enthalpy and momentum add to round-off. RuntimeError if no marker
+        would stay to take them."""
         idx = np.asarray(idx, dtype=np.int64).reshape(-1)
+        if len(np.unique(idx)) != len(idx):
+            raise ValueError("markers to release must be distinct")
+        stay = np.setdiff1d(np.arange(self.n), idx)
         x = self.x[idx].copy()
-        mass, H, P = self._remove(idx)
+        if not len(idx):
+            return x, np.zeros(0, dtype=np.int64), (np.zeros(0), np.zeros(0), np.zeros((0, 3)))
+        if not len(stay):
+            raise RuntimeError("no marker would stay to take the skins of the {} released".format(len(idx)))
+        keeper = stay[cKDTree(self.x[stay]).query(x)[1]]
+        if self.skins is not None:
+            M, E, P = self.skins.totals()
+            given = M[self.skin_index[idx]], E[self.skin_index[idx]], P[self.skin_index[idx]]
+            todo = np.arange(len(idx))
+            while len(todo):                                # keepers distinct within each round
+                _, first = np.unique(keeper[todo], return_index=True)
+                now = todo[first]
+                self.skins.combine(self.skin_index[keeper[now]], self.skin_index[idx[now]], by="depth")
+                todo = np.setdiff1d(todo, now)
+        else:
+            given = (np.zeros(len(idx)), np.zeros(len(idx)), np.zeros((len(idx), 3)))
+        self._remove(idx)
         self.trapped += len(idx)
-        return x, mass, H, P
+        after = np.searchsorted(stay, keeper)               # the keepers' numbers once the released are gone
+        return x, after, given
 
     def _remove(self, idx):
         """Drop markers and their skins' rows, renumbering the remaining rows. Returns the removed skins' totals."""

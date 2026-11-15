@@ -1,182 +1,147 @@
-"""The step's end of the level set's skinned body (design sections 20.3-20.6; level-set stage 3 Task 9, split from
-`skinbody` in its fix round): the geometry that follows the skins -- the skin base beta moved by the skins' exchange with
-the volume, the outer surface phi and the molten-rigid surface psi rebuilt, the mesh rebuilt where it no longer meets its
+"""The layer and the step's end of the level set's skinned body (design sections 20.3-20.6 and 21; level-set stage 3 Task
+9, split from `skinbody` in its fix round; plan 03b Task 5): the geometry that follows the skins -- the gas surface phi
+moved by each column's volume, the skin base beta derived one skin depth inside it, the division of the layer between
+them, every column filled exactly, the molten-rigid surface psi rebuilt, the mesh rebuilt where it no longer meets its
 refinement targets, and the markers settled on phi -- as `StepEnd`, a mixin of `skinbody.LevelSetSkinBody`, whose
-attributes it reads (mesh, beta, phi, psi, solver, markers, skins, material, base, settings, spacing, band,
-fine_margin, fine_size, cell_floor, rho). The physics is the geometry modules' (`levelset`, `surfaces`, `criteria`,
-`boxmesh`, `markers`) and the shared package's; every number here is a numerical setting.
+attributes it reads (mesh, phi, beta, psi, division, carry, solver, markers, skins, material, base, settings, spacing,
+band, fine_margin, fine_size, cell_floor, rho). The physics is the geometry modules' (`levelset`, `surfaces`,
+`division`, `criteria`, `boxmesh`, `markers`) and the shared package's; every number here is a numerical setting.
 
-Moving beta (`_move_beta`): volume changes dV at points, each a displacement along the normal, extended to the nodes
-within fine_margin of beta from the nearest point; beta - delta reset to a distance and corrected per piece to the
-exact volume target (`levelset.correct_volumes`, the targets summed piece by piece with pairwise sums); then
-`CutThermal.move`, whose enthalpy against what the skins took and gave the caller books as pending heat. A piece other
-than the largest whose target is not positive -- the draws of the markers standing on it ask more than it holds -- is
-used up: its nodes are lifted just outside the metal (PIECE_GONE), so that its old metal and the draws at its points
-fall to the largest piece's target, and the pieces are found again (fix round 5 of Task 9: on the full-size cube's third
-step three markers over a 1.9e-10 m3 sliver of beta drew 2.0e-9 m3). The total stays exact; where the metal is drawn
-from is then the largest piece, not the sliver beneath the markers. Draws that ask more than the largest piece then
-holds raise RuntimeError: nothing is left to give them. A move whose largest displacement exceeds MOVE_ROUND_SHARE of
-fine_margin (a mode change's whole column) is made in equal rounds no longer (Task 10).
+The two surfaces (design 21.4). phi is the evolved level set; beta is always `surfaces.skin_base(phi, H)`, the zero
+contour of phi + H (H = `SkinSettings.depth`), the boundary of the volume's metal (the CutThermal solve runs on
+{beta < 0}). The layer between them is divided among the markers (`division.divide`): column i, marker i's, has the
+cross-section A_i(z) at depth z, its volume per unit depth, and the skins take it as their profile
+(`Skins.set_profile`). A column whose base A_i(H) is at most BASELESS_SHARE of its top A_i(0) has no base (beside a
+convex edge it pinches before H): its bottom is insulated, and it never exchanges metal with the volume.
 
-At the macro step's end (`_rebuild`): phi = `outer_surface(beta, H)` with every node taking the thickness of the marker
-whose base point is nearest; psi = `molten_rigid_surface(phi, T)` with T the volume's field inside beta, each skin's
-cell at the node's depth between beta and phi, and the top cell outside phi; the mesh rebuilt from
-`criteria.make_target` only where it no longer meets the targets (`_needs_rebuild`, with slack: a rebuild at every
-step does not settle), with `CutThermal.remesh` (beta carried, reset and corrected to the exact volume; the remesh's
-enthalpy residual booked as pending heat); phi and psi again; the markers settled (`_settle`): snapped onto phi to
-SNAP_TOL, the trapped and the patchless released (their metal to the volume by a beta move, their momentum to the
-volume), tessellated, their skins re-partitioned (below), split and merged, snapped, tessellated and re-partitioned
-again, the skins regridded and given their markers' areas and capped curvatures.
+Moving phi (`_move_phi`, planning ruling 3 steps 2-5): each column's volume change dV_i -- its cells' change since the
+last fill, plus the density carry below -- is swept by its marker's group (`levelset.move_by_volumes`, each group's
+swept volume exact to MOVE_RTOL; a group asked more than its region holds misses, and the per-piece correction makes up
+what it missed: the controller's ruling T2-e); the groups' swept volumes are checked against phi's change of volume
+(MOVE_SUM_RTOL of the body's: cells no marker may own are in no group); phi is corrected per piece to its metal's
+volume, the skins' cells at their own densities, the volume's metal (beta's) and the carry (`levelset.correct_volumes`);
+beta is derived afresh, and `CutThermal.move` fills the volume's new nodes (an island the old metal's extension cannot
+reach takes the skins' temperature at its nodes, `_temperature_field`), the enthalpy it removed being the caller's to
+book as heat owed to the volume. A piece of phi the move parts from the body with no column and none of the volume's
+metal in it (a speck) is lifted out, its metal the largest piece's. The markers stay where the step began until its end,
+but their areas, the top fluxes', are given afresh on the moved phi at every acceptance (`_own`).
 
-The re-partition (Task 9b, the controller's ruling of 2026-11-12). A tessellation hands the surface out afresh: most of
-a marker's area change at a step end is area passing between markers, not the surface stretching (measured on the test
-cube and the full-size cube, Task 9b's report), and a skin that kept its metal on its new area thickened or thinned and
-moved metal through its base for no reason (a backlog handed down 10 mm at once on the full-size cube). Each
-tessellation (`_tessellate`, which releases the markers it leaves no area and tessellates again) is followed by
-`_repartition`: from each marker's old owners (its position and normal at the tessellation before, `Markers.x_tess`),
-its skin's area and the surface then (the step's old phi for the first, phi as it is for the one after split and
-merge), and the new tessellation, `repartition.transfer_matrix` gives every old column's stretch and the transfer
-T[j, i], the area of old column j that new column i receives; `repartition.apply_transfer` scales each old column by its
-stretch (its top area becomes its old area times its stretch, its metal unchanged: section 9.2's draw or return at its
-base follows in the next part, by the draw to the minimum mass and the hand-down, as for any stretched or gathered
-skin), cuts it into the fractions T[j, i] / (its row's sum) of its profile (`Skins.cut`) and makes each new column the
-hand-over mix (`Skins.combine`) of what it receives. Mass, enthalpy and momentum add to round-off; the volume is
-untouched. Each re-partition is kept in `last_settle` (the transfer, the stretch, the old and new areas); the step's book
-records the share of area passed between markers and the stretch's range (`skinbody.StepBook`).
+Filling the columns (`_fill`, planning ruling 3 step 7). After the division (`_divide`), every column whose cells'
+volume m / rho(T) differs from its own by more than FILL_RTOL is filled, in at most FILL_ROUNDS rounds: first the columns
+with no base, from the neighbour across the boundary they share deepest (preferring a neighbour with a base): a short
+one takes the metal its neighbour holds just above that depth (`Skins.take_between`), as a new bottom cell; an overfull
+one gives its bottom excess into the neighbour's cell at that depth; then every column with a base at its base
+(`Skins.exchange_base`): a short one draws the volume's metal at the volume's temperature at its base point, but at most
+T_rigid (as stage 3's full-depth draw capped it; below), an overfull one returns its bottom cells whatever their phase.
+The cap (plan 03b Task 5, against design 21.3's "at the volume's own temperature"): within a step the markers and their
+top areas stay where it began while the face recedes, and an edge column whose top area came to hold four times its
+column's cross-section at phi emptied within a part under feed removal; the top heat it then passed straight to the
+volume took the metal beneath past T_feed, and every refill at that temperature was removed again at once, so that no
+shorter part could hold it (on the test cube at 6 MW/m2). What the cap leaves of the volume's enthalpy is owed to the
+volume at the base, as any fill's difference is. Metal changes owner, never place: the volume's one density is the
+solid's (design 21.6), so what crosses the base at another density changes the metal's true volume against the
+geometry: that difference, the cells' volume change less the exchanged mass over rho_s, is each column's carry (planning
+ruling 4), a volume change at the top of that column taken into the next move of phi (the next part's, or the step
+end's); so too the cells' volume changes no move of phi took, the mixing of columns at a step end (a Scheil alloy's
+volumes do not add) and of metal passed between columns by a fill. The volume's mass is rho_s (V(beta) + the carry)
+(`skinbody.LevelSetSkinBody.books`), so the books stay exact while phi settles one move late.
 
-The two modes (Task 10, `_modes`, after `_rebuild` in the body's step, not while the body is built, so that a new body
-counts no hold): the thin test at the settled markers (`modes.measures` on phi and psi) and its hysteresis
-(`modes.update`); the markers turning full-depth absorb the volume's metal beneath them down to the stub below psi
-(`modes.to_thin`, filled from the volume's field along each normal); every top-zone skin -- those turning top-zone and
-those the re-partition gave metal below the fine zone (the controller's ruling (a)) -- gives its cells below the fine
-zone to the volume (`modes.to_thick`); one beta move takes both (in rounds, below), the volume's nodes it brings inside
-the metal take the temperature of the metal the nearest handing skin gave (`_fill`), what the volume's enthalpy still
-differs from the skins' booked as pending heat, and the handed cells' momentum goes to the volume; then phi and psi are
-rebuilt, the markers snapped onto phi, tessellated afresh and their skins re-partitioned by the step end's own
-machinery (`_tessellate`, `_repartition`), so that their areas are the moved phi's. phi does move: the volume holds
-metal at the one density of stage 2 (the solid's) while a skin's liquid cells take the liquid's, so a molten column
-handed to the volume shrinks by rho_l / rho_s and phi falls there by the handed depth times 1 - rho_l / rho_s (0.147 for
-AA7075; measured 0.220 mm against 0.274 mm on the test cube's face, `test_a_mode_change_over_melt_moves_phi_by_the_
-density_ratio`), and a column taken back from the volume swells by the same ratio (a known limitation, fix round 1 of
-Task 10). What the second re-partition gives a top-zone skin below its fine zone goes to the volume with the next part's
-return at its base. A full-depth
-skin that received top-zone area takes the thinner column (the draw tops it up). Each marker's mode is the markers' own
-(`Markers.top`), so it survives split, merge, release and re-partition; `mode` gives it by name (MODES).
+At the macro step's end (`_end_step`): the last part's carry moves phi (ruling 4); psi from phi (`_psi`); the mesh
+rebuilt from `criteria.make_target` only where it no longer meets the targets (`_needs_rebuild`, with slack), phi
+carried to it (interpolated, reset keeping its contour, corrected to its pieces' volumes; the controller's ruling T2-b),
+beta derived, and `CutThermal.remesh` (its enthalpy residual booked as heat owed); the markers settled (`_settle`):
+snapped onto phi to SNAP_TOL, the trapped and the patchless released (each giving its skin to the nearest marker by
+depth, `Markers.release`; planning ruling 6), tessellated, their skins re-partitioned (below), split and merged,
+snapped, tessellated and re-partitioned again, the skins regridded and given their markers' areas; then divided and
+filled, and the thin-metal stop (THIN_METAL, design 21.11) checked.
 
-No rigid metal left (the controller's ruling (d)): a step end whose psi finds no rigid metal raises RuntimeError saying
-so (`_check_core`, after the rebuild and again after the mode changes): the molten metal has nothing to stand on, and
-stage 3 holds the volume's melt (no flow solve). What is checked is that no metal below T_rigid is left anywhere; a
-rigid crust over a molten core passes (psi then takes the crust for the core).
+The re-partition (Task 9b, the controller's ruling of 2026-11-12; by mass until plan 03b Task 6, the controller's ruling
+P4). A tessellation hands the surface out afresh: most of a marker's area change at a step end is area passing between
+markers. Each tessellation (`_tessellate`, which releases the markers it leaves no area and tessellates again) is
+followed by `_repartition`: from each marker's old owners (its position and normal at the tessellation before,
+`Markers.x_tess`), its skin's area and the surface then, and the new tessellation, `repartition.transfer_matrix` gives
+every old column's stretch and the transfer T[j, i], the area of old column j that new column i receives;
+`repartition.apply_transfer` cuts each old column into the fractions T[j, i] / (its row's sum) of its profile
+(`Skins.cut`) and makes each new column the hand-over mix (`Skins.combine`) of what it receives. Mass, enthalpy and
+momentum add to round-off; the volume is untouched; the fill that follows settles each column. Each re-partition is kept
+in `last_settle`.
 
-A skin deeper than its radius of curvature (`Skins.dz` raises for all columns if one is): each column's principal
-curvatures are held, either way, at KAPPA_DEPTH_SHARE over its flat depth (`cap_curvature`), so the cross-section
-A0 (1 - k1 z)(1 - k2 z) stays positive to about three times the column's depth; only the columns over the cap change.
-A surface bending more tightly than its skin's depth is sub-grid (design 20.6, known limitation 1); the markers keep
-phi's curvature for the capillary push."""
-import math
+No rigid metal left (the controller's ruling (d) of stage 3 Task 10): a step end whose psi finds no rigid metal raises
+RuntimeError saying so (`_check_core`): the molten metal has nothing to stand on, and stage 3 holds the volume's melt
+(no flow solve). What is checked is that no metal below T_rigid is left anywhere; a rigid crust over a molten core
+passes (psi then takes the crust for the core)."""
 from collections import namedtuple
 
 import numpy as np
 from scipy.spatial import cKDTree
 
-from . import modes
 from .boxmesh import build
 from .criteria import finite_values, kappa_max_nodal, make_target
-from .cutcell import inside_volumes
-from .levelset import correct_volumes, pieces, redistance
-from .markers import NEWTON_REACH
+from .cutcell import inside_volumes, patches
+from .division import _marker_pieces, divide
+from .levelset import correct_volumes, move_by_volumes, pieces, redistance
+from .markers import NEWTON_REACH, OPPOSED_NORMALS, OWN_SHARE, owned
 from .repartition import SAMPLE_SHARE, apply_transfer, surface_samples, transfer_matrix
-from .surfaces import molten_rigid_surface, outer_surface
+from .surfaces import molten_rigid_surface, skin_base
 from .transfer import interpolate, locate
 
-KAPPA_DEPTH_SHARE = 0.1           # a column's principal curvature at most this over its flat depth (module docstring)
 SNAP_TOL = 1.0e-10                # m: the markers are snapped onto phi until none is farther from its zero contour
 SNAP_ROUNDS = 20                  # rounds of `Markers.snap` at most
-PIECE_ROUNDS = 8                  # rounds at most in which a move's draws use up pieces of beta (`_move_beta`)
-PIECE_GONE = 1.0e-9               # m: the level set a used-up piece's nodes are lifted to, just outside the metal
 LEAD = 0.6e-3                     # m: the fine region's lead beyond the margin (criteria.make_target's default)
 REGION_SLACK = 0.5                # fine cells: a rebuild is needed once a leaf is too coarse for a lead this much shorter
 CURVATURE_SLACK = 2.0             # or once a leaf is more than this times its curvature's target size
 COARSEN_SHARE = 0.1               # of the metal's volume: leaves that could be COARSEN_SIZES times coarser before the mesh
-MODES = ("full", "top")           # a marker's skin: full-depth (Task 9, everywhere) or top-zone (Task 10)
 COARSEN_SIZES = 4.0               # is rebuilt (two sizes: the closure's grading keeps one-size steps finer than asked)
-
 BARE_ROUNDS = 4                   # tessellations at most, each releasing the markers the last left no area
                                   # (`_tessellate`)
-MOVE_ROUND_SHARE = 0.5            # of fine_margin: a base move whose largest displacement is longer is made in rounds no
-                                  # longer (`_move_beta`; Task 10: a mode change moves beta by a whole column at once, and
-                                  # the displacement reaches only the nodes within fine_margin of beta)
-FILL_SLACK = 0.5                  # fine cells: a node the move brought inside the metal takes a handed column's profile
-                                  # within this beyond the column's span along its normal (`_fill`)
+FILL_RTOL = 1e-12                 # of a column's volume: a column whose cells' volume is within this of it is full
+                                  # (plan 03b Task 5; the books' mass tolerance, so that what a full column leaves is
+                                  # within the books)
+FILL_ROUNDS = 8                   # rounds of the fill at most (each a pass over the columns with no base and one over
+                                  # those with one; the second settles the property table's round-off of the first)
+BASELESS_SHARE = 1e-6             # a column whose base A(H) is at most this share of its top A(0) has no base (plan 03b
+                                  # Task 5: its column pinches before H beside a convex edge)
+PIECE_ROUNDS = 8                  # rounds at most in which a move leaves pieces of phi with no metal (`_move_phi`)
+PIECE_GONE = 1.0e-9               # m: the level set such a piece's nodes are lifted to, just outside the metal
+AREA_FLOOR = 1e-6                 # of the target spacing squared: the least top area a marker is given within a step
+                                  # (`_own`; one whose part of phi the move took keeps this sliver until the step end
+                                  # releases it, so that the runoff's operators, over the top areas, stay finite)
+MOVE_SUM_RTOL = 1e-12             # of the body's volume: the groups' swept volumes must sum to phi's change of volume to
+                                  # this (the controller's ruling 3 of Task 5's dispatch)
 NO_CORE = ("the body has no rigid metal left: psi finds no metal below T_rigid ({:.1f} K) anywhere in it, so its molten "
            "metal has nothing to stand on (it has melted through); that is beyond level-set stage 3, which holds the "
            "volume's melt (no flow solve)")
+THIN_METAL = "metal thinner than twice the skin depth"   # the message's start (design section 21.11)
 
 Repartition = namedtuple("Repartition", "transfer stretch old_area area")   # one re-partition of a step end
 
 
-def cap_curvature(skins, kappa, depth=None):
-    """Each column's principal curvatures (n, 2) [1/m] held within KAPPA_DEPTH_SHARE over the column's flat depth either
-    way (module docstring), `depth` [m] (n,) or the skins' flat depth sum m / (rho(T) A0), at least the stub (fix round
-    3: a column runoff had all but emptied kept phi's sharp curvature and the draw then refilled it to the stub past
-    1/kappa); columns within it are unchanged. Convex curvatures are capped so that the cross-section stays positive; concave ones too, since a column
-    widening with depth raises its own minimum mass, rho_s A(z_bottom) stub, faster than its mass where |k| stub > 1, so
-    that its draws would run away (fix round 1 of Task 9)."""
-    kappa = np.asarray(kappa, dtype=float)
-    if depth is None:
-        T, valid = skins.T(), skins.valid
-        vol = np.zeros(skins.m.shape)
-        vol[valid] = skins.m[valid] / skins.density(T[valid])
-        depth = vol.sum(axis=1) / skins.area
-    depth = np.maximum(np.asarray(depth, dtype=float), skins.settings.stub)   # the draw refills an emptied column
-    limit = KAPPA_DEPTH_SHARE / depth
-    return np.clip(kappa, -limit[:, None], limit[:, None])
-
-
-def handed_profile(props, rho, x, base, normal, A_b, m_c, H_c, slack=0.0, clamp=False):
-    """The temperature [K] at the points x (k, 3) of a column of cells handed to the volume (Task 10's fill, shared with
-    the seed of Task 11's item 3): each point's own column, given per point -- its base point `base` (k, 3), unit `normal`
-    (k, 3), base area `A_b` (k,) [m2], cells (mass, enthalpy) `m_c`, `H_c` (k, K) in place -- fills the span from its base
-    out along its normal of its mass over `rho` and A_b, deepest cell first; a point takes the cell holding the share of
-    the column's mass below its distance out along the normal. Returns (T (k,), whether each point lies within `slack`
-    [m] of its span); with `clamp` every point with handed metal takes the span's nearest end (and counts as within).
-    Uses the skins' property table `props` (its `temperature_from_enthalpy`)."""
-    total = m_c.sum(axis=1)
-    span = np.divide(total, rho * A_b, out=np.zeros_like(total), where=A_b > 0.0)
-    s = np.einsum("ij,ij->i", x - base, normal)
-    if clamp:
-        s = np.clip(s, 0.0, span)
-    take = (total > 0.0) & (s >= -slack) & (s <= span + slack)
-    T = np.full(len(x), np.nan)
-    i = np.flatnonzero(take)
-    if not len(i):
-        return T, take
-    f = np.clip(s[i] / span[i], 1e-12, 1.0 - 1e-12)          # the share of the handed mass below the point
-    up = np.cumsum(m_c[i][:, ::-1], axis=1) / total[i][:, None]     # from the deepest cell up
-    j = np.minimum((up < f[:, None]).sum(axis=1), m_c.shape[1] - 1)
-    col = m_c.shape[1] - 1 - j
-    empty = m_c[i, col] <= 0.0                                # rounding past the shallowest handed cell: that cell
-    col[empty] = np.argmax(m_c[i[empty]] > 0.0, axis=1)
-    T[i] = props.temperature_from_enthalpy(H_c[i, col] / m_c[i, col])
-    return T, take
-
-
 class StepEnd:
-    """The step's end of `LevelSetSkinBody` (module docstring). Every method that defers heat to the volume adds its
-    size to the step's tally (`tally.move` for the moves, `tally.remesh` for the remesh), and a release adds the released
-    skins' momentum to `tally.to_volume`."""
+    """The layer and the step's end of `LevelSetSkinBody` (module docstring). Every method that defers heat to the
+    volume adds its size to the step's tally (`tally.move` for the moves and fills, `tally.remesh` for the remesh)."""
 
-    @property
-    def mode(self):
-        """Each marker's mode by name (n,): MODES[0] full-depth, MODES[1] top-zone (`Markers.top`)."""
-        return np.where(self.markers.top, MODES[1], MODES[0])
-
+    # -- checks -------------------------------------------------------------------------------------------------------
     def _check_core(self, psi):
         """RuntimeError (NO_CORE) when psi finds no rigid metal: no node of the metal below T_rigid anywhere (a rigid crust
         over a molten core passes: `surfaces.molten_rigid_surface` then takes it for the core)."""
         if not np.any(np.asarray(psi) < 0.0):
             raise RuntimeError(NO_CORE.format(self.material.T_rigid))
 
+    def _check_thin(self):
+        """RuntimeError starting with THIN_METAL where two columns whose normals oppose share a boundary in the layer
+        (`Division.opposed`, design section 21.11: the metal there is thinner than twice the skin depth, or an edge is
+        sharper than about 60 degrees), naming the place; the thin case is designed later."""
+        d = self.division
+        if d is None or not d.opposed.any():
+            return
+        e = np.flatnonzero(d.opposed)
+        a, b = self.markers.x[d.i[e[0]]] * 1e3, self.markers.x[d.j[e[0]]] * 1e3
+        raise RuntimeError("{}: {} pair(s) of columns whose normals oppose (n_i . n_j < {}) share a boundary in the "
+                           "layer, the first between the markers at ({:.3f}, {:.3f}, {:.3f}) and ({:.3f}, {:.3f}, {:.3f}) "
+                           "mm (design section 21.11; the skin depth is {:.3g} mm, and the thin case is designed "
+                           "later)".format(THIN_METAL, len(e), OPPOSED_NORMALS, *a, *b, self.settings.depth * 1e3))
+
+    # -- fields ---------------------------------------------------------------------------------------------------------
     def _target(self, mesh, phi, psi, curvature=True, lead=LEAD):
         band = 2.0 * self.base.h0
         if curvature:
@@ -186,32 +151,34 @@ class StepEnd:
         return make_target(mesh, phi, psi, kp, ks, fine=self.fine_size, margin=self.fine_margin, lead=lead,
                            floor=self.cell_floor)
 
+    def _reset(self, mesh, phi):
+        """phi reset to a signed distance within the band, keeping its zero contour (`redistance(..., keep=True)`; the
+        controller's ruling T2-b: the plain reset rounds convex edges at every call)."""
+        return redistance(mesh, phi, band=self.band, keep=True)
+
     def _row_marker(self):
         """Each skin row's marker (n,)."""
         out = np.empty(self.skins.n, dtype=np.int64)
         out[self.markers.skin_index] = np.arange(self.markers.n)
         return out
 
-    def _bases(self):
-        """Each skin row's base point [m] (n, 3), x - H n (Ruling 1)."""
-        mk, sk = self.markers, self.skins
-        r = self._row_marker()
-        return mk.x[r] - sk.thickness()[:, None] * mk.normal[r]
+    def _row_normals(self):
+        """Each skin row's marker's unit normal (n, 3)."""
+        out = np.zeros((self.skins.n, 3))
+        out[self.markers.skin_index] = self.markers.normal
+        return out
 
-    def _thickness_nodal(self):
-        """The skins' thickness [m] at every node, from the marker whose base point is nearest (design 20.3)."""
-        _, near = cKDTree(self._bases()).query(self.mesh.points)
-        return self.skins.thickness()[near]
+    def _bases(self):
+        """Each skin row's base point [m] (n, 3), x - H n: one skin depth below its marker along its normal."""
+        mk = self.markers
+        r = self._row_marker()
+        return mk.x[r] - self.settings.depth * mk.normal[r]
 
     def _sync(self):
-        """The skins take their markers' areas and (capped) curvatures."""
+        """The skins take their markers' areas (the top fluxes' areas, the controller's ruling T1-g) and curvatures."""
         mk, sk = self.markers, self.skins
         sk.area[mk.skin_index] = mk.area
         sk.kappa[mk.skin_index] = mk.kappa
-        sk.kappa = cap_curvature(sk, sk.kappa)
-
-    def _cap(self):
-        self.skins.kappa = cap_curvature(self.skins, self.skins.kappa)
 
     def _temperature_field(self, phi):
         """The temperature at every node: the volume's inside beta; between beta and phi each skin's cell at the node's
@@ -245,144 +212,313 @@ class StepEnd:
         keep = w > 0.0
         self.add_pending(points[keep], J * w[keep])
 
-    def _move_beta(self, points, dV, disp, tally, given=None, kind="part"):
-        """Move beta by the volume changes dV [m3] at the points [m] (k, 3), each displaced along its normal by disp [m]
-        (outward positive), extended to the nodes within fine_margin of beta from the nearest point; reset, corrected per
-        piece to the exact volume target, and `CutThermal.move`. `given` (normals (k, 3), base areas (k,) [m2], cells
-        (mass, enthalpy) (k, K) in place): the metal the points' columns hand the volume, whose profile seeds the
-        volume's move where its new nodes form an island the old metal does not reach (`_seed`; stage 3 Task 11, item 3;
-        `tally.islands` counts the nodes so seeded). A move whose largest displacement exceeds
-        MOVE_ROUND_SHARE of fine_margin is made in that many equal rounds from the same points (a node beyond
-        fine_margin would not follow a longer move, and the volume correction would make up the rest elsewhere: on the
-        test cube a 3.2 mm inward move of one face's bases went 2.1 mm in one round, 3.2 mm in four; it still moved a
-        side face 0.35 mm, the nearest-point extension reaching nodes of the side face nearest the moved bases, and
-        rounds from points carried with the base pulled the side faces 2 mm in). The largest share of its target by which
-        the extension missed a piece's volume before the volume correction made it up is kept in `tally.correction` (the
-        step's largest) and in `tally.corrections` as an entry {"kind": `kind`, "worst": that share, "body": the body's,
-        the largest piece's, share}, one entry per round of a move made in rounds (stage 3 Task 11's review, I3; `kind`
-        "part", "modes" or "release", what made the move).
-        Returns the enthalpy the move removed from the volume [J]."""
-        rounds = int(np.ceil(np.abs(disp).max(initial=0.0) / (MOVE_ROUND_SHARE * self.fine_margin) - 1e-12))
-        if rounds > 1:
-            return math.fsum(self._move_beta(points, dV / rounds, disp / rounds, tally, given, kind)
-                             for _ in range(rounds))
-        mesh, beta = self.mesh, self.beta
-        new = beta.copy()
-        if np.any(disp != 0.0):
-            sel = np.flatnonzero(np.abs(beta) < self.fine_margin)
-            _, near = cKDTree(points).query(mesh.points[sel])
-            new[sel] = beta[sel] - disp[near]
-            new = redistance(mesh, new, band=self.band)
-        for _ in range(PIECE_ROUNDS):
-            label, n = pieces(mesh, new)
-            if n == 0:
-                raise RuntimeError("the skin base has no metal left after a move")
-            targets = self._piece_targets(beta, new, label, n, points, dV)
-            used = np.flatnonzero(targets[1:] <= 0.0) + 1
-            if not len(used):
-                break
-            # a piece the draws use up leaves, and what they ask beyond it the largest piece gives (fix round 5)
-            gone = np.unique(mesh.tets[np.isin(label, used)])
-            new[gone] = np.maximum(new[gone], PIECE_GONE)
-            tally.pieces_used += len(used)
+    # -- the layer: phi moved, beta derived, the division and the fill ----------------------------------------------
+    def _needs_move(self, dV):
+        """Whether the volume changes dV [m3] (n,) per row ask phi to move: some column's change is beyond FILL_RTOL of
+        its volume (a column with no volume, beyond none)."""
+        V = self.skins.column_volume()
+        return bool(np.any(np.abs(dV) > FILL_RTOL * V))
+
+    def _cells_change(self):
+        """Each row's volume change [m3] (n,) since its column was last filled: its cells' volume m / rho(T) less its
+        column's volume (planning ruling 3, step 1), plus its carry (ruling 4)."""
+        sk = self.skins
+        return sk.cells_volume() - sk.column_volume() + self.carry
+
+    def _piece_targets(self, phi, beta_old, phi_old):
+        """Each piece of phi's metal volume [m3], label and count: the cells' volume (m / rho(T)) and the carry of the
+        rows whose columns it holds, and beta_old's metal in its cells (where outside every piece, the largest's). A
+        row's piece is the piece of phi that holds most of the metal its column's piece of `phi_old` held (the division's
+        pieces, `Division.piece`, numbered as `levelset.pieces(phi_old)`): within a step the markers stand where it
+        began, off the moved phi, and placed by position one could fall to a speck the move parted off, which would then
+        be filled with its column."""
+        mesh, mk, sk = self.mesh, self.markers, self.skins
+        label, n = pieces(mesh, phi)
+        if n == 0:
+            raise RuntimeError("the gas surface holds no metal after a move")
+        old, n_old = pieces(mesh, phi_old)
+        v_new = inside_volumes(mesh, phi)
+        image = np.zeros(max(n_old, 1), dtype=np.int64)          # each old piece's new piece: where most of it lies
+        for q in range(n_old):
+            at = (old == q) & (label >= 0)
+            if at.any():
+                image[q] = int(np.argmax(np.bincount(label[at], v_new[at], minlength=n)))
+        if self.division is not None and len(self.division.piece) == mk.n:
+            was = self.division.piece
         else:
-            raise RuntimeError("pieces kept being used up by a move after {} rounds".format(PIECE_ROUNDS))
-        if targets[0] <= 0.0:                              # no piece is left to give what the draws ask
-            raise RuntimeError("the draws ask {:.3e} m3 more than the skin base's largest piece holds".format(-targets[0]))
+            was = _marker_pieces(mesh, mk.x, old, patches(mesh, phi_old))
+        piece = image[np.clip(was, 0, max(n_old - 1, 0))]
+        held = (sk.cells_volume() + self.carry)[mk.skin_index]
+        v_beta = inside_volumes(mesh, beta_old)
+        where = np.where(label >= 0, label, 0)
+        # summed piece by piece with numpy's pairwise sums (bincount's running sum lost 1e-13 of a move's volume)
+        t = np.array([held[piece == p].sum() + v_beta[where == p].sum() for p in range(n)])
+        return t, label, n
+
+    def _move_phi(self, dC, tally, kind):
+        """phi moved by the rows' volume changes dC [m3] (n,) and their carry, corrected per piece, beta derived and the
+        volume moved to it (module docstring; planning ruling 3, steps 2-5); the carry is taken. `kind` labels the
+        correction's entry in `tally.corrections` ("part", "carry"). Returns the enthalpy the volume's move removed
+        [J], for the caller to book."""
+        mesh, mk, sk = self.mesh, self.markers, self.skins
+        phi0, beta0 = self.phi, self.beta
+        dV = np.asarray(dC, dtype=float) + self.carry
+        V0 = inside_volumes(mesh, phi0)
+        moved = move_by_volumes(mesh, phi0, mk.x, mk.normal, dV[mk.skin_index], band=self.band)
+        V1 = inside_volumes(mesh, moved.phi)
+        change, swept = (V1 - V0).sum(), moved.swept.sum()
+        if abs(swept - change) > MOVE_SUM_RTOL * V0.sum():
+            raise RuntimeError("the groups of phi's move swept {:.6e} m3 but phi's volume changed by {:.6e} m3, more "
+                               "than {:.0e} of the body's volume apart: cells no marker may own changed".format(
+                                   swept, change, MOVE_SUM_RTOL))
+        tally.move_miss = max(tally.move_miss, float(moved.miss.max(initial=0.0)))
+        phi = moved.phi
+        for _ in range(PIECE_ROUNDS):                       # a speck the move parted from the body (no marker on it and
+            targets, label, _ = self._piece_targets(phi, beta0, phi0)    # none of the volume's metal) leaves, its
+            gone = np.flatnonzero(targets[1:] <= 0.0) + 1                # metal the largest piece's (stage 3 Task 9's
+            if not len(gone):                                            # rule for used-up pieces of beta)
+                break
+            nodes = np.unique(mesh.tets[np.isin(label, gone)])
+            phi = phi.copy()
+            phi[nodes] = np.maximum(phi[nodes], PIECE_GONE)
+            tally.pieces_used += len(gone)
+        else:
+            raise RuntimeError("pieces of phi kept being left with no metal by a move after {} rounds".format(
+                PIECE_ROUNDS))
+        if targets[0] <= 0.0:
+            raise RuntimeError("the gas surface's largest piece has no metal left after a move ({:.3e} m3)".format(
+                targets[0]))
         misses = []
-        new, worst = correct_volumes(mesh, new, label, targets, misses=misses)
+        phi, worst = correct_volumes(mesh, phi, label, targets, misses=misses)
         tally.correction = max(tally.correction, worst)
-        if hasattr(tally, "corrections"):                  # each move's miss before the correction (the review's I3)
-            tally.corrections.append({"kind": kind, "worst": float(worst), "body": float(misses[0])})
-        seed = None if given is None else (lambda nodes: self._seed(beta, new, points, given, nodes))
-        removed = self.solver.move(new, seed=seed)
+        tally.corrections.append({"kind": kind, "worst": float(worst), "body": float(misses[0])})
+        self.phi = phi
+        self.carry = np.zeros(sk.n)
+        beta = skin_base(mesh, phi, self.settings.depth, band=self.band)
+        removed = self.solver.move(beta, seed=lambda nodes: self._temperature_field(phi0)[nodes])
         tally.islands += getattr(self.solver, "seeded", 0)
-        self.beta = new
+        self.beta = beta
         return removed
 
-    def _seed(self, old, new, points, given, nodes):
-        """The temperatures [K] (len(nodes),) a move's new `nodes` take where the old metal's extension does not reach
-        them (an island; `CutThermal.move` calls it with those nodes only, so that it is evaluated for no others: stage 3
-        Task 11's review, M7), nan where it gives none: each node outside the old metal and within fine_margin of the
-        new takes the profile of the handing column (`given`, as `_move_beta`'s) whose point is nearest among those that
-        hand metal, at the node's distance out from it along its normal, held within the column's span
-        (`handed_profile`)."""
-        normal, A_b, (m_c, H_c) = given
-        nodes = np.asarray(nodes, dtype=np.int64)
-        seed = np.full(len(nodes), np.nan)
-        rows = np.flatnonzero(m_c.sum(axis=1) > 0.0)
-        at = np.flatnonzero((old[nodes] >= 0.0) & (new[nodes] < self.fine_margin))
-        if not len(rows) or not len(at):
-            return seed
-        x = self.mesh.points[nodes[at]]
-        _, k = cKDTree(points[rows]).query(x)
-        r = rows[k]
-        T, _ = handed_profile(self.skins.props, self.rho, x, points[r], normal[r], A_b[r], m_c[r], H_c[r], clamp=True)
-        seed[at] = T
-        return seed
+    def _own(self):
+        """The markers' areas, and so the skins' top areas (`_sync`), afresh on phi as it now is: the area of phi each
+        marker owns (`markers.owned`, as `Markers.tessellate` gives them), the markers where they stand. Within a step
+        phi moves by its columns' volumes while the markers stay where the step began (they settle at its end); the top
+        fluxes follow phi (plan 03b Task 5: on the test cube at 6 MW/m2 with the liquid fed off, the edges receded up to
+        1.9 mm within one 0.5 s step, and an edge marker's step-start area came to be 40 times its column's
+        cross-section at phi, its heat poured into a column that was no longer there). At least AREA_FLOOR of the
+        spacing squared each."""
+        mk = self.markers
+        P = patches(self.mesh, self.phi)
+        area = np.asarray(owned(mk.x, P, OWN_SHARE * mk.spacing).sum(axis=1)).ravel() if len(P.area) else np.zeros(mk.n)
+        mk.area = np.maximum(area, AREA_FLOOR * mk.spacing ** 2)
+        self._sync()
 
-    def _piece_targets(self, old, new, label, n, points, dV):
-        """The exact volume of each piece of `new` [m3]: the old metal in its cells (the old metal left in no piece goes
-        to the largest) plus the changes dV at the points that lie in it (the largest's where outside every piece)."""
-        mesh = self.mesh
-        v_old = inside_volumes(mesh, old)
-        cell, _ = locate(mesh, points)
-        where = np.maximum(label[cell], 0)
-        # summed piece by piece with numpy's pairwise sums: bincount's running sum lost 1e-13 of the volume a move
-        t = np.array([v_old[label == p].sum() + dV[where == p].sum() for p in range(n)])
-        t[0] += v_old[label < 0].sum()
-        return t
+    def _divide(self, tally):
+        """The layer divided among the markers (`division.divide`) and the skins given its profile; the largest
+        departure of a piece's closure factor from one into `tally.layer_factor`."""
+        mk, sk = self.markers, self.skins
+        d = divide(self.mesh, self.phi, self.settings.depth, mk.x, mk.normal)
+        area = np.zeros((sk.n, len(d.levels)))
+        area[mk.skin_index] = d.area
+        sk.set_profile(d.levels, area)
+        self.division = d
+        if len(d.factor):
+            tally.layer_factor = max(tally.layer_factor, float(np.abs(d.factor - 1.0).max()))
 
-    def _rebuild(self, tally, check_core=False):
-        """phi and psi, the mesh rebuilt from the refinement targets with the solve carried to it, then phi and psi on
-        it and the markers settled (module docstring). With `check_core`, a psi with no rigid metal raises
-        (`_check_core`). Returns whether the mesh stayed as it was."""
+    def _baseless(self):
+        """Each row's column has no base (n,) bool: its division base at most BASELESS_SHARE of its top."""
+        d, mk = self.division, self.markers
+        out = np.zeros(self.skins.n, dtype=bool)
+        out[mk.skin_index] = d.base <= BASELESS_SHARE * d.area[:, 0]
+        return out
+
+    def _neighbours(self, row, base):
+        """The neighbour a column with no base fills from (`_fill`): (its row, the depth [m] of the deepest level at
+        which they share a boundary), preferring one with a base (`base` (n,) bool), then the deepest, then the
+        longest there; None for a column that shares no boundary."""
+        d, mk = self.division, self.markers
+        m = self._row_marker()[row]
+        e = np.flatnonzero((d.i == m) | (d.j == m))
+        if not len(e):
+            return None
+        L = d.length[e]
+        some = L > 0.0
+        deepest = np.where(some.any(axis=1), L.shape[1] - 1 - np.argmax(some[:, ::-1], axis=1), -1)
+        ok = deepest >= 0
+        if not ok.any():
+            return None
+        e, deepest = e[ok], deepest[ok]
+        other = np.where(d.i[e] == m, d.j[e], d.i[e])
+        rows = mk.skin_index[other]
+        best = np.lexsort((-d.length[e, deepest], -deepest, ~base[rows]))[0]
+        return int(rows[best]), float(d.levels[deepest[best]])
+
+    def _give_at_depth(self, row, z, m, H, P):
+        """Metal (m [kg], H [J], P [kg m/s] (3,)) joins the cell of column `row` that spans the depth z [m] (its bottom
+        cell below its cells, a new cell in an empty column), mixing with it: books exact."""
+        sk = self.skins
+        if sk.count[row] == 0:
+            sk._append_bottom([row], m, H, P / m)
+            return
+        z_bot = np.cumsum(sk.dz()[row, :sk.count[row]])
+        k = int(min(np.searchsorted(z_bot, z), sk.count[row] - 1))
+        P0 = sk.m[row, k] * sk.U[row, k]
+        sk.m[row, k] += m
+        sk.H[row, k] += H
+        sk.U[row, k] = (P0 + P) / sk.m[row, k]
+
+    def _fill_baseless(self, rows, miss, base):
+        """The columns `rows` with no base filled from their neighbours (module docstring): each column's miss [m3]
+        (its volume less its cells', positive short) taken from, or given to, the neighbour at the depth of their
+        deepest shared level. Returns each row's volume change no exchange with the volume made (n,) [m3] (the mixing
+        the metal moved between columns makes; the carry's)."""
+        sk = self.skins
+        mixed = np.zeros(sk.n)
+        for r, d in zip(rows, miss):
+            near = self._neighbours(r, base)
+            if near is None:
+                continue
+            j, z = near
+            v0 = sk.cells_volume()
+            if d > 0.0:                                     # short: the neighbour's metal just above that depth
+                Vz = float(sk._volume_at(np.array([[z]]), [j])[0, 0])
+                top = max(Vz - d, 0.0)
+                za, zb = sk._depth_of(np.array([[top, top + d]]), [j])[0]
+                mass, H, P = (a[0] for a in sk.take_between([j], za, zb))
+                if mass <= 0.0:
+                    continue
+                sk._append_bottom([r], mass, H, P / mass)
+            else:                                           # overfull: its bottom excess into the neighbour's cell
+                V = float(v0[r])
+                za = float(sk._depth_of(np.array([[max(V + d, 0.0)]]), [r])[0, 0])
+                below = 2.0 * float(sk.dz()[r].sum()) + self.settings.depth       # beyond the cells' bottom
+                mass, H, P = (a[0] for a in sk.take_between([r], za, below))
+                if mass <= 0.0:
+                    continue
+                self._give_at_depth(j, z, mass, H, P)
+            v1 = sk.cells_volume()
+            mixed[j] += (v1[r] - v0[r]) + (v1[j] - v0[j])   # what the pair's cells gained between them (mixing)
+        return mixed
+
+    def _fill(self, tally):
+        """Every column filled to its volume (module docstring; planning ruling 3, step 7): the columns with no base
+        from their neighbours, then those with one at their bases, in at most FILL_ROUNDS rounds; each row's carry
+        takes its cells' volume change less the mass the volume gave it over rho_s. Counts in `tally`: `drawn`,
+        `handed` [kg] the base exchange each way, `to_volume` [kg m/s] the returned cells' momentum (the held volume
+        takes it), `fill_miss` the largest miss left as a share of its column's volume, `baseless` the columns with no
+        base. Returns the enthalpy [J] the skins took from the volume (negative where they returned more), for the
+        caller to book as heat owed."""
+        sk = self.skins
+        V_col = sk.column_volume()
+        base = ~self._baseless()
+        tally.baseless = int((~base).sum())
+        T_draw = np.minimum(interpolate(self.mesh, self.solver.T, self._bases()), self.material.T_rigid)
+        taken = 0.0
+        for _ in range(FILL_ROUNDS):
+            miss = V_col - sk.cells_volume()
+            need = np.abs(miss) > FILL_RTOL * V_col
+            if not need.any():
+                break
+            lone = np.flatnonzero(need & ~base)
+            if len(lone):
+                self.carry += self._fill_baseless(lone, miss[lone], base)
+            miss = V_col - sk.cells_volume()
+            rows = np.flatnonzero((np.abs(miss) > FILL_RTOL * V_col) & base)
+            if not len(rows):
+                continue
+            v0 = sk.cells_volume()[rows]
+            d = miss[rows]
+            dV = np.where(d > 0.0, d * sk.density(T_draw[rows]) / sk.rho_s, d)    # a draw fills d at T_draw's density
+            ex = sk.exchange_base(rows, dV, T_draw[rows])
+            self.carry[rows] += (sk.cells_volume()[rows] - v0) - ex.mass / sk.rho_s
+            tally.drawn += float(ex.mass[ex.mass > 0.0].sum())
+            tally.handed -= float(ex.mass[ex.mass < 0.0].sum())
+            tally.to_volume -= ex.P.sum(axis=0)
+            taken += float(ex.H.sum())
+        miss = np.abs(V_col - sk.cells_volume())
+        share = np.divide(miss, V_col, out=np.where(miss > 0.0, np.inf, 0.0), where=V_col > 0.0)
+        tally.fill_miss = max(tally.fill_miss, float(share.max(initial=0.0)))
+        return taken
+
+    def _layer(self, dC, tally, kind):
+        """The layer's acceptance (planning ruling 3, steps 2-7): phi moved by the rows' volume changes dC [m3] and
+        their carry (`_move_phi`), the layer divided and the columns filled; the heat the move and the fill leave owed to
+        the volume booked at the bases, in proportion to each row's volume change."""
+        dV = np.asarray(dC, dtype=float) + self.carry
+        removed = self._move_phi(dC, tally, kind)
+        self._own()
+        self._divide(tally)
+        owed = removed - self._fill(tally)
+        tally.move += abs(owed)
+        self._book_move(self._bases(), np.abs(dV), owed)
+
+    # -- the step's end -----------------------------------------------------------------------------------------------
+    def _end_step(self, tally, surface=None, check_core=True):
+        """The macro step's end (module docstring): the last part's carry taken by phi (planning ruling 4), then
+        `_rebuild` from the surface the markers' areas were last given on (`surface`, the samples of phi as it is by
+        default: the parts give the areas afresh as phi moves, `_own`)."""
+        if self._needs_move(self.carry):
+            weight = np.abs(self.carry)
+            owed = self._move_phi(np.zeros(self.skins.n), tally, "carry")
+            tally.move += abs(owed)
+            self._book_move(self._bases(), weight, owed)
+            self._own()
+        return self._rebuild(tally, self._samples() if surface is None else surface, check_core=check_core)
+
+    def _rebuild(self, tally, surface, check_core=False):
+        """psi, the mesh rebuilt from the refinement targets with phi carried to it and the solve remeshed, the markers
+        settled, the layer divided and filled, the thin-metal stop and psi again (module docstring). `surface`: the
+        samples of the surface the markers' areas were last given on. With `check_core`, a psi with no rigid metal
+        raises (`_check_core`). Returns whether the mesh stayed as it was."""
         mesh = self.mesh
-        surface = self._samples()                          # the surface the markers' areas were given on
-        phi = outer_surface(mesh, self.beta, self._thickness_nodal(), band=self.band)
-        psi = self._psi(phi)
+        psi = self._psi(self.phi)
         if check_core:
             self._check_core(psi)
-        target = self._target(mesh, phi, psi)
-        same = not self._needs_rebuild(target, self._target(mesh, phi, psi, False, LEAD - REGION_SLACK * self.fine_size))
+        target = self._target(mesh, self.phi, psi)
+        same = not self._needs_rebuild(target, self._target(mesh, self.phi, psi, False, LEAD - REGION_SLACK *
+                                                            self.fine_size))
         if not same:
             new = build(self.base, target)
-            beta = redistance(new, interpolate(mesh, self.beta, new.points), band=self.band)
-            v_old = inside_volumes(mesh, self.beta)
-            label, n = pieces(new, beta)
+            phi = self._reset(new, interpolate(mesh, self.phi, new.points))
+            v_old = inside_volumes(mesh, self.phi)
+            label, n = pieces(new, phi)
             if n == 0:
-                raise RuntimeError("the skin base has no metal on the rebuilt mesh")
+                raise RuntimeError("the gas surface has no metal on the rebuilt mesh")
             targets = np.zeros(n)
             targets[0] = v_old.sum()
             if n > 1:                                      # the pieces share the old metal by their volumes here
-                v_new = inside_volumes(new, beta)
+                v_new = inside_volumes(new, phi)
                 share = np.array([v_new[label == p].sum() for p in range(n)])
                 targets = share * (v_old.sum() / share.sum())
             misses = []
-            beta, worst = correct_volumes(new, beta, label, targets, misses=misses)
+            phi, worst = correct_volumes(new, phi, label, targets, misses=misses)
             tally.correction = max(tally.correction, worst)
-            if hasattr(tally, "corrections"):              # the remesh's own entry (Task 11's re-review, minor item 1)
-                tally.corrections.append({"kind": "remesh", "worst": float(worst), "body": float(misses[0])})
+            tally.corrections.append({"kind": "remesh", "worst": float(worst), "body": float(misses[0])})
+            beta = skin_base(new, phi, self.settings.depth, band=self.band)
             E0 = self.solver.energy()
             self.solver.remesh(new, beta)
-            self.mesh, self.beta = new, beta
+            self.mesh, self.phi, self.beta = new, phi, beta
             owed = E0 - self.solver.energy()
             tally.remesh += abs(owed)
             self._book_move(self._bases(), self.skins.area, owed)
-            phi = outer_surface(new, self.beta, self._thickness_nodal(), band=self.band)
-        self.phi = phi
-        self.psi = self._psi(phi)
         self._settle(tally, surface)
+        self._divide(tally)
+        owed = -self._fill(tally)
+        tally.move += abs(owed)
+        self._book_move(self._bases(), self.skins.area, owed)
+        self._check_thin()
+        self.psi = self._psi(self.phi)
         return same
 
     def _needs_rebuild(self, target, region):
         """Whether the mesh must be rebuilt (a rebuild builds every leaf to `target`): some leaf coarser than the fine
         region asks with its lead shortened by REGION_SLACK fine cells (`region`, no curvature), some leaf more than
-        CURVATURE_SLACK times its full target, or more than COARSEN_SHARE of the metal (by volume) in leaves that could be
-        COARSEN_SIZES times coarser. A rebuild at every step would not settle: the skin base carried to a new mesh is a
-        slightly different contour, and phi's recovered curvature a slightly different field, which move leaves across
-        the targets' thresholds and so change the next mesh (measured on the test cube: four rebuilds in a row, each
-        with some 36 leaves over their curvature target)."""
+        CURVATURE_SLACK times its full target, or more than COARSEN_SHARE of the metal (by volume, phi's) in leaves that
+        could be COARSEN_SIZES times coarser. A rebuild at every step would not settle: phi carried to a new mesh is a
+        slightly different contour, and its recovered curvature a slightly different field, which move leaves across the
+        targets' thresholds and so change the next mesh (measured on the test cube: four rebuilds in a row, each with
+        some 36 leaves over their curvature target)."""
         mesh = self.mesh
         size, x = mesh.size, mesh.centroids
         want = np.asarray(target(x, size), float)
@@ -390,10 +526,11 @@ class StepEnd:
             return True
         if np.any(size > CURVATURE_SLACK * want):
             return True
-        v = inside_volumes(mesh, self.beta)                 # the metal's leaves; closure grades the rest anyway
+        v = inside_volumes(mesh, self.phi)                  # the metal's leaves; closure grades the rest anyway
         coarser = COARSEN_SIZES * size <= want
         return float(v[coarser].sum() / v.sum()) > COARSEN_SHARE
 
+    # -- the markers ----------------------------------------------------------------------------------------------------
     def _snap(self, tally):
         """The markers onto phi, `Markers.snap` round after round until none is farther than SNAP_TOL from its zero
         contour, at most SNAP_ROUNDS rounds, the last finishing every marker by its cell's Newton steps whatever its
@@ -413,18 +550,9 @@ class StepEnd:
         raise RuntimeError("the markers did not snap onto phi within {} m in {} rounds".format(SNAP_TOL, SNAP_ROUNDS))
 
     def _release(self, idx, tally):
-        """Release the markers idx: their skins' metal and enthalpy return to the volume (beta moved by their volume,
-        the move's enthalpy against theirs booked as pending at their points), their momentum to the volume
-        (`tally.to_volume`)."""
-        mk = self.markers
-        x, mass, H, P = mk.release(idx)
-        tally.to_volume += P.sum(axis=0)
-        removed = self._move_beta(x, mass / self.rho, np.zeros(len(x)), tally, kind="release")
-        owed = float(H.sum()) + removed
-        tally.move += abs(owed)
-        self._book_move(x, mass, owed)
-        self.phi = outer_surface(self.mesh, self.beta, self._thickness_nodal(), band=self.band)
-        self.psi = self._psi(self.phi)
+        """Release the markers idx: each gives its skin to the nearest marker that stays, by depth (`Markers.release`,
+        planning ruling 6), before any column's profile is replaced; the next fill settles both."""
+        self.markers.release(idx)
 
     def _samples(self):
         """phi's surface samples for the re-partition, SAMPLE_SHARE of the target spacing across (`surface_samples`)."""
@@ -437,9 +565,9 @@ class StepEnd:
         return [mk.x_tess.copy(), mk.normal_tess.copy(), self.skins.area[mk.skin_index].copy(), surface]
 
     def _repartition(self, old, surface):
-        """The skins follow the area the last tessellation re-partitioned (module docstring): every old column scaled by
-        its stretch, cut by the transfer and mixed into its receivers by the hand-over rule; the re-partition kept in
-        `last_settle`. `old` from `_owners`, `surface` the samples of phi now."""
+        """The skins follow the area the last tessellation re-partitioned (module docstring): every old column cut by
+        the transfer and mixed into its receivers by the hand-over rule; the re-partition kept in `last_settle`. `old`
+        from `_owners`, `surface` the samples of phi now."""
         mk, sk = self.markers, self.skins
         old_x, old_normal, old_area, old_surface = old
         T, stretch = transfer_matrix(old_x, old_normal, old_area, old_surface, mk.x, mk.area, mk.faces, surface)
@@ -468,11 +596,14 @@ class StepEnd:
 
     def _settle(self, tally, surface=None):
         """The markers onto phi, the trapped (and the patchless) released, tessellated and their skins re-partitioned,
-        split, merged, tessellated and re-partitioned again, and the skins regridded with their markers' areas and
-        curvatures. `surface`: the samples of the surface the markers' areas were last given on (`_rebuild` passes the
-        step's old phi), phi as it is if None."""
-        mk = self.markers
+        split, merged, tessellated and re-partitioned again, and the skins regridded with their markers' areas.
+        `surface`: the samples of the surface the markers' areas were last given on (the step's start's phi), phi as
+        it is if None. The cells' volume change this makes (columns mixed at another temperature, a Scheil alloy's
+        volumes not adding; no metal crosses beta) is carried, spread over the rows by their cells' volume (module
+        docstring)."""
+        mk, sk = self.markers, self.skins
         self.last_settle = []
+        V0, C0 = float(sk.cells_volume().sum()), float(self.carry.sum())
         old = self._owners(self._samples() if surface is None else surface)
         self._snap(tally)
         cell, _ = locate(self.mesh, mk.x)
@@ -492,107 +623,10 @@ class StepEnd:
             self._snap(tally)
             old = self._tessellate(old, tally)
             self._repartition(old, self._samples())
-        self._sync()                                       # a merged column holds both columns' metal: cap it first
+        self._sync()
         self.skins.regrid()
         self._sync()
-
-    def _row_normals(self):
-        """Each skin row's marker's unit normal (n, 3)."""
-        out = np.zeros((self.skins.n, 3))
-        out[self.markers.skin_index] = self.markers.normal
-        return out
-
-    def _fill(self, beta0, base, normal, A_b, cells):
-        """After a move that gave the volume cells from the skins (`_modes`, and a part's top-zone returns): the volume's
-        nodes the move brought inside the metal (inside `self.beta`, outside `beta0`) take the temperature of the handed
-        cells at their depth -- the row whose base point (`base` (n, 3)) is nearest the node handed `cells` ((mass,
-        enthalpy) (n, K) in place); the node's distance out from that base along its `normal` (n, 3) over the span the
-        cells fill in the volume, their mass over rho and the base area `A_b` (n,) [m2], is the share of their mass below
-        it, counted from the deepest -- where the node lies within FILL_SLACK fine cells of that span; the others keep the
-        old metal's extrapolated temperature (`CutThermal.move`), the rest of the difference being the caller's to book as
-        pending heat. Returns (the nodes the move brought inside, those filled). (Task 10: on the test cube's third
-        flow-on step a change to top-zone of 14 markers left 6 % of the step's heat in owed before any fill; fix round 1:
-        the column's profile, not its mean, and not on nodes the volume correction brought in elsewhere.)"""
-        solver = self.solver
-        m_c, H_c = cells
-        total = m_c.sum(axis=1)
-        new = np.flatnonzero(solver.active & (beta0 >= 0.0) & (self.beta < 0.0))
-        if not len(new) or not np.any(total > 0.0):
-            return len(new), 0
-        _, near = cKDTree(base).query(self.mesh.points[new])
-        T_new, take = handed_profile(self.skins.props, self.rho, self.mesh.points[new], base[near], normal[near],
-                                     A_b[near], m_c[near], H_c[near], slack=FILL_SLACK * self.fine_size)
-        if not take.any():
-            return len(new), 0
-        T = solver.T.copy()
-        T[new[take]] = T_new[take]
-        solver.T = T
-        return len(new), int(take.sum())
-
-    def _modes(self, tally, update=True, check_core=False):
-        """The thin test and the mode changes at the step end (module docstring); with update=False no test, only every
-        top-zone skin's cells below its fine zone to the volume. Counts in `tally`: `to_top`, `to_full` the changes,
-        `mode_handed` [kg] what went to the volume, `mode_absorbed` [kg] what the skins took from it, `mode_H` [J] the
-        enthalpy that passed either way, `mode_owed` [J] the heat this left owed to the volume (in `move` too),
-        `mode_normal` [kg m/s] the normal part of the handed momentum (all of it to `to_volume`). With `check_core`, a psi with no rigid
-        metal after the changes raises (`_check_core`)."""
-        mk, sk, s = self.markers, self.skins, self.settings
-        changed = np.zeros(mk.n, bool)
-        if update:
-            m = modes.measures(self.mesh, self.phi, self.psi, mk)
-            changed = modes.update(mk, modes.candidates(m, self.mode_settings), self.mode_settings)
-        to_full = np.flatnonzero(changed & ~mk.top)
-        tally.to_top += int((changed & mk.top).sum())
-        tally.to_full += len(to_full)
-        base, A_b, normal = self._bases(), sk.base_area(), mk.normal.copy()
-        normal_rows = self._row_normals()
-        surface = self._samples()                          # the surface the markers' areas were given on
-        dV, H = np.zeros(sk.n), 0.0
-        given = (np.zeros(sk.m.shape), np.zeros(sk.m.shape))    # the cells each row handed the volume, in place
-        if len(to_full):                                   # thick to thin: the volume's metal down to the stub below psi
-            r = mk.skin_index[to_full]
-            h = m.h[to_full]
-            depth = np.where(np.isfinite(h), h + s.stub - sk.thickness()[r], 0.0)
-
-            def temperature(k, z):                         # the volume's field along each marker's normal
-                return interpolate(self.mesh, self.solver.T, base[r[k]] - z[:, None] * normal[to_full[k]])
-            ho = modes.to_thin(sk, r, depth, temperature, self.rho, kappa_share=KAPPA_DEPTH_SHARE)
-            dV[r] += ho.volume
-            H += float(ho.enthalpy.sum())
-            tally.mode_absorbed -= float(ho.mass.sum())
-            tally.mode_H += float(np.abs(ho.enthalpy).sum())
-        top = np.flatnonzero(mk.top)
-        if len(top):                                       # thin to thick, and what a re-partition gave below the fine zone
-            r = mk.skin_index[top]
-            ho = modes.to_thick(sk, r, normal=normal[top], rho=self.rho)
-            K = ho.cells[0].shape[1]
-            given = tuple(np.pad(g, ((0, 0), (0, max(K - g.shape[1], 0)))) for g in given)
-            given[0][r, :K], given[1][r, :K] = ho.cells
-            dV[r] += ho.volume
-            H += float(ho.enthalpy.sum())
-            tally.mode_handed += float(ho.mass.sum())
-            tally.mode_H += float(np.abs(ho.enthalpy).sum())
-            tally.to_volume += ho.momentum.sum(axis=0) + ho.normal.sum(axis=0)
-            tally.mode_normal += ho.normal.sum(axis=0)
-        if not np.any(dV != 0.0):
-            return
-        E0, beta0 = self.solver.energy(), self.beta.copy()
-        self._move_beta(base, dV, dV / A_b, tally, given=(normal_rows, A_b, given), kind="modes")
-        tally.fill_new, tally.fill_done = self._fill(beta0, base, normal_rows, A_b, given)
-        owed = H + E0 - self.solver.energy()
-        tally.move += abs(owed)
-        tally.mode_owed += abs(owed)
-        self._book_move(base, np.abs(dV), owed)
-        sk.regrid()
-        self._sync()
-        self.phi = outer_surface(self.mesh, self.beta, self._thickness_nodal(), band=self.band)
-        self.psi = self._psi(self.phi)
-        if check_core:
-            self._check_core(self.psi)
-        old = self._owners(surface)                        # phi moved (module docstring): the areas follow it
-        self._snap(tally)
-        old = self._tessellate(old, tally)
-        self._repartition(old, self._samples())
-        self._sync()
-        sk.regrid()
-        self._sync()
+        v = sk.cells_volume()
+        self.carry = np.zeros(sk.n)
+        if v.sum() > 0.0:                                  # the carry before it and the cells' change, spread
+            self.carry += (C0 + float(v.sum()) - V0) * v / v.sum()

@@ -17,6 +17,7 @@ from materials import ConstMaterial, LinearMeltMaterial
 R = 25e-3                  # m, the sphere
 H0 = 2e-3                  # m, base cells of the coarse test meshes
 SETTINGS = SkinSettings(cell=20e-6)
+FLAT_DEPTH = 0.8e-3        # m, the flat columns' depth in these tests
 
 
 def _mesh(half=31e-3, h0=H0):
@@ -28,10 +29,10 @@ def _sphere(mesh, c=(0.0, 0.0, 0.0), r=R):
 
 
 def _filled(markers, mat, rng=None):
-    """Markers' skins filled with metal: flat columns of 0.8 mm of solid at 600 K, or random profiles."""
+    """Markers' skins filled with metal: flat columns of FLAT_DEPTH of solid at 600 K, or random profiles."""
     sk = markers.skins
     if rng is None:
-        sk.fill(mat.rho * sk.area * SETTINGS.stub, 600.0)
+        sk.fill(mat.rho * sk.area * FLAT_DEPTH, 600.0)
         return sk
     n, K = sk.n, 30
     count = rng.integers(3, K + 1, n)
@@ -42,7 +43,8 @@ def _filled(markers, mat, rng=None):
 
 
 def _arrays(sk):
-    return [a.copy() for a in (sk.m, sk.H, sk.U, sk.count, sk.area, sk.kappa)]
+    out = [a.copy() for a in (sk.m, sk.H, sk.U, sk.count, sk.area, sk.kappa)]
+    return out + ([sk.profile.copy(), sk.profile_levels.copy()] if sk.profile is not None else [])
 
 
 def test_markers_are_created_one_per_patch_on_the_zero_contour():
@@ -95,12 +97,21 @@ def test_areas_sum_to_the_surface_area():
 
 
 def test_rigid_motion_leaves_skins_unchanged():
+    """Markers carried with a rigid motion of phi keep their skins bit for bit -- the cells, the areas, the curvatures
+    and the measured profile (plan 03b Task 5: every skin's cross-section is the division's) -- and the division of the
+    moved layer gives each column the cross-sections it had: to 1e-10 for a translation by whole base cells, where the
+    mesh-relative geometry is the same, as the areas are."""
+    from reentry_model.levelset.division import divide
     mat = LinearMeltMaterial()
     mesh = _mesh(half=33e-3)
     phi = _sphere(mesh)
     mk = Markers.create(mesh, phi, None, material=mat, settings=SETTINGS)
     _filled(mk, mat, np.random.default_rng(3))
     mk.tessellate(mesh, phi)
+    d0 = divide(mesh, phi, SETTINGS.depth, mk.x, mk.normal)
+    area = np.zeros((mk.skins.n, len(d0.levels)))
+    area[mk.skin_index] = d0.area
+    mk.skins.set_profile(d0.levels, area)
     A0, skins0 = mk.area.copy(), _arrays(mk.skins)
     # translation by whole base cells: the mesh-relative geometry is identical
     shift = np.array([2 * H0, -H0, 3 * H0])
@@ -111,6 +122,8 @@ def test_rigid_motion_leaves_skins_unchanged():
     for a, b in zip(skins0, _arrays(mk.skins)):
         assert np.array_equal(a, b)
     assert np.abs(mk.area / A0 - 1.0).max() < 1e-10
+    d1 = divide(mesh, phi_t, SETTINGS.depth, mk.x, mk.normal)
+    np.testing.assert_allclose(d1.area, d0.area, rtol=1e-10, atol=1e-10 * d0.area.max())
     assert (mk.splits, mk.merges, mk.trapped) == (0, 0, 0)
     # a rotation about the centre (phi unchanged): a Kuhn mesh is not rotation-symmetric, so 1 % on the areas (the areas
     # of phi each marker owns, Task 11's fix round 1, C1: 0.50 % at most measured once, 0.31 % for the tangent-plane cells)
@@ -271,7 +284,10 @@ def test_a_turned_sphere_s_markers_keep_their_areas_at_the_body_s_spacing():
     assert turned.max() <= OWNED_ROTATION
 
 
-def test_uniform_stretching_thins_skins_and_draws_the_implied_metal():
+def test_uniform_stretching_thins_skins_and_fills_with_the_implied_metal():
+    """Markers carried radially from a 25 mm sphere to a 26 mm one keep their metal spread thinner over their larger
+    areas; refilled at their bases to the flat column they now stand for (`Skins.exchange_base`, the fill of plan 03b
+    Task 5, which replaced the draw to a minimum mass), each takes exactly the metal the larger column implies."""
     mat = ConstMaterial()
     mesh = _mesh()
     phi = _sphere(mesh)
@@ -279,7 +295,6 @@ def test_uniform_stretching_thins_skins_and_draws_the_implied_metal():
     mk.tessellate(mesh, phi)
     sk = mk.skins
     sk.area = mk.area[np.argsort(mk.skin_index)].copy()
-    sk.kappa[:] = 0.0                                     # flat columns: the stub's volume is A0 times the stub
     _filled(mk, mat)
     A_old, M_old, thick_old = sk.area.copy(), sk.m.sum(axis=1), sk.thickness()
     mk.carry(lambda x: 1e-3 * x / np.linalg.norm(x, axis=1)[:, None], 1.0)      # 25 to 26 mm, radially
@@ -291,11 +306,11 @@ def test_uniform_stretching_thins_skins_and_draws_the_implied_metal():
     assert np.median(ratio) == pytest.approx((26 / 25) ** 2, rel=5e-4)
     assert np.abs(ratio / (26 / 25) ** 2 - 1.0).max() < 0.01
     assert np.allclose(sk.thickness(), thick_old / ratio, rtol=1e-12)        # the same metal, spread thinner
-    m_min = sk.minimum_mass()
-    drawn, H = sk.draw(600.0, 0.0, m_min)
-    implied = sk.area * SETTINGS.stub - A_old * SETTINGS.stub                 # the new stub volume minus the old
+    implied = sk.area * FLAT_DEPTH - A_old * FLAT_DEPTH                     # the new flat column's volume less the old
+    ex = sk.exchange_base(np.arange(sk.n), implied, 600.0)
+    drawn, H = ex.mass, ex.H
     assert np.allclose(drawn, mat.rho * implied, rtol=1e-12, atol=0.0)
-    assert np.allclose(sk.m.sum(axis=1), m_min, rtol=1e-12, atol=0.0)
+    assert np.allclose(sk.m.sum(axis=1), mat.rho * sk.area * FLAT_DEPTH, rtol=1e-12, atol=0.0)
     assert np.allclose(sk.m.sum(axis=1), M_old + drawn, rtol=1e-14, atol=0.0)
     assert np.allclose(H, drawn * mat.enthalpy(600.0), rtol=1e-12)
 
@@ -372,6 +387,10 @@ def test_the_hand_over_rule_mixes_layers_at_the_same_relative_depth():
 
 
 def test_a_trapped_marker_returns_its_skin_exactly():
+    """Plan 03b, planning ruling 6: the markers trapped in a fold (a second sphere overlapping the first) are released,
+    each giving its skin to the nearest marker that stays, by depth (`Skins.combine(..., by="depth")`), not to the volume:
+    the skins' mass, enthalpy and momentum are unchanged to round-off, each keeper holds its own skin and exactly what
+    the released markers nearest it gave, and every other marker keeps its own skin."""
     mat = LinearMeltMaterial()
     r, h = 10e-3, 1e-3
     mesh = build(BoxBase.around((-12e-3, -12e-3, -12e-3), (24e-3, 12e-3, 12e-3), h))
@@ -390,20 +409,25 @@ def test_a_trapped_marker_returns_its_skin_exactly():
     assert np.all(~np.isin(np.flatnonzero(depth_b > 0.5 * h), idx))
     assert len(idx) > 10
     rows = mk.skin_index[idx]
-    x, mass, H, P = mk.release(idx)
+    keep = np.setdiff1d(np.arange(len(x0)), idx)
+    x, keeper, (mass, H, P) = mk.release(idx)
     assert mk.trapped == len(idx) and mk.n == len(x0) - len(idx) and mk.skins.n == mk.n
     assert np.array_equal(x, x0[idx])
+    assert np.array_equal(mk.x, x0[keep])
     assert np.allclose(mass, rows0[0][rows], rtol=1e-14, atol=0.0)
     assert np.allclose(H, rows0[1][rows], rtol=1e-14, atol=0.0)
     assert np.allclose(P, rows0[2][rows], rtol=1e-14, atol=0.0)
+    dist = np.linalg.norm(x0[keep][None, :, :] - x[:, None, :], axis=2)
+    np.testing.assert_allclose(dist[np.arange(len(x)), keeper], dist.min(axis=1), rtol=1e-12, atol=0.0)   # nearest
     M1, E1, P1 = _books(mk.skins)
-    assert M1 + mass.sum() == pytest.approx(M0, rel=1e-14)
-    assert E1 + H.sum() == pytest.approx(E0, rel=1e-14)
-    assert np.allclose(P1 + P.sum(axis=0), P0, rtol=0, atol=1e-14 * M0)
-    # the survivors keep their own skins
-    keep = np.setdiff1d(np.arange(len(x0)), idx)
-    assert np.array_equal(mk.x, x0[keep])
-    assert np.array_equal(mk.skins.totals()[0][mk.skin_index], rows0[0][keep])
+    assert M1 == pytest.approx(M0, rel=1e-14) and E1 == pytest.approx(E0, rel=1e-14)
+    assert np.allclose(P1, P0, rtol=0, atol=1e-14 * np.abs(mk.skins.m.sum()))
+    # each keeper: its own skin and what was given it; every other survivor its own skin alone
+    got = np.bincount(keeper, mass, minlength=mk.n)
+    totals = mk.skins.totals()[0][mk.skin_index]
+    np.testing.assert_allclose(totals, rows0[0][keep] + got, rtol=1e-14, atol=0.0)
+    untouched = np.flatnonzero(got == 0.0)              # their skins as they were (the padding grew: sums to round-off)
+    np.testing.assert_allclose(totals[untouched], rows0[0][keep][untouched], rtol=1e-15, atol=0.0)
 
 
 def test_assign_finds_the_patch_whose_cut_cell_holds_each_marker():
@@ -619,24 +643,7 @@ def test_markers_pickled_before_task_9b_load_with_their_positions_as_the_last_te
     mk.x_tess, mk.normal_tess = mk.x + 1e-6, -mk.normal
     new = pickle.loads(pickle.dumps(mk))
     assert np.array_equal(new.x_tess, mk.x + 1e-6) and np.array_equal(new.normal_tess, -mk.normal)
-
-
-def test_a_merge_across_modes_keeps_the_top_zone_marker_s_mode_and_hold():
-    """Stage 3 Task 10, fix round 1 (the controller's ruling (4)): two markers closer than a third of the spacing merge,
-    their skins mixed by the hand-over rule; where one is top-zone and the other full-depth, the merged marker is
-    top-zone with the top-zone marker's hold, whichever of the two the merge keeps (the step end then gives the volume
-    what the mixed column holds below its fine zone); where both share a mode, the kept marker's mode and hold stay.
-    Three pairs 0.1 mm apart on a flat row 1 mm apart: (full, top), (top, full) and (full, full)."""
-    mat = ConstMaterial()
-    x = np.array([[0, 0, 0], [1e-4, 0, 0], [3e-3, 0, 0], [3.1e-3, 0, 0], [6e-3, 0, 0], [6.1e-3, 0, 0]], float)
-    n = len(x)
-    sk = Skins(mat, np.full(n, 1e-6), np.zeros((n, 2)), SETTINGS)
-    sk.fill(mat.rho * 1e-6 * 0.8e-3, 600.0)
-    mk = Markers(x, np.tile([0.0, 0.0, 1.0], (n, 1)), np.full(n, 1e-6), np.zeros((n, 2)), np.arange(n),
-                 np.full(n, -1), 1e-3, skins=sk)
-    mk.top = np.array([False, True, True, False, False, False])
-    mk.hold = np.array([2, 1, 0, 2, 1, 2])
-    assert mk.merge(1e-3) == 3 and mk.n == 3
-    order = np.argsort(mk.x[:, 0])
-    np.testing.assert_array_equal(mk.top[order], [True, True, False])
-    np.testing.assert_array_equal(mk.hold[order], [1, 0, 1])
+    # markers pickled with the retired modes (stage 3 Task 10 to plan 03b Task 5) load without them
+    mk.top, mk.hold = np.zeros(mk.n, bool), np.zeros(mk.n, np.int64)
+    retired = pickle.loads(pickle.dumps(mk))
+    assert not hasattr(retired, "top") and not hasattr(retired, "hold")
