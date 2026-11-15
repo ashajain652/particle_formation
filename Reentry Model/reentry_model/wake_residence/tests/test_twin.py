@@ -24,7 +24,7 @@ def test_twin_reproduces_drama_speed_within_one_percent_above_60km(twin, parent)
 def test_release_starts_exactly_on_the_track(twin):
     t_r = twin.t_at_altitude(80.0)
     st = release_state(twin.track, t_r, twin.epoch)
-    from reentry_model import earth
+    from reentry_model.shared import earth
     x = earth.geodetic_to_ecef(st.altitude, st.lat, st.lon)
     m = Plume(twin.track).margin(x, t_r)
     # on the track at the parent's position: the union of balls gives r_b, and the front plane (Task 6b) caps it at 0

@@ -86,15 +86,15 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import brentq
 
-from reentry_model import aero, body, earth
-from reentry_model.atmosphere import Freestream, US76TableAtmosphere
-from reentry_model.body import ConstantBody
-from reentry_model.constants import G0
+from reentry_model.shared import aero, body, earth
+from reentry_model.shared.atmosphere import Freestream, US76TableAtmosphere
+from reentry_model.shared.body import ConstantBody
+from reentry_model.shared.constants import G0
 from reentry_model.droplet_reentry import parent_trajectory
 from reentry_model.droplet_reentry.model import parent_release
 from reentry_model.droplet_reentry.particle_trajectory import drag_coefficient as composed_drag_coefficient
 from reentry_model.droplet_reentry.particle_trajectory import viscosity
-from reentry_model.trajectory import AeroState, InitialState, Settings, Simulator
+from reentry_model.shared.trajectory import AeroState, InitialState, Settings, Simulator
 from reentry_model.wake_residence.track import FLOW_KEYS, Track
 from reentry_model.wake_residence.wake_gas import Ambient, check_mode
 

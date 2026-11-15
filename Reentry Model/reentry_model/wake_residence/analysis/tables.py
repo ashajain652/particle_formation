@@ -25,7 +25,7 @@ import sys
 import numpy as np
 from scipy.optimize import minimize_scalar
 
-from reentry_model import aero, body, earth
+from reentry_model.shared import aero, body, earth
 from reentry_model.droplet_reentry import parent_trajectory
 from reentry_model.wake_residence import OUTPUT
 from reentry_model.wake_residence.adapters import twin_vs_drama

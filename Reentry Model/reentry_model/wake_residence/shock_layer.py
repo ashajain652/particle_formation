@@ -69,8 +69,8 @@ import numpy as np
 from scipy.interpolate import CubicSpline, RectBivariateSpline
 from scipy.optimize import brentq
 
-from reentry_model import aero
-from reentry_model.gas import AIR, CP_AIR, T_EQUILIBRATE, T_FLOOR, EquilibriumAir
+from reentry_model.shared import aero
+from reentry_model.shared.gas import AIR, CP_AIR, T_EQUILIBRATE, T_FLOOR, EquilibriumAir
 
 AVOGADRO_KMOL = 6.02214076e26        # 1/kmol: Cantera's molecular weights are kg/kmol
 GAS_CONSTANT = 8314.462618           # J/(kmol K), universal gas constant (Cantera's units)

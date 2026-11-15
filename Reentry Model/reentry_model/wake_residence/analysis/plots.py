@@ -44,7 +44,8 @@ from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Patch, Rectangle
 
-from reentry_model import DRAMA_DIR, earth
+from reentry_model import DRAMA_DIR
+from reentry_model.shared import earth
 from reentry_model.wake_residence import OUTPUT
 from reentry_model.wake_residence.adapters import PARENT_FRONTAL_AREA
 from reentry_model.wake_residence.wake_gas import WAKE_FLOW_MODES

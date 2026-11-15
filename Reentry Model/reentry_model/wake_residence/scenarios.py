@@ -50,11 +50,11 @@ from datetime import timedelta
 
 import numpy as np
 
-from reentry_model import aero, body, earth
-from reentry_model.atmosphere import US76TableAtmosphere
+from reentry_model.shared import aero, body, earth
+from reentry_model.shared.atmosphere import US76TableAtmosphere
 from reentry_model.droplet_reentry.model import T_RELEASE, VOLATILE, WE_CRIT, DropletSimulator, weber
 from reentry_model.droplet_reentry.particle_trajectory import drag_coefficient as composed_drag_coefficient
-from reentry_model.gas import EquilibriumAir
+from reentry_model.shared.gas import EquilibriumAir
 from reentry_model.wake_column.run import _clean, _git_commit, _git_dirty
 from reentry_model.wake_residence.adapters import (
     WakeAtmosphere, dense_solve, parent_collision_event, rarefied_sphere_simulator, shock_layer_exit,

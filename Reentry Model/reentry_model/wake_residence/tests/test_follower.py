@@ -1,6 +1,6 @@
 """Followers in the wake (Task 6, spec 4.3 and 4.3a): the WakeAtmosphere wrapper, sphere followers and sphere parents."""
 import time, numpy as np, pytest
-from reentry_model.atmosphere import US76TableAtmosphere
+from reentry_model.shared.atmosphere import US76TableAtmosphere
 from reentry_model.wake_residence.adapters import (WakeAtmosphere, sphere_simulator, dense_solve, release_state)
 from reentry_model.wake_residence.overlap import Plume
 from reentry_model.wake_residence.laws import LawSettings
@@ -40,8 +40,8 @@ def test_timing_of_one_wake_run_is_recorded(twin, capsys):
 # ---- beyond the brief's four tests: the conversions and the tracks the later tasks rely on ----
 
 def test_wake_gas_velocity_is_added_to_the_wind_in_east_north_up(twin):
-    from reentry_model import earth
-    from reentry_model.atmosphere import StaticProfileWind
+    from reentry_model.shared import earth
+    from reentry_model.shared.atmosphere import StaticProfileWind
     from reentry_model.wake_residence.wake_gas import Ambient
     t_r = twin.t_at_altitude(70.0)
     base = US76TableAtmosphere(wind=StaticProfileWind())
@@ -95,7 +95,7 @@ def test_solution_track_is_the_run_on_the_parent_clock(twin):
 
 
 def test_sphere_parent_track_carries_the_spheres_own_drag(twin):
-    from reentry_model import aero, earth
+    from reentry_model.shared import aero, earth
     from reentry_model.wake_residence.adapters import sphere_parent_track
     t_r, st = release(twin)
     atm = US76TableAtmosphere()
@@ -135,7 +135,7 @@ def test_ten_mm_sphere_in_a_forward_wake_falls_behind_then_reaches_the_parent_at
 def test_fifty_mm_sphere_ahead_of_the_parent_sees_only_ambient_air(twin):
     # Task 6b: a 50 mm sphere decelerates less than the parent at 60 km and moves ahead of its front plane at once;
     # there WakeAtmosphere("both") must hand it exactly the wrapped freestream, so "both" and "off" runs coincide
-    from reentry_model import earth
+    from reentry_model.shared import earth
     t_r, st = release(twin)
     base = US76TableAtmosphere()
     runs = {mode: dense_solve(sphere_simulator(st, 0.05, WakeAtmosphere(base, Plume(twin.track), t_r, mode)), 1.0)

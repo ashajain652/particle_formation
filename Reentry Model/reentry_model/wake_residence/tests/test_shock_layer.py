@@ -1,8 +1,8 @@
 """The parent's shock-layer field (Task 7b, spec 4.3d): oblique jumps, Lighthill's nose solution, Billig's shape and
 the tabulated field with its smoothed edges and pressure gradient."""
 import math, numpy as np, pytest
-from reentry_model import aero
-from reentry_model.gas import EquilibriumAir
+from reentry_model.shared import aero
+from reentry_model.shared.gas import EquilibriumAir
 from reentry_model.wake_residence.shock_layer import (ShockLayerSettings, FreeStream, oblique_jump, lighthill,
     lighthill_standoff_approx, billig_standoff, billig_vertex_radius, ShockShape, ShockLayerField, newtonian_prandtl_meyer, FLUX_TOL)
 
@@ -31,7 +31,7 @@ def test_normal_jump_then_compression_gives_stagnation(air):
     ps = oblique_jump(air, FS, math.pi / 2)
     assert ps.w_t == pytest.approx(0.0, abs=1e-6)
     assert ps.p < stag.p and ps.p == pytest.approx(stag.p, rel=0.05)     # compression to rest adds a few percent
-    from reentry_model.gas import AIR
+    from reentry_model.shared.gas import AIR
     from scipy.optimize import brentq
     h0 = ps.h + 0.5 * ps.w_n**2
     def res(lp):

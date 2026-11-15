@@ -89,7 +89,7 @@ def test_droplet_in_sphere_plume_worked_examples(twin):
 # ---- beyond the brief's tests: the release-state conversion, the surface-release record and the file layout ----
 
 def test_state_from_ecef_round_trips_through_the_simulator(twin):
-    from reentry_model.atmosphere import US76TableAtmosphere
+    from reentry_model.shared.atmosphere import US76TableAtmosphere
     from reentry_model.wake_residence.adapters import state_from_ecef, sphere_simulator
     t = twin.t_at_altitude(70.0)
     r, v = twin.track.position(t), twin.track.velocity(t)

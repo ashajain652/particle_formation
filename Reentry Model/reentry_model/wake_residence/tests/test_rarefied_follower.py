@@ -1,10 +1,10 @@
 """Rarefied followers in the parent's shock layer (Task 7b, spec 4.3d): the composed drag law, the pressure-gradient
 force, the parent as an obstacle and the shock-layer exit."""
 import math, numpy as np, pytest
-from reentry_model import earth
-from reentry_model.atmosphere import US76TableAtmosphere
+from reentry_model.shared import earth
+from reentry_model.shared.atmosphere import US76TableAtmosphere
 from reentry_model.droplet_reentry import particle_trajectory as pt
-from reentry_model.trajectory import InitialState
+from reentry_model.shared.trajectory import InitialState
 from reentry_model.wake_residence.adapters import (WakeAtmosphere, rarefied_sphere_simulator, dense_solve,
     parent_collision_event, shock_layer_exit, release_state)
 from reentry_model.wake_residence.overlap import Plume
@@ -49,7 +49,7 @@ def test_drag_is_the_composed_law_and_finite_at_zero_relative_speed(twin):
 
 def test_zero_relative_speed_gives_exactly_zero_drag():
     # The V == 0 branch: a follower at rest in still air (no wind, no field) has no drag and no NaN
-    from reentry_model.trajectory import InitialState
+    from reentry_model.shared.trajectory import InitialState
     from datetime import datetime
     st = InitialState(velocity=0.0, altitude=80e3, flight_path=0.0, heading=0.0, lat=0.3, lon=0.2,
                       epoch=datetime(2024, 8, 1))
