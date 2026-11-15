@@ -72,10 +72,19 @@ undefined, between the faces, and then allows every marker). Two columns whose n
 where the levels found none, and marked `opposed`, for the caller to stop the step. It reports metal thinner than 2H as
 the P1 mesh resolves it, to within about one cell where the cells are coarser than beta's interior.
 
+The base's ownership (plan 03b Task 5's fix round 1, the controller's ruling T5-j). The base level, phi = -H, is the
+skin base beta's contour (`surfaces.skin_base` keeps phi + H's values at the nodes of the cells it cuts), so its patches
+are beta's, the patches through which the volume's solve takes each skin's base law. The same ownership that gives each
+column its base cross-section is kept with the plain area as its measure (`Division.base_owner`: the area of each patch
+of the base each marker owns, each triangle's foot's shares of the triangle's own area, a foot of no area whole to the
+marker owning its centroid), so that the group of beta beneath a skin is its own column's base, found once per division
+(`skinbody.LevelSetSkinBody._beta_owners` reads it).
+
 Numbers here are numerical settings; no physics."""
 from dataclasses import dataclass
 
 import numpy as np
+import scipy.sparse as sp
 from scipy.spatial import cKDTree
 
 from .criteria import nodal_average
@@ -114,6 +123,10 @@ class Division:
     opposed: np.ndarray    # (E,) bool: the pair's normals oppose (design section 21.11)
     piece: np.ndarray      # (n,) each column's piece of metal (`levelset.pieces`), -1 where there is none
     factor: np.ndarray     # (P,) each piece's factor on its columns' areas (its closure measure)
+    base_cell: np.ndarray = None    # (Q,) the cell of each patch of the base level phi = -H (beta's patches; docstring)
+    base_patch_area: np.ndarray = None  # (Q,) each such patch's area [m2]
+    base_owner: object = None       # (n, Q) csr: the area [m2] of each such patch each marker owns, by the plain area
+                                    # (module docstring: the base's ownership; not the piece's factor)
 
     @property
     def base(self):
@@ -174,6 +187,7 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
     n = len(x)
     dz = depth / levels
     z = dz * np.arange(levels + 1)
+    z[-1] = depth                                             # the base level is beta's contour exactly (docstring)
     w = np.full(levels + 1, dz)
     w[[0, -1]] *= 0.5                                         # the trapezoid rule's weights
     f = phi[mesh.tets]
@@ -196,6 +210,8 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
         size = OWN_SHARE * np.sqrt(top.area.sum() / max(n, 1))
     area = np.zeros((n, levels + 1))
     found = []
+    base_rows, base_cols, base_vals = [], [], []               # the base level's ownership by the plain area
+    base_cell, base_patch_area = np.zeros(0, dtype=np.int64), np.zeros(0)
     for k, zk in enumerate(z):
         P = top if k == 0 else patches(mesh, phi + zk, layer)
         if not len(P.tris):
@@ -221,16 +237,23 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
             foot = np.bincount(W.col, W.data, minlength=len(tq))
             ok = foot[W.col] > 0.0
             r, c = W.row[ok], W.col[ok]
-            v = W.data[ok] / foot[c] * own[tq[c]]
+            share = W.data[ok] / foot[c]                      # each owner's share of its triangle's foot
+            v = share * own[tq[c]]
             flat = np.flatnonzero(foot <= 0.0)                # carried to a segment or a point (or owned by none)
             if len(flat):
                 o = _nearest(trees[p], feet[tq[flat]].mean(axis=1), 1, normal[mq], tn[tq[flat]])[1][:, 0]
                 mine = o < len(mq)
-                r, v = np.concatenate([r, o[mine]]), np.concatenate([v, own[tq[flat[mine]]]])
+                r, c = np.concatenate([r, o[mine]]), np.concatenate([c, flat[mine]])
+                share = np.concatenate([share, np.ones(int(mine.sum()))])
+                v = np.concatenate([v, own[tq[flat[mine]]]])
             rows.append(mq[r]), vals.append(v)
+            if k == levels:                                   # the base's ownership, by the plain area (docstring)
+                base_rows.append(mq[r]), base_cols.append(P.tri_patch[tq[c]]), base_vals.append(share * tri_area[tq[c]])
             found.append((np.full(len(bi), k), mq[bi], mq[bj], bl))
         if rows:
             area[:, k] = np.bincount(np.concatenate(rows), np.concatenate(vals), minlength=n)
+        if k == levels:
+            base_cell, base_patch_area = P.cell.copy(), P.area.copy()
 
     # the thin cells' volumes, each whole to the column owning its centroid's foot, at the two levels about its depth
     for p, mq in enumerate(members):
@@ -283,5 +306,9 @@ def divide(mesh, phi, depth, x, normal, levels=DIVISION_LEVELS, size=None):
     with np.errstate(divide="ignore", invalid="ignore"):
         factor = np.where(columns > 0.0, layer_volume / columns, np.where(layer_volume > 0.0, np.inf, 1.0))
     area = area * np.where(counted, factor[np.maximum(piece, 0)] if n_pieces else 1.0, 1.0)[:, None]
+    cat = lambda parts, dtype: np.concatenate(parts) if parts else np.zeros(0, dtype=dtype)
+    base_owner = sp.csr_matrix((cat(base_vals, float), (cat(base_rows, np.int64), cat(base_cols, np.int64))),
+                               shape=(n, len(base_cell)))
     return Division(z, area, area @ w, i, j, length, _boundary_normals(x, normal, i, j),
-                    np.einsum("ek,ek->e", normal[i], normal[j]) < OPPOSED_NORMALS, piece, factor)
+                    np.einsum("ek,ek->e", normal[i], normal[j]) < OPPOSED_NORMALS, piece, factor, base_cell,
+                    base_patch_area, base_owner)

@@ -16,11 +16,10 @@ treats its base as a no-slip floor. Mass ownership: the volume owns rho_s V(beta
 difference (`stepend`), the skins their cells; nothing is counted twice.
 
 The interface (the skyscrapers' per-column law converted per area). Every patch of beta (the solve's boundary pieces)
-belongs to the marker that owns its foot on phi (`_beta_owners`: each triangle's corners carried H along phi's recovered
-gradient to phi, the feet divided by `markers.ownership` with the same-side and same-piece rules, as `division.divide`
-divides its base level), so that the skin above a piece of the base and the group below it are one marker: marker m's
-group G_m. GROUP_AREA_RANGE stays as a guard: a group outside it is grown from the patches nearest its base point
-(`patch_groups`). A column with no base (`stepend.BASELESS_SHARE`) has no group and an insulated bottom (its base
+belongs to the marker that owns its foot on phi: beta's patches are the division's base level, and `_beta_owners` reads
+the division's own ownership of it (`Division.base_owner`, by the plain area; the controller's ruling T5-j), so that the
+skin above a piece of the base and the group below it are one marker, its own column's base: marker m's group G_m.
+GROUP_AREA_RANGE stays as a guard: a group outside it is grown from the patches nearest its base point (`patch_groups`). A column with no base (`stepend.BASELESS_SHARE`) has no group and an insulated bottom (its base
 temperature NaN, `Skins.conduct`). A marker's base law a_m + b_m T_b [W, W/K, from its trial pass] reaches each patch p of
 its group by the area W_mp of p it holds, q0 = sum_m a_m W_mp / (A(G_m) A_p), q1 likewise with b_m, and its base
 temperature T_b is the area mean over its group of the patch temperatures the solve applies its law at -- so the volume
@@ -56,7 +55,8 @@ parts, at most SPLIT_DEPTH_MAX levels). Each part:
 
 At the macro step's end (`stepend.StepEnd._end_step`): the last part's carry moves phi, psi, the mesh rebuilt where it
 no longer meets its refinement targets (phi carried), the markers settled on phi, the layer divided and filled, and the
-thin-metal stop (`stepend.THIN_METAL`, also raised at construction); see that module. A step that finds no rigid metal
+thin-metal stop (`stepend.THIN_METAL`, also raised at construction); the carry the step end's own settle and fill leave
+waits for the next step's first move (the controller's ruling T5-i); see that module. A step that finds no rigid metal
 left anywhere stops with RuntimeError (`stepend.NO_CORE`): at its end, or when a part fails and, the part having
 restored the state it started from, psi then finds no rigid metal (the part's error chained as the cause; if psi cannot
 be found the part's error stands). No run driver (Ruling 6): tests and scripts drive `advance` at prescribed gas
@@ -89,22 +89,18 @@ from ..shared import nose
 from ..shared import spray as spray_mod
 from ..shared.droplets import SKIN_SUMMARY_COLUMNS
 from . import loads as loads_mod
-from . import markers as markers_mod
 from .boxmesh import build
-from .criteria import nodal_average
-from .cutcell import cell_gradients, inside_volumes
+from .cutcell import inside_volumes
 from .cutcell import patches as cut_patches
 from .cutthermal import CutThermal
-from .division import _marker_pieces
 from .levelset import pieces
-from .markers import Markers, _nearest
+from .markers import Markers
 from .runoff import FlowBook, Forcing, flow_substeps
 from .skin import SkinSettings
 from .spraying import spray_plan
 from .stepend import (BASELESS_SHARE, FILL_ROUNDS, FILL_RTOL, LEAD, NO_CORE, REGION_SLACK,  # noqa: F401 (re-exported)
                       THIN_METAL, StepEnd)
 from .surfaces import skin_base
-from .transfer import barycentric
 
 # the parts of a macro step (Ruling 7, the skyscrapers' skinbody.py rules, matched by amendment)
 PART_MAX = 0.0625                 # s: the longest part while any skin's top is at or above T_rigid, or about to be
@@ -172,9 +168,11 @@ class StepBook:
     tests' bound), `fill_miss_max` the largest share of its volume by which a column's cells missed it after a fill,
     `move_miss_max` the largest miss of a group's swept volume against what it was asked (`levelset.Moved.miss`; what a
     group cannot sweep the per-piece correction makes up, the controller's ruling T2-e), `n_baseless` the columns with no
-    base at the step's end, and `density_carry_m3` [m3] the carry left for the next step's first move (planning ruling
-    4: the step end's own fill's, in the volume's mass). `move_corrections` every volume correction's miss before it, in
-    the order made: one entry per move of phi and for the remesh, {"kind": "part", "carry" (the step end's move by the
+    base at the step's end, `density_carry_m3` [m3] the carry left for the next step's first move (planning ruling 4:
+    the step end's own settle's and fill's, in the volume's mass, by which phi misses its metal's true volume until that
+    move; the controller's ruling T5-i) and `density_carry_share_max` the largest share of its column's volume a row's
+    carry is then. `move_corrections` every volume correction's miss before it, in the order made: one entry per move
+    of phi and for the remesh, {"kind": "part", "carry" (the step end's move by the
     last part's carry) or "remesh"; "worst": the largest miss over its pieces as a share of the piece's target; "body":
     the body's, the largest piece's}; their largest is `volume_correction_max`. The heat deferred to the volume over the
     step, by source, each the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own
@@ -237,6 +235,7 @@ class StepBook:
     move_miss_max: float
     n_baseless: int
     density_carry_m3: float = 0.0
+    density_carry_share_max: float = 0.0
     island_nodes: int = 0
     groups_guarded_max: int = 0
     move_corrections: list = field(default_factory=list)
@@ -519,10 +518,11 @@ class LevelSetSkinBody(StepEnd):
 
     def __setstate__(self, state):
         """Unpickling: a body from before plan 03b Task 5 holds `mode_settings` (the retired modes', dropped) and has no
-        division and no carry: `advance` then adopts it (`_adopt`)."""
+        division and no carry: `advance` then adopts it (`_adopt`). So too a body whose division predates its base level's
+        ownership (Task 5's fix round 1), which `_adopt` divides afresh."""
         state = {k: v for k, v in state.items() if k != "mode_settings"}
         self.__dict__.update(state)
-        if "division" not in state:
+        if "division" not in state or getattr(state["division"], "base_owner", None) is None:
             self.division = None
         if "carry" not in state:
             self.carry = np.zeros(self.skins.n)
@@ -564,6 +564,12 @@ class LevelSetSkinBody(StepEnd):
         self.pending_x = np.vstack([self.pending_x, np.atleast_2d(np.asarray(x, float))])
         self.pending_J = np.r_[self.pending_J, np.atleast_1d(np.asarray(J, float))]
 
+    def _carry_share(self):
+        """The largest share of its column's volume a row's carry is (a row with a carry and no column, inf)."""
+        V, c = self.skins.column_volume(), np.abs(self.carry)
+        share = np.divide(c, V, out=np.where(c > 0.0, np.inf, 0.0), where=V > 0.0)
+        return float(share.max(initial=0.0))
+
     def _top_T(self):
         T = self.skins.T()
         return np.where(self.skins.valid[:, 0], T[:, 0], np.nan)
@@ -583,51 +589,27 @@ class LevelSetSkinBody(StepEnd):
 
     # -- the interface ---------------------------------------------------------------------------------------------------
     def _beta_owners(self, P):
-        """The area of each patch of beta each skin row owns, (rows, P) csr [m2] (module docstring): each triangle of
-        the patches P carried to phi, its corners p to p + H g(p) (phi = -H on beta; g phi's recovered gradient, the
-        nodal average of the cells' gradients, interpolated), the feet divided among the markers of the triangle's piece
-        of phi by `markers.ownership` with the same-side rule (as `division.divide` divides its base level), each
-        marker's share of a foot taken of the triangle's own area; a foot of no area goes whole to the marker owning its
-        centroid. The columns sum to the patches' areas to round-off."""
-        mesh, mk, sk = self.mesh, self.markers, self.skins
+        """The area of each patch of beta each skin row owns, (rows, P) csr [m2] (module docstring): the division's
+        ownership of its base level (`Division.base_owner`, by the plain area; the controller's ruling T5-j), whose
+        patches are beta's (beta keeps phi + H's values in the cells it cuts, `surfaces.skin_base`), each patch of P
+        matched by its cell and its owners' areas scaled to P's area of it. The columns sum to the patches' areas to
+        round-off. RuntimeError if the division is not of phi as it is (a patch of beta in a cell its base level does
+        not cut): the division is rebuilt whenever phi moves, before the next part's interface."""
+        mk, sk, d = self.markers, self.skins, self.division
         npatch = len(P.area)
-        if not len(P.tris) or not mk.n:
+        if not npatch or not mk.n:
             return sp.csr_matrix((sk.n, npatch))
-        cells = P.cell[P.tri_patch]
-        near = mesh.ring(np.unique(P.cell), 1)
-        G = nodal_average(mesh, cell_gradients(mesh, self.phi, near), near)
-        corners = P.tris.reshape(-1, 3)
-        rep = np.repeat(cells, 3)
-        g = np.einsum("ni,nik->nk", barycentric(mesh, rep, corners), G[mesh.tets[rep]])
-        feet = (corners + self.settings.depth * g).reshape(-1, 3, 3)
-        tri_area = 0.5 * np.linalg.norm(np.cross(P.tris[:, 1] - P.tris[:, 0], P.tris[:, 2] - P.tris[:, 0]), axis=1)
-        tn = P.normal[P.tri_patch]
-        label, n_pieces = pieces(mesh, self.phi)
-        piece = _marker_pieces(mesh, mk.x, label, cut_patches(mesh, self.phi))
-        tri_piece = label[cells]
-        size = markers_mod.OWN_SHARE * mk.spacing
-        rows, cols, vals = [], [], []
-        for p in range(n_pieces):
-            mq, tq = np.flatnonzero(piece == p), np.flatnonzero(tri_piece == p)
-            if not len(mq) or not len(tq):
-                continue
-            W = markers_mod.ownership(mk.x[mq], feet[tq], np.arange(len(tq)), len(tq), size, normals=mk.normal[mq],
-                                      tri_normal=tn[tq]).tocoo()
-            foot = np.bincount(W.col, W.data, minlength=len(tq))
-            ok = foot[W.col] > 0.0
-            r, c = W.row[ok], W.col[ok]
-            v = W.data[ok] / foot[c] * tri_area[tq[c]]
-            flat = np.flatnonzero(foot <= 0.0)
-            if len(flat):
-                o = _nearest(cKDTree(mk.x[mq]), feet[tq[flat]].mean(axis=1), 1, mk.normal[mq], tn[tq[flat]])[1][:, 0]
-                mine = o < len(mq)
-                r, c = np.concatenate([r, o[mine]]), np.concatenate([c, flat[mine]])
-                v = np.concatenate([v, tri_area[tq[flat[mine]]]])
-            rows.append(mk.skin_index[mq[r]]), cols.append(P.tri_patch[tq[c]]), vals.append(v)
-        if not rows:
-            return sp.csr_matrix((sk.n, npatch))
-        return sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
-                             shape=(sk.n, npatch))
+        order = np.argsort(d.base_cell)
+        k = np.searchsorted(d.base_cell[order], P.cell)
+        found = k < len(order)
+        found[found] = d.base_cell[order[k[found]]] == P.cell[found]
+        if not found.all():
+            raise RuntimeError("{} of {} patches of beta lie in cells the division's base level does not cut: the "
+                               "division is not of phi as it is".format(int((~found).sum()), npatch))
+        at = order[k]
+        W = d.base_owner[:, at].tocoo()
+        scale = np.divide(P.area, d.base_patch_area[at], out=np.ones(npatch), where=d.base_patch_area[at] > 0.0)
+        return sp.csr_matrix((W.data * scale[W.col], (mk.skin_index[W.row], W.col)), shape=(sk.n, npatch))
 
     def _interface(self):
         """(S (n, P) sparse, row-stochastic: row m's share A_p / A(G_m) of each patch of its group; A(G) (n,) [m2], zero
@@ -918,7 +900,8 @@ class LevelSetSkinBody(StepEnd):
             interface_mismatch_J=tally.mismatch, volume_correction_max=tally.correction, n_pieces=int(n_pieces),
             frontal_area_m2=float((P.area * np.maximum(P.normal @ self.v_hat, 0.0)).sum()),
             layer_factor_max=tally.layer_factor, fill_miss_max=tally.fill_miss, move_miss_max=tally.move_miss,
-            n_baseless=tally.baseless, density_carry_m3=float(self.carry.sum()), island_nodes=tally.islands,
+            n_baseless=tally.baseless, density_carry_m3=float(self.carry.sum()),
+            density_carry_share_max=self._carry_share(), island_nodes=tally.islands,
             groups_guarded_max=tally.guarded, move_corrections=list(tally.corrections), summary=summary)
         return self.last_step
 

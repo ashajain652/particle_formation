@@ -31,14 +31,16 @@ volume m / rho(T) differs from its own by more than FILL_RTOL is filled, in at m
 with no base, from the neighbour across the boundary they share deepest (preferring a neighbour with a base): a short
 one takes the metal its neighbour holds just above that depth (`Skins.take_between`), as a new bottom cell; an overfull
 one gives its bottom excess into the neighbour's cell at that depth; then every column with a base at its base
-(`Skins.exchange_base`): a short one draws the volume's metal at the volume's temperature at its base point, but at most
-T_rigid (as stage 3's full-depth draw capped it; below), an overfull one returns its bottom cells whatever their phase.
-The cap (plan 03b Task 5, against design 21.3's "at the volume's own temperature"): within a step the markers and their
-top areas stay where it began while the face recedes, and an edge column whose top area came to hold four times its
-column's cross-section at phi emptied within a part under feed removal; the top heat it then passed straight to the
-volume took the metal beneath past T_feed, and every refill at that temperature was removed again at once, so that no
-shorter part could hold it (on the test cube at 6 MW/m2). What the cap leaves of the volume's enthalpy is owed to the
-volume at the base, as any fill's difference is. Metal changes owner, never place: the volume's one density is the
+(`Skins.exchange_base`): a short one draws the volume's metal at its base temperature, the area mean over its group of
+beta's patch temperatures (the base law's T_b, `skinbody.LevelSetSkinBody._interface`; the controller's ruling T5-k:
+read at the base point x - H n instead, it fell outside beta at every edge and corner marker of the test cube, by up to
+0.55 mm at rest, where the solve holds its cut cells' extensions or stale values), whatever its phase (design 21.3, the
+volume's own temperature), and an overfull one returns its bottom cells whatever their phase. (Task 5 first capped the
+draw at T_rigid, as stage 3's full-depth draw had; with the markers' areas given afresh within a step, `_own`, and the
+draw at the group's temperature, the test cube at 6 MW/m2 with the liquid fed off took 10 parts in a 0.5 s step
+without the cap against 9 with it, and 3 against 3 then 8 against 8 in two 0.25 s steps, measured once each, so the
+controller's ruling T5-d removed it.) What a fill's draw takes of the volume's enthalpy is owed to the volume at the base, as any
+fill's difference is. Metal changes owner, never place: the volume's one density is the
 solid's (design 21.6), so what crosses the base at another density changes the metal's true volume against the
 geometry: that difference, the cells' volume change less the exchanged mass over rho_s, is each column's carry (planning
 ruling 4), a volume change at the top of that column taken into the next move of phi (the next part's, or the step
@@ -53,7 +55,11 @@ beta derived, and `CutThermal.remesh` (its enthalpy residual booked as heat owed
 snapped onto phi to SNAP_TOL, the trapped and the patchless released (each giving its skin to the nearest marker by
 depth, `Markers.release`; planning ruling 6), tessellated, their skins re-partitioned (below), split and merged,
 snapped, tessellated and re-partitioned again, the skins regridded and given their markers' areas; then divided and
-filled, and the thin-metal stop (THIN_METAL, design 21.11) checked.
+filled, and the thin-metal stop (THIN_METAL, design 21.11) checked. The step end's own settle and fill leave a carry of
+their own (the re-partition's mixing and the drawn metal's density difference), which waits for the next step's first
+move (the controller's ruling T5-i, reading planning ruling 4's "before the closure check" as a bound on the carry
+left): until then phi misses its metal's true volume by it, the step's `density_carry_m3` (largest share of a column,
+`density_carry_share_max`), which the tests bound.
 
 The re-partition (Task 9b, the controller's ruling of 2026-11-12; by mass until plan 03b Task 6, the controller's ruling
 P4). A tessellation hands the surface out afresh: most of a marker's area change at a step end is area passing between
@@ -404,7 +410,9 @@ class StepEnd:
     def _fill(self, tally):
         """Every column filled to its volume (module docstring; planning ruling 3, step 7): the columns with no base
         from their neighbours, then those with one at their bases, in at most FILL_ROUNDS rounds; each row's carry
-        takes its cells' volume change less the mass the volume gave it over rho_s. Counts in `tally`: `drawn`,
+        takes its cells' volume change less the mass the volume gave it over rho_s. A column with a base draws at its
+        base temperature, its group's area mean of beta's patch temperatures (`_interface`, once; the controller's ruling
+        T5-k); RuntimeError if a short one has no group. Counts in `tally`: `drawn`,
         `handed` [kg] the base exchange each way, `to_volume` [kg m/s] the returned cells' momentum (the held volume
         takes it), `fill_miss` the largest miss left as a share of its column's volume, `baseless` the columns with no
         base. Returns the enthalpy [J] the skins took from the volume (negative where they returned more), for the
@@ -413,7 +421,10 @@ class StepEnd:
         V_col = sk.column_volume()
         base = ~self._baseless()
         tally.baseless = int((~base).sum())
-        T_draw = np.minimum(interpolate(self.mesh, self.solver.T, self._bases()), self.material.T_rigid)
+        S, A_group, _ = self._interface()
+        T_draw = np.full(sk.n, np.nan)                      # each column's base temperature (NaN: no group)
+        has = A_group > 0.0
+        T_draw[has] = (S @ self.solver.patch_T())[has]
         taken = 0.0
         for _ in range(FILL_ROUNDS):
             miss = V_col - sk.cells_volume()
@@ -429,7 +440,12 @@ class StepEnd:
                 continue
             v0 = sk.cells_volume()[rows]
             d = miss[rows]
-            dV = np.where(d > 0.0, d * sk.density(T_draw[rows]) / sk.rho_s, d)    # a draw fills d at T_draw's density
+            short = d > 0.0
+            if np.isnan(T_draw[rows[short]]).any():
+                raise RuntimeError("{} short column(s) with a base have no group of beta to draw from".format(
+                    int(np.isnan(T_draw[rows[short]]).sum())))
+            dV = d.copy()
+            dV[short] = d[short] * sk.density(T_draw[rows[short]]) / sk.rho_s      # a draw fills d at T_draw's density
             ex = sk.exchange_base(rows, dV, T_draw[rows])
             self.carry[rows] += (sk.cells_volume()[rows] - v0) - ex.mass / sk.rho_s
             tally.drawn += float(ex.mass[ex.mass > 0.0].sum())
@@ -457,7 +473,8 @@ class StepEnd:
     def _end_step(self, tally, surface=None, check_core=True):
         """The macro step's end (module docstring): the last part's carry taken by phi (planning ruling 4), then
         `_rebuild` from the surface the markers' areas were last given on (`surface`, the samples of phi as it is by
-        default: the parts give the areas afresh as phi moves, `_own`)."""
+        default: the parts give the areas afresh as phi moves, `_own`). The carry `_rebuild`'s settle and fill leave
+        waits for the next step's first move (the controller's ruling T5-i)."""
         if self._needs_move(self.carry):
             weight = np.abs(self.carry)
             owed = self._move_phi(np.zeros(self.skins.n), tally, "carry")

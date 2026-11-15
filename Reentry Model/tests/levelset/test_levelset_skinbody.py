@@ -58,7 +58,9 @@ def owed(body, book):
 
 def closure(body):
     """The largest share by which a piece of phi's metal volume misses the skins' cells (m / rho(T)) and the volume's
-    metal (beta's) in its cells and rows (plan 03b Task 5: every column exactly full)."""
+    metal (beta's) in its cells and rows (plan 03b Task 5: every column exactly full). The carry the step end leaves
+    (the volume's metal phi has yet to take) is not counted here: the steps' `density_carry_m3` and
+    `density_carry_share_max` bound it (the controller's ruling T5-i)."""
     mesh, mk, sk = body.mesh, body.markers, body.skins
     label, n = pieces(mesh, body.phi)
     v_phi, v_beta = inside_volumes(mesh, body.phi), inside_volumes(mesh, body.beta)
@@ -153,21 +155,32 @@ def test_a_macro_step_closes_mass_and_enthalpy(heated):
         assert key in book.row()
 
 
+CARRY_LEFT = 1.6e-11      # m3: the carry a heated step's end leaves for the next step's first move, |density_carry_m3|
+                          # at most this (8.1e-12 m3, 8e-6 of the cube's volume, at most over the three steps)
+CARRY_SHARE = 2.8e-3      # and no row's carry more than this share of its column's volume (1.42e-3 at most); each twice
+                          # the value measured once, the controller's ruling T5-i
+
+
 def test_every_step_closes_the_layer_and_the_books(heated):
     """Plan 03b Task 5 (design 21.8 item 5): over the heated cube's three steps, every division closes each piece to
     DIVISION_TOL (`layer_factor_max`), every fill leaves each column within 1e-12 of its volume (`fill_miss_max`), each
     piece's phi encloses its metal -- the skins' cells at their own densities and the volume's metal, beta's -- to 1e-12,
-    and the books close within the Global Constraints (mass 1e-12, enthalpy 1e-8)."""
+    the carry the step end leaves for the next step's first move is within CARRY_LEFT in all and CARRY_SHARE of any
+    column (the controller's ruling T5-i), and the books close within the Global Constraints (mass 1e-12, enthalpy
+    1e-8)."""
     body, _, books, closures, seconds = heated
+    V = float(inside_volumes(body.mesh, body.phi).sum())
     for k, (book, c) in enumerate(zip(books, closures)):
         print("step {}: {:.1f} s, {} parts; factor {:.2e}, fill {:.1e}, closure {:.1e}, move miss {:.2e}, baseless {}, "
-              "carry {:.2e} m3; drawn {:.3e} handed {:.3e} kg; residuals mass {:.1e} enthalpy {:.1e}".format(
+              "carry left {:.3e} m3 ({:.2e} of the body), at most {:.3e} of a column; drawn {:.3e} handed {:.3e} kg; "
+              "residuals mass {:.1e} enthalpy {:.1e}".format(
                   k + 1, seconds[k], book.parts, book.layer_factor_max, book.fill_miss_max, c, book.move_miss_max,
-                  book.n_baseless, book.density_carry_m3, book.mass_drawn, book.mass_handed, book.mass_residual,
-                  book.enthalpy_residual))
+                  book.n_baseless, book.density_carry_m3, book.density_carry_m3 / V, book.density_carry_share_max,
+                  book.mass_drawn, book.mass_handed, book.mass_residual, book.enthalpy_residual))
         assert book.layer_factor_max <= DIVISION_TOL
         assert book.fill_miss_max <= skinbody.FILL_RTOL
         assert c <= CLOSE_RTOL
+        assert abs(book.density_carry_m3) <= CARRY_LEFT and book.density_carry_share_max <= CARRY_SHARE
         assert abs(book.mass_residual) <= 1e-12 and abs(book.enthalpy_residual) <= 1e-8
     assert books[-1].mass_handed > 0.0                   # the melting face swelled and returned metal at its bases
 
@@ -264,6 +277,46 @@ def test_a_sprayed_column_draws_from_the_volume_at_its_base():
     assert b0 - beta_z() == pytest.approx(taken / A, rel=1e-6)
     assert abs(sk.cells_volume()[0] / sk.column_volume()[0] - 1.0) <= skinbody.FILL_RTOL
     assert abs(mass) <= 1e-12 and tally.drawn > 0.0 and tally.handed == 0.0
+
+
+DRAW_FIELD = (800.0, 5e3)   # K, K/m: the volume's temperature T0 + g (x + y + z) in the draw test
+DRAW_APART_K = 1.0          # K: the field read at the edge column's base point differs from its group's mean by more
+
+
+def test_an_edge_column_draws_at_its_group_s_base_temperature(monkeypatch):
+    """Plan 03b Task 5's fix round 1 (the controller's ruling T5-k): a column with a base draws the volume's metal at
+    its own base temperature, the area mean over its group of beta's patch temperatures that its base law reads, not at
+    the base point x - H n, which lies outside beta for every edge and corner marker. On the test cube with the volume's
+    temperature a linear field T0 + g (x + y + z) (DRAW_FIELD), the edge or corner column whose base point lies farthest
+    outside beta, 0.1 mm of its top taken: the fill draws it at exactly its group's mean of the patch temperatures,
+    which the field at its base point misses by more than DRAW_APART_K, and the column is full."""
+    body = cube_body()
+    sk, mk, solver = body.skins, body.markers, body.solver
+    T0, g = DRAW_FIELD
+    solver.T = T0 + g * body.mesh.points.sum(axis=1)
+    rows = mk.skin_index[np.abs(mk.normal).max(axis=1) < 0.9]                        # the edge and corner columns
+    rows = rows[~body._baseless()[rows]]
+    outside = interpolate(body.mesh, body.beta, body._bases()[rows])
+    row = int(rows[np.argmax(outside)])
+    sk.take_between([row], 0.0, 0.1e-3)
+    S, A_group, _ = body._interface()
+    assert A_group[row] > 0.0
+    want = float((S @ solver.patch_T())[row])
+    at_point = float(interpolate(body.mesh, solver.T, body._bases()[[row]])[0])
+    calls = []
+    exchange = sk.exchange_base
+
+    def spy(r, dV, T_draw=None):
+        calls.append((np.array(r), None if T_draw is None else np.broadcast_to(T_draw, np.shape(r)).copy()))
+        return exchange(r, dV, T_draw)
+    monkeypatch.setattr(sk, "exchange_base", spy)
+    body._fill(skinbody._Tally(sk.n))
+    got = [T[list(r).index(row)] for r, T in calls if row in r]
+    print("edge column {} (base point {:.3f} mm outside beta): drew at {} K; its group's mean {:.4f} K; the field at "
+          "its base point {:.4f} K".format(row, outside.max() * 1e3, np.round(got, 4), want, at_point))
+    assert len(got) >= 1 and all(t == pytest.approx(want, rel=1e-12) for t in got)
+    assert abs(at_point - want) > DRAW_APART_K
+    assert abs(sk.cells_volume()[row] / sk.column_volume()[row] - 1.0) <= skinbody.FILL_RTOL
 
 
 def zero_height(body, f, x=0.0, y=0.0):
@@ -619,26 +672,68 @@ def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
 
 
 FACE_GROUP_MEDIAN = (0.95, 1.05)   # the test cube's +x face skins' groups over their base areas: the median within this
+FACE_GROUP_MIN = 0.7               # and none below this
+FACE_GROUP_OWN = 0.8               # at least this share of them left by the guard, each its own patches in proportion
 
 
-def test_a_skin_s_group_is_the_base_beneath_its_own_cell():
-    """Design 21.5 (one division serves the base groups): each patch of beta belongs to the marker owning its foot on phi
-    (`_beta_owners`), so a skin's base heat enters the volume through the base of its own column: the patches' areas are
-    divided whole, the test cube's +x face skins' groups hold their columns' bases (the division's A(H)) to a median
-    within FACE_GROUP_MEDIAN, and the law stays exact: the groups' shares sum to one per marker with a base."""
-    body = cube_body()
+@pytest.fixture(scope="module")
+def rest():
+    """The test cube at rest, as built (read only)."""
+    return cube_body()
+
+
+def test_a_skin_s_group_is_the_base_beneath_its_own_cell(rest):
+    """Design 21.5 (one division serves the base groups): each patch of beta belongs to the marker owning its foot on
+    phi (`_beta_owners`, the division's base level), so a skin's base heat enters the volume through the base of its own
+    column: the patches' areas are divided whole, the test cube's +x face skins' groups hold their columns' bases (the
+    division's A(H)) to a median within FACE_GROUP_MEDIAN and none below FACE_GROUP_MIN, at least FACE_GROUP_OWN of
+    them are left by the guard and spread their law over their own patches in proportion to the area they hold of
+    each, and the law stays exact: the groups' shares sum to one per marker with a base."""
+    body = rest
     P = body.solver.P
     G = body._beta_owners(P)
     np.testing.assert_allclose(np.asarray(G.sum(axis=0)).ravel(), P.area, rtol=1e-12)
     S, A_group, _ = body._interface()
     mk = body.markers
+    A = body.skins.base_area()
     face = mk.skin_index[mk.normal[:, 0] > 0.9]
-    ratio = A_group[face] / body.skins.base_area()[face]
+    ratio = A_group[face] / A[face]
     print("face groups {} (guard replaced {})".format(np.round(np.sort(ratio), 3), body.last_guarded))
     lo, hi = FACE_GROUP_MEDIAN
-    assert lo <= np.median(ratio) <= hi
+    assert lo <= np.median(ratio) <= hi and ratio.min() >= FACE_GROUP_MIN
     has = A_group > 0.0
     np.testing.assert_allclose(np.asarray(S.sum(axis=1)).ravel()[has], 1.0, rtol=1e-14)
+    held = np.asarray(G.sum(axis=1)).ravel()
+    g_lo, g_hi = skinbody.GROUP_AREA_RANGE
+    own = face[(held[face] >= g_lo * A[face]) & (held[face] <= g_hi * A[face])]     # the groups the guard left
+    print("{} of {} face groups left by the guard".format(len(own), len(face)))
+    assert len(own) >= FACE_GROUP_OWN * len(face)
+    want = G[own].multiply(1.0 / held[own][:, None]).toarray()
+    np.testing.assert_allclose(S[own].toarray(), want, rtol=0.0, atol=1e-12)        # their own patches, in proportion
+
+
+def test_each_patch_of_beta_is_owned_as_the_division_owns_its_base_level(rest):
+    """Plan 03b Task 5's fix round 1 (the controller's ruling T5-j): beta keeps phi + H's values in the cells it cuts,
+    so its patches are the division's base level, and the groups are the division's ownership of it, found once per
+    division. On the test cube at rest, with the division computed afresh on phi as it is (so the body's own is
+    current): every patch of beta lies in a cell the base level cuts, with that level's area there to 1e-12, and is held
+    by exactly the markers that own that level's patch, each the same area to 1e-12 of the patch's."""
+    from reentry_model.levelset.division import divide
+    body = rest
+    mk, P = body.markers, body.solver.P
+    d = divide(body.mesh, body.phi, H, mk.x, mk.normal)
+    at = {int(c): k for k, c in enumerate(d.base_cell)}
+    assert all(int(c) in at for c in P.cell)
+    k = np.array([at[int(c)] for c in P.cell])
+    np.testing.assert_allclose(P.area, d.base_patch_area[k], rtol=1e-12, atol=0.0)
+    W = d.base_owner[:, k].toarray()
+    want = np.zeros((body.skins.n, len(P.area)))
+    want[mk.skin_index] = W
+    G = body._beta_owners(P).toarray()
+    print("{} patches of beta, {} owner entries; largest difference {:.1e} of a patch's area".format(
+        len(P.area), int((G > 0.0).sum()), (np.abs(G - want) / P.area).max()))
+    assert np.array_equal(G > 0.0, want > 0.0)
+    assert (np.abs(G - want) / P.area).max() <= 1e-12
 
 
 BEAM_Z = np.array([0.0, 0.0, 1.0])   # a beam arriving along -z
@@ -1027,12 +1122,17 @@ def test_a_failed_part_is_reported_as_no_rigid_metal_only_on_restored_state(monk
 def test_a_body_pickled_with_the_retired_mode_settings_loads_without_them():
     """Plan 03b Task 5: a body pickled before the modes were retired holds `mode_settings`; it loads without it, and one
     with no division or carry (from before the one skin depth) takes none and an empty carry, to be adopted by its next
-    step (`_adopt`)."""
+    step (`_adopt`); so too one whose division has no base level's ownership (from before Task 5's fix round 1)."""
     import pickle
+    from dataclasses import replace
     body = cube_body()
     body.__dict__["mode_settings"] = {"hold_thick": 1}
     back = pickle.loads(pickle.dumps(body))
-    assert "mode_settings" not in back.__dict__
+    assert "mode_settings" not in back.__dict__ and back.division is not None
+    division = body.division
+    body.division = replace(division, base_cell=None, base_patch_area=None, base_owner=None)
+    assert pickle.loads(pickle.dumps(body)).division is None
+    body.division = division
     del body.__dict__["division"], body.__dict__["carry"], body.__dict__["mode_settings"]
     old = pickle.loads(pickle.dumps(body))
     assert old.division is None and np.array_equal(old.carry, np.zeros(old.skins.n))

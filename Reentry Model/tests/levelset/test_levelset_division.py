@@ -95,6 +95,27 @@ def test_a_flat_slab_divides_into_prisms():
     assert not d.opposed.any()
 
 
+def test_the_base_level_s_ownership_divides_beta_s_patches_whole():
+    """Plan 03b Task 5's fix round 1 (the controller's ruling T5-j): the division keeps its base level's ownership by the
+    plain area (`Division.base_owner`), the groups of beta the body's base law uses. On the flat slab of the prism test
+    the base level's patches lie in the cells phi + H cuts, each divided whole among the markers (their columns sum to
+    the patches' areas to 1e-12), and each interior marker holds its 2 mm square of the base to 1e-9, which is its
+    column's base A(H) (the faces' |grad phi| is one)."""
+    base = BoxBase((-6e-3, -2.5e-3, -6e-3), 0.5e-3, (24, 6, 24))
+    mesh = build(base)
+    phi = mesh.points[:, 1] - OFF
+    x, nrm = _sheet(OFF, True, -6e-3, 6e-3)
+    d = divide(mesh, phi, H, x, nrm)
+    P = patches(mesh, phi + H)
+    assert np.array_equal(np.sort(d.base_cell), np.sort(P.cell))
+    assert d.base_owner.shape == (len(x), len(d.base_cell))
+    np.testing.assert_allclose(np.asarray(d.base_owner.sum(axis=0)).ravel(), d.base_patch_area, rtol=1e-12)
+    inner = np.all(np.abs(x[:, [0, 2]] - GRID_OFF) < 2.0 * DESIGN_SPACING, axis=1)
+    held = np.asarray(d.base_owner.sum(axis=1)).ravel()
+    assert np.abs(held[inner] / DESIGN_SPACING ** 2 - 1.0).max() <= 1e-9
+    np.testing.assert_allclose(held[inner], d.base[inner], rtol=1e-9)
+
+
 def test_a_spherical_shell_divides_by_the_shell_volume():
     """A sphere of radius 5 mm (a 10 mm sphere), markers seeded 2 mm apart as the body seeds them: the columns' volumes
     close the shell to within DIVISION_TOL, and every column is a cone, its base (R - H)^2 / R^2 of its top to 2 %."""
