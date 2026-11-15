@@ -321,18 +321,22 @@ A skin flight ends itself normally, with end reason `geometry`, exit code 0 and 
 the default, is one provider (`reentry_model/shared/gas_loads.py`) solved once a macro step and read by the surface flow
 and, with `--heating physics`, by the heating: the wall pressure round the whole body (the model's windward law,
 continued past 90 degrees until it meets Daniels and Schwartzentruber's lee pressure), the shear and heat flux of a Lees
-similarity boundary layer on chemically frozen post-shock air to the angle where it separates (about 150 degrees), with
-Daniels and Schwartzentruber's shear from a body Knudsen number of 0.05; the skins' corners that the centroid test
-shelters are read in the separated wake. It replaces a continuum shear that was five to six times below DSMC and the
-zero shear and heating behind 90 degrees. `classic` is the loads as they were (Fay-Riddell and Lees heating, freestream
-pressure and no shear or heating on the lee), named `_loads-classic`, and reproduces main bit for bit (the JSON gains
-`settings.gas_loads`). The similarity heating does not read `--stagnation` or `--catalycity` (the JSON lists them under
-`heating_unused`) and refuses `--bridging-heat sesam-table`. `resume` keeps the loads the state was saved with (a state
-saved before the option resumes on `classic`). On the 65 km smoke flights the default added about 1 s to every macro step
-(skins 4.98 s against 3.92 s, element model 1.22 s against 0.29 s), lowered the stagnation heating by about 2 %, raised
-the total convective heat by 16 % (6.2 % of it now lands behind 90 degrees), and raised the peak shear 4.3 times and
-the shoulder shear 6.1 times. The equations, rulings, measurements and the accuracy against Holman and Boyd's DSMC are in
-`Reentry Model/docs/model_assumptions.md` section 14.
+similarity boundary layer on chemically frozen post-shock air to the angle where it separates (152 degrees at Holman and
+Boyd's Kn 0.002, 0.01 and 0.05 states and 160 degrees at their Kn 0.25 state), with Daniels and Schwartzentruber's
+shear from a body Knudsen number of 0.05; the skins' corners that the centroid test shelters are read in the separated
+wake. It replaces a continuum shear that was five to six times below DSMC and the zero shear and heating behind 90
+degrees. Below about Mach 4 the joined pressure steps down at 90 degrees, a known limitation pending a decision
+(section 14.1 of the assumptions). `classic` is the loads as they were (Fay-Riddell and Lees heating, freestream
+pressure and no shear or heating on the lee), named `_loads-classic`, and reproduces main bit for bit on the four
+`same_results.py` cases (step1, skins, element, nomelt), apart from `settings.gas_loads` and the absolute
+`settings.fap_day` path. The similarity heating does not read `--stagnation` or `--catalycity` (the JSON lists them,
+at their defaults, under `heating_unused`) and refuses either one given other than at its default, and
+`--bridging-heat sesam-table` (exit 2, naming `--gas-loads classic`). `resume` keeps the loads the state was saved with
+(a state saved before the option resumes on `classic`). On the 65 km smoke flights the default added about 1 s to every
+macro step (skins 4.98 s against 3.92 s, element model 1.22 s against 0.29 s) and lowered the stagnation heating by
+about 2 %; on the element flight it raised the total convective heat by 16 % (6.2 % of it now lands behind 90 degrees),
+the peak shear 4.3 times and the shoulder shear 6.1 times. The equations, rulings, measurements and the accuracy against
+Holman and Boyd's DSMC are in `Reentry Model/docs/model_assumptions.md` section 14.
 
 `--rheology composite|bridge` chooses the slurry's viscosity law for a melting skin run (`--melt on` with the skins; accepted and ignored otherwise). Since 2026-11-12 the default is `composite`, a law of the solid fraction alone with no shear-rate dependence: a suspension law below 10 % solid (assumed, with an assumed internal solid fraction of 0.5; nothing is measured on aluminium there) and Li et al.'s (2014) fit at 489.88 1/s from 10 % to half solid (46.2 times the liquid's viscosity at 10 % solid, 168 times at 50 %). The jump between the two at 10 % solid (a factor of 24 at the default internal fraction) is unresolved. `--rheology bridge` is the earlier law, Li et al.'s averaged law held at 367 1/s with a log-linear bridge to the liquid between 906.4 K and 908 K; a melting skin run under it is named with the suffix `_rheology-bridge`, and a flight saved before the option existed keeps it when resumed unless `resume --rheology composite` is given. The run's JSON records `skin.rheology` and `skin.internal_solid_fraction`. `--slurry-spray` keeps its default, off. The sources, assumptions and uncertainties are in `Reentry Model/docs/model_assumptions.md` section 13.
 

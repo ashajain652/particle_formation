@@ -138,11 +138,13 @@ The surface gas loads of a `--thermal fem` run are chosen by `--gas-loads simila
 2026-11-13 the default is `similarity`, the interim gas loads (`shared/gas_loads.py`; Part A of
 `docs/superpowers/specs/2026-11-12-shoulder-melt-loss-design.md`): one provider per flight, read by the surface flow
 and, with `--heating physics`, by `heating.SimilarityHeating`, with the skins' sheltered corners read in the separated wake.
-`classic` is the loads as they were, named `_loads-classic`, bit for bit main's results apart from the JSON's
-`settings.gas_loads` (`analysis/skyscrapers_port/same_results.py`, 2026-11-14). `resume` has no option: a state keeps the
+`classic` is the loads as they were, named `_loads-classic`, bit for bit main's results on the four `same_results.py`
+cases (step1, skins, element, nomelt), apart from `settings.gas_loads` and the absolute `settings.fap_day` path
+(`analysis/skyscrapers_port/same_results.py`, 2026-11-14). `resume` has no option: a state keeps the
 loads it was saved with, and a state saved before the option resumes on `classic`. The provider solves its similarity
 boundary layer once a macro step (about 0.5 to 3 s a solve), which on the 65 km smoke flights added about 1 s a macro step
-and made the non-melting Step 2 flights to the ground 19 and 80 times slower (1068 s and 1684 s against 57 s and 21 s).
+and made the non-melting Step 2 flights to the ground about 19 and 80 times slower (1068 s and 1684 s against 57 s and
+21 s; each measured once, the interim and classic flights under different machine loads, so the factors are approximate).
 Read `docs/model_assumptions.md` section 14 before quoting a result under either loads.
 
 The melting skins' slurry viscosity is chosen by `--rheology composite|bridge` (`run` and `resume`). Since 2026-11-12 the default for a melting skin run is `composite` (`shared/rheology.py`: a function of the solid fraction alone; a suspension law below 10 % solid, assumed, then Li et al.'s fit at 489.88 1/s up to half solid; the jump at 10 % solid is unresolved). `--rheology bridge` is the earlier law and marks the run name with `_rheology-bridge`; `SkinSettings.rheology` defaults to `"composite"` in the library too; a state saved before the option existed flew the bridge law and keeps it on resume (`SkinSettings.__setstate__`). `--slurry-spray` stays off by default. Read `docs/model_assumptions.md` section 13 for the law's sources and what is assumed before quoting a result under it.

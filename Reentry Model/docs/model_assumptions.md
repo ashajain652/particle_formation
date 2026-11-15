@@ -1102,8 +1102,10 @@ measurement behind it; Asha's decisions are dated as in the design.
   and a cache of the last 8 such keys makes them share one solve. **(verified)** On the 65 km skins smoke flight
   (14.7) the provider solved 10 meridians for 9 macro steps and the history's first row, one per freestream state: in
   every step the heating's call solved and the surface flow's call found the result in the cache (counted by wrapping
-  `GasLoads._solve` in a scratch script, 2026-11-14). A patch's loads are the provider's bins interpolated linearly at
-  its angle.
+  `GasLoads._solve` in a scratch script, 2026-11-14). The same count is pinned on the melting skins' test flight, its
+  first row and two macro steps
+  (`tests/test_reentry_model_restart.py::test_a_macro_step_of_a_skin_flight_solves_one_meridian_shared_by_the_heating_and_the_surface_flow`).
+  A patch's loads are the provider's bins interpolated linearly at its angle.
 - Pressure (Asha, 2026-11-12, design A4, the join at the shoulder). Up to 90 degrees the model's own windward law,
   `surface_flow.wall_pressure` (modified Newtonian to the sonic point, Prandtl-Meyer beyond, with the effective
   gamma_pm 1.15), evaluated on the unreacted stagnation pressure (14.2; design A4b). Past 90 degrees the same
@@ -1114,7 +1116,37 @@ measurement behind it; Asha's decisions are dated as in the design.
   the meeting angle and to 1e-5 beyond it, where the reference was written from 6-figure coefficients (ruling R5;
   `tests/test_reentry_model_gas_loads.py::test_joined_pressure_reproduces_reference`). At Holman and Boyd's conditions
   (A1) it meets at 150 degrees for their Kn 0.002, 0.01 and 0.05 cases and at 158 degrees for Kn 0.25 on the default
-  2-degree bins (157 degrees on 1-degree bins), measured by `analysis/gas_loads/plots/model_vs_dsmc.py`.
+  2-degree bins (157 degrees on 1-degree bins), measured by `analysis/gas_loads/plots/model_vs_dsmc.py`. Before Cantera
+  expands the gas to it, the joined pressure is clamped at `gas_loads.P_FLOOR`, 1e-20 times the freestream pressure, so
+  a non-positive value (possible only from Daniels and Schwartzentruber's lee pressure) never reaches Cantera; their
+  lowest lee pressure in a scan from 1e-12 to 1.26 kg/m3 is 7.4e-15 times the freestream pressure, so the clamp changes
+  no result (`tests/test_reentry_model_gas_loads.py::test_a_non_positive_joined_pressure_is_floored_before_cantera`).
+- **Known limitation, pending a decision: the pressure steps down at 90 degrees below about Mach 4** (final review,
+  2026-11-14). Up to 90 degrees the windward law never lets the pressure fall below the freestream pressure (the floor
+  of `surface_flow.wall_pressure`); past 90 degrees the Prandtl-Meyer expansion restarts from the same reservoir with no
+  such floor (`gas_loads.joined_pressure`). At low Mach number the expansion has already fallen to the freestream
+  pressure before 90 degrees, so the floored windward value and the restarted lee value disagree. The design's "no step
+  at 90 degrees" (A4) therefore holds only above about Mach 4: the uncapped expansion reaches the freestream pressure
+  exactly at 90 degrees at Mach 3.39, the same to within 0.004 at four freestream states from 0.001 to 0.4 kg/m3 and
+  200 to 270 K. Measured once, with scratch scripts that call `joined_pressure` and `GasLoads.meridian` on 2-degree
+  bins at a 30 km freestream (density 0.0184 kg/m3, 226.5 K, nose radius 50 mm), 2026-11-14:
+  - Pressure. The pressure over the freestream pressure is 1.000 at 88 and 90 degrees and then, at 92 degrees, 0.874 at
+    Mach 3, 0.778 at Mach 2 and 0.677 at Mach 1.5, a fall of 13 to 32 % within one bin. From Mach 3.5 up the fall is
+    smooth: neighbouring bins differ by the same factor, about 0.90, on either side of 90 degrees (for example 1.496,
+    1.347 and 1.210 at 88, 90 and 92 degrees at Mach 4).
+  - Shear. At Mach 2 (wall at 400 K) the shear is 9.9 Pa at 88 degrees, 39.9 Pa at 90 and 42.4 Pa at 92, a fourfold
+    rise within one bin. At Mach 3 (wall at 1200 K) it dips to 11.1 Pa at 88 degrees between 44.1 Pa at 86 and 54.2 Pa
+    at 90, because the floored, flat stretch of pressure drives the pressure-gradient parameter beta to zero.
+  - Pressure gradient along the surface, which pushes the film. At Mach 2 it is 0 at 88 degrees, -77 kPa/m at 90 and
+    -93 kPa/m at 92; at a subsonic state (Mach 0.67: 0.4 kg/m3, 223 K, wall at 900 K) it is -13 kPa/m at 88 degrees and
+    about -720 kPa/m at 90 and 92.
+  - When a flight meets it. On the committed SESAM trajectories of the Step 2 references (US76, no wind, sampled every
+    second) the 100 mm sphere from 77.5 km is first below Mach 4 at 181.55 s (below Mach 3.39 from 185.55 s) and lands
+    at 366.23 s; the 50 mm sphere from 115 km is first below Mach 4 at 296.55 s (300.55 s) and lands at 559.25 s. The
+    melting skin flights so far ran to about 180 to 187 s (the final review's figure), so a 100 mm melting flight that
+    goes on past about 181 s, or any flight to the ground, meets it. The two Step 2 flights to the ground on these loads
+    (14.7) flew through it; its effect on their heat totals was not measured.
+  Whether and how to remove the step changes the pressure law, and is Asha's decision (14.9).
 - The film feels this pressure as a gradient on both sides: the gradient along the surface is taken on the provider's
   bins, so the fall past the shoulder now pushes the film rearward, where before the drop to freestream at the equator
   never acted on it.
@@ -1154,7 +1186,11 @@ measurement behind it; Asha's decisions are dated as in the design.
   gives both the shear and the heating, so they share one separation angle (design A4b).
 - Properties. Real frozen-air enthalpy (Cantera NASA-9 at fixed composition) and viscosity (the model's Blottner fits
   with Wilke mixing) as cubic splines from 150 to 20 000 K every 50 K; piecewise-linear tables stop the collocation
-  solver converging (design A4).
+  solver converging (design A4). The temperature lookup clips at the table's ends, so a march whose edge total enthalpy
+  is above the table's top (32.2 MJ/kg, the frozen-air enthalpy at 20 000 K; reached from a 200 K freestream at about
+  8.05 km/s, above the flights' 7.5 km/s start) raises `SimilarityError` naming both enthalpies before any solve, and
+  the flight fails that step (ruling R6) instead of flying on clipped properties
+  (`tests/test_reentry_model_similarity.py`, `tests/test_reentry_model_gas_loads.py`).
 - Solution method (the builder's choice of design A4b: solved, not tabulated). Every macro step the boundary-value
   problem is solved at every 2-degree bin from 0 to 178 degrees by `scipy.integrate.solve_bvp` (eta from 0 to 12,
   tolerance 1e-4, at most 20 000 mesh nodes; the largest converged solve over the four Holman-Boyd marches needs 1866,
@@ -1186,7 +1222,21 @@ measurement behind it; Asha's decisions are dated as in the design.
   its slip factor nor its blend). The Knudsen number is the model's own Kn_body (hard-sphere mean free path,
   d = 3.65e-10 m, over the diameter), about 1.32 times Holman and Boyd's labels, so their "Kn 0.05" case (Kn_body 0.067)
   falls on Daniels and Schwartzentruber's side (design A4b). Known limit (design A3): at exactly Kn 0.05 the similarity
-  shear was the closer of the two at the shoulder, so the best crossover lies between 0.05 and 0.25.
+  shear was the closer of the two at the shoulder, so the best crossover lies between 0.05 and 0.25. The switch and
+  Daniels and Schwartzentruber's formulas use different diameters. Their pressure and shear are evaluated on twice the
+  current nose radius that the body passes the provider (`radius`; for the skins under `--size-feedback current`, their
+  default, the radius of the sphere fitted to the column tops). The switch reads the trajectory's Kn_body, which is on
+  the fixed initial diameter for the skins and the non-melting body, and on the remaining mass's equivalent diameter
+  only for the melting element model with `--size-feedback current`. The two diameters part once the nose changes
+  shape.
+- In the free-molecular branch of the surface flow (Kn_body at least 10, or a freestream Mach number at most 1) the
+  provider's shear is taken on both sides with no slip factor or blend. Above Kn_body 10 it is Daniels and
+  Schwartzentruber's, already rarefied. At Mach 1 or below it is the continuum similarity shear; there Kn_body is at
+  most 1.1e-5 (100 mm) and 4.6e-5 (50 mm) and the wall Knudsen number at most 2.1e-4 and 8.1e-4 on the two Step 2
+  flights to the ground (14.7; their histories' subsonic rows, at the hottest surface temperature and the freestream
+  pressure; the lee's pressure, 0.83 to 0.90 of the freestream's at Mach 0.83 and 0.67 with the scratch scripts of
+  14.1, raises the lee's value by up to a fifth), so the missing slip factor would change the shear by about 0.1 % at
+  most (`tests/test_reentry_model_surface_flow.py::test_free_molecular_and_degenerate`).
 - Below the switch the similarity shear still goes through the model's existing slip factor 1/(1 + C Kn_local)
   (C = (2 - sigma_v)/sigma_v, Kn_local the wall Knudsen number on the nose radius) and, on
   the merged branch (Kn_body 0.01 to 0.05), the SESAM-table blend toward free-molecular shear, which is not replaced
@@ -1198,7 +1248,9 @@ measurement behind it; Asha's decisions are dated as in the design.
   itself, are the windward side's (ruling R9: the literal rule zeroed the lee shear abruptly); on the merged branch the
   lee's blended shear is (1 - f) times the slip-corrected shear, the free-molecular shear being zero in the lee's
   shadow. **(assumed)** that this keeps the lee shear reasonable in thin shock-layer flow; ruling R9 records that it
-  may be somewhat high there.
+  may be somewhat high there. **(verified)** patch by patch against that formula on the merged branch at Kn_body 0.0298,
+  the 100 mm flight's start
+  (`tests/test_reentry_model_surface_flow.py::test_provider_on_the_merged_branch_below_the_switch_blends_the_slip_corrected_similarity_shear`).
 - The jump at the switch is measured, not smoothed (design A4b). `model_vs_dsmc.py` evaluates `SurfaceFlow` on a
   provider at Holman and Boyd's freestream (200 K, 7108 m/s, 0.3048 m sphere, 1500 K wall) with the density set so that
   Kn_body is 0.0495 and then 0.0505: the shear just above the switch over the shear just below it is 0.752 at
@@ -1223,9 +1275,11 @@ measurement behind it; Asha's decisions are dated as in the design.
 - Its stagnation flux equals the earlier Fay-Riddell value in all four of Holman and Boyd's cases (design A4), so the
   nose heating is twice DSMC at Kn 0.002 (A-5, 14.9). Measured on the model by `model_vs_dsmc.py`: the nose heating is
   2.03, 0.99, 0.79 and 0.78 times DSMC at their Kn 0.002, 0.01, 0.05 and 0.25.
-- `--stagnation` and `--catalycity` are not read by it (a run on it records them in its JSON as
-  `"heating_unused": ["stagnation", "catalycity"]`), and `--bridging-heat sesam-table` is refused (exit 2, naming
-  `--gas-loads classic`), because the similarity heating bridges by Matting's law only (ruling R16).
+- `--stagnation` and `--catalycity` are not read by it: a run on it records their default values in its JSON with
+  `"heating_unused": ["stagnation", "catalycity"]` (ruling R16), and either option given other than at its default
+  (`fay-riddell`, 1) is refused (exit 2, naming `--gas-loads classic`), so that an option is never silently ignored
+  (ruling R20). `--bridging-heat sesam-table` is refused in the same way, because the similarity heating bridges by
+  Matting's law only (ruling R16) (`tests/test_reentry_model_cli.py`).
 - The droplet stage keeps `PhysicsHeating` unchanged (design A4b); its reproduction test still matches to 1e-9.
 
 ### 14.5 Sheltered corners, `--gas-loads classic`, saving and resuming
@@ -1252,7 +1306,10 @@ measurement behind it; Asha's decisions are dated as in the design.
   Step 1 run, which names each checkout's own copy of the same file (same SHA-256). With those two keys set equal, the
   comparison reports the 21 files identical.
 - `resume` takes no `--gas-loads`: a saved flight resumes on the loads its saved objects hold, and a state saved before
-  this change resumes on the classic loads (`cli.gas_loads_of_run`; `tests/test_reentry_model_restart.py`).
+  this change resumes on the classic loads. The label the resume prints and records is the saved arguments'
+  `gas_loads`, and only for a state whose arguments have none (one saved before the option) is it read from the objects
+  (`cli.gas_loads_of_run`), so a similarity run whose objects hold no provider (SESAM's heating on the non-melting
+  element model) keeps its `similarity` label (`tests/test_reentry_model_restart.py`).
 - Tests that pin the classic loads: the Step 2 reference test (`tests/test_reentry_model_reference_thermal.py`) and
   the coupled and melting test modules build `PhysicsHeating` and their bodies directly, not through the run command, so
   they test the classic heating; two mechanism tests that do go through the run command (the 71 km continuum-step latch
@@ -1279,17 +1336,19 @@ Kn 0.002, 0.01, 0.05 and 0.25, which are Kn_body 0.0026, 0.013, 0.067 and 0.33).
   Schwartzentruber's shear is almost zero, the interpolation between 2-degree bins differs from the reference by more in
   relative terms (up to 34 % at 149 degrees at Kn 0.01) on shears that are about 0.1 % of their peak.
 - Shear against DSMC, on the model's own loads: at Kn 0.002, 0.78 to 0.84 times DSMC from 5 to 30 degrees, 0.97 to 1.12
-  from 45 to 75, 1.34 at 90 and 1.5 to 1.8 from 100 to 120 degrees; at Kn 0.01, 0.60 to 0.66 from 5 to 30 degrees, 0.79
-  to 0.92 from 45 to 75, 1.13 at 90 and 1.3 to 2.0 from 100 to 120 (the rarefaction Holman and Boyd describe); at Kn
-  0.05 (Daniels and Schwartzentruber's), 0.70 to 0.76 from 5 to 30 degrees, 2.0 at 90 and 3.4 to 14 from 100 to 120; at
-  Kn 0.25, 1.02 to 1.25 from 5 to 75 degrees, 0.95 at 90 and 1.7 to 12 from 100 to 120, where DSMC shear vanishes by
-  about 125 degrees. Design A6 recorded 0.73 to 0.79 from 5 to 30 degrees at Kn 0.002 from the reference's shear-only
-  form (design A3); the model uses the total-enthalpy form, whose shear differs from it by 6 to 9 % (design A4b).
-- Heating against DSMC: the shape follows DSMC to about 135 degrees in dense flow (the heating at 90 degrees is 10.6 %
-  and 10.3 % of the nose value at Kn 0.002 and 0.01, against DSMC's 9.1 % and 8.2 %), with the nose 2.03 times DSMC at
-  Kn 0.002 (A-5) and 0.99 times at Kn 0.01; in thin flow the heating behind the shoulder is far above DSMC's, which
-  falls toward a near-vacuum wake: 2.9, 5.8 and 9.8 times DSMC at 120, 135 and 150 degrees at Kn 0.05, and 5.8, 25 and
-  108 times at Kn 0.25, where the model's heating is at most 1.4 % of its nose value.
+  from 45 to 75, 1.34 at 90 and 1.5 to 1.9 from 100 to 120 degrees (1.85 at 120); at Kn 0.01, 0.60 to 0.66 from 5 to 30
+  degrees, 0.79 to 0.92 from 45 to 75, 1.13 at 90 and 1.3 to 2.0 from 100 to 120 (the rarefaction Holman and Boyd
+  describe); at Kn 0.05 (Daniels and Schwartzentruber's), 0.70 to 0.76 from 5 to 30 degrees, 2.0 at 90 and 3.4 to 14
+  from 100 to 120; at Kn 0.25, 1.02 to 1.25 from 5 to 75 degrees, 0.95 at 90 and 1.7 to 12 from 100 to 120, where DSMC
+  shear vanishes by about 125 degrees. Design A6 recorded 0.73 to 0.79 from 5 to 30 degrees at Kn 0.002 from the
+  reference's shear-only form (design A3); the model uses the total-enthalpy form, whose shear differs from it by 6
+  to 9 % (design A4b).
+- Heating against DSMC: in dense flow the ratio of the model's heating to DSMC's changes round the body rather than
+  holding at its nose value. At Kn 0.002 it is 2.03 at the nose (A-5), 2.38 at 90 degrees, 2.26 at 120 and 1.50 at 135;
+  at Kn 0.01 it is 0.99 at the nose, 1.25 at 90, 1.37 at 120 and 1.19 at 135 (the heating at 90 degrees is 10.6 % and
+  10.3 % of the nose value, against DSMC's 9.1 % and 8.2 %); in thin flow the heating behind the shoulder is far above
+  DSMC's, which falls toward a near-vacuum wake: 2.9, 5.8 and 9.8 times DSMC at 120, 135 and 150 degrees at Kn 0.05, and
+  5.8, 25 and 108 times at Kn 0.25, where the model's heating is at most 1.4 % of its nose value.
 
 ### 14.7 What the new loads change in a flight (measured)
 
@@ -1326,8 +1385,11 @@ Each item below was measured once, on the flights named; none is a sweep.
     the surface-averaged fluxes, 0.2345/0.27471 = 0.85 (inferred from the 65 km smoke flight's average against the ATDB
     factor, section 8).
   - The peak stagnation temperature (also the hottest surface point) is 2433 K at 118.5 s and 2626 K at 238.5 s, against
-    2319 K at 118 s and 2493 K at 239 s on the classic heating; the peak energy-equivalent mean temperature 1881 K at
-    145.5 s and 2295 K at 247 s, against 1717 K at 149.5 s and 2151 K at 250 s. The classic values were measured again
+    2319 K at 118 s and 2493 K at 239 s on the classic heating. The interim times are each run JSON's
+    `results.time_of_peak_surface_T_s`; the verification script's `summary.md` prints the same times with no decimal
+    place (format `{:.0f}`, which rounds a half to the even neighbour), as 118 s and 238 s. The peak
+    energy-equivalent mean temperature is 1881 K at 145.5 s and 2295 K at 247 s, against 1717 K at 149.5 s and 2151 K
+    at 250 s. The classic values were measured again
     on 2026-11-14 by the Step 2 reference tier on this code (`tests/test_reentry_model_reference_thermal.py`, 5 passed),
     which reproduced the README's ratios (0.7437, 0.7702) and temperatures. The peak convective power is 17 % higher on
     both flights (27.7 against 23.7 kW, and 7.89 against 6.74 kW).
@@ -1345,6 +1407,10 @@ Each item below was measured once, on the flights named; none is a sweep.
   (the run's own elapsed time over its 9 or 10 macro steps, which include one extra solve for the history's first row).
   That is 27 % more per step on the skins and 4.2 times on the element model, whose step is cheap. The share on a long
   skin flight's 0.5 s macro step was not measured.
+- The elapsed time is the JSON's `results.runtime_s`, which `CoupledRun.run` (`skyscrapers/coupled.py`) times from the
+  start of the flight to its results. It therefore leaves out the mesh (gmsh or the mesh cache), the construction of the
+  body and the heating, and the writing of the CSV, JSON and droplet files afterwards, and it includes the history's
+  first row, every macro step with its in-memory copy of the step's state, any frames, and the end state's save.
 - On the Step 2 flights to the ground (element model, no melting, 14.7) the interim loads took 1068 s (100 mm, 733
   macro steps) and 1684 s (50 mm, 1118), against 57 s and 21 s for the classic heating in the reference tier the same
   afternoon: about 1.4 to 1.5 s more per macro step, which makes such a flight 19 and 80 times slower. The interim
@@ -1357,6 +1423,12 @@ Each item below was measured once, on the flights named; none is a sweep.
   chemistry and wall catalysis: energy held in dissociated atoms reaches the wall only if they recombine there, and
   DSMC walls are usually non-catalytic. To be settled with the post-shock chemistry criterion (equilibrium against
   unreacted).
+- Known limitation, pending Asha's decision (final review, 2026-11-14; ruling R19): below about Mach 4 the joined
+  pressure steps down between the 90- and 92-degree bins, by 13 to 32 % between Mach 3 and Mach 1.5 at 30 km, with a
+  fourfold shear jump and a pressure gradient of about -720 kPa/m at a subsonic state (14.1, with the measurements). The
+  design's "no step at 90 degrees" holds only above about Mach 4 (the step appears below Mach 3.39). On the Step 2
+  trajectories the 100 mm sphere is below Mach 4 from 181.55 s and the 50 mm sphere from 296.55 s. This branch
+  documents the step and does not change the pressure law; whether and how to remove it is Asha's choice.
 - The lee pressure (14.1) and the zero heating behind separation (14.2) are known to differ from DSMC; the coupled CFD
   solution is meant to replace them behind the same provider (design A5).
 - The sheltered-corner rule is to be revisited with the fitted-sphere loading bug (14.5).
