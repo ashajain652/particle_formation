@@ -289,3 +289,94 @@ def test_subsonic_states():
             assert np.all(np.isfinite(getattr(loads, name))), name
         assert math.isfinite(loads.separation_deg) and loads.separation_deg < 180.0
         assert loads.p_w[0] == pytest.approx(UnreactedAir().stagnation(LOW_RHO, LOW_T, v).p, rel=1e-12)
+
+
+# ---- one boundary-layer solve per --dt of flight: the hold (plan 2026-11-14, Task 2) ----
+import dataclasses  # noqa: E402
+import types  # noqa: E402
+
+
+def at_time(rho, t, v=V):
+    """The test state at density rho with the flight time t [s] (`AeroState.t`)."""
+    return dataclasses.replace(aero_state(rho, v=v), t=t)
+
+
+@pytest.fixture
+def counted(monkeypatch):
+    """`GasLoads._solve` replaced by a stand-in that records the flight time of each solve and returns a new, picklable
+    object for each, so the hold's logic is tested without the boundary-layer solve's cost."""
+    solves = []
+
+    def solve(self, state, radius, T_wall):
+        solves.append(state.t)
+        return types.SimpleNamespace(t=state.t, rho=state.freestream.rho, radius=radius, T_wall=T_wall)
+    monkeypatch.setattr(gas_loads.GasLoads, "_solve", solve)
+    return solves
+
+
+def test_hold_returns_the_held_solution_within_the_window(counted):
+    """With a hold of 0.5 s, calls at 0.2 and 0.4999 s at another density, nose radius and wall temperature return the
+    solution held at 0 s, solved once; `held_loads` gives it too. A call at 0.5 s, the end of the window, solves again and
+    holds the new solution, as does a call within HOLD_TOL (a millionth of the hold) of the window's end, so that steps of
+    exactly --dt whose summed times fall short by round-off still solve at every step."""
+    assert gas_loads.HOLD_TOL == 1e-6
+    g = gas_loads.GasLoads(hold_s=0.5)
+    assert g.hold_s == 0.5 and g.held_loads(at_time(1.007e-4, 0.0)) is None
+    a = g.meridian(at_time(1.007e-4, 0.0), RADIUS, T_W)
+    assert g.meridian(at_time(1.1e-4, 0.2), 0.9 * RADIUS, 1400.0) is a
+    assert g.meridian(at_time(1.2e-4, 0.4999), 0.8 * RADIUS, 1300.0) is a
+    assert g.held_loads(at_time(1.3e-4, 0.4999)) is a and counted == [0.0]
+    assert g.held_loads(at_time(1.3e-4, 0.5)) is None
+    b = g.meridian(at_time(1.3e-4, 0.5), RADIUS, T_W)
+    assert b is not a and b.t == 0.5 and counted == [0.0, 0.5]
+    assert g.meridian(at_time(1.4e-4, 0.9), RADIUS, T_W) is b and g.held_loads(at_time(1.4e-4, 0.9)) is b
+    c = g.meridian(at_time(1.4e-4, 0.5 + 0.5 * (1.0 - 0.5e-6)), RADIUS, T_W)
+    assert c is not b and len(counted) == 3
+
+
+def test_no_hold_without_time_or_hold(counted):
+    """Without a hold (`hold_s` None, the default), or with one but a state that carries no flight time (`t` None), the
+    provider behaves as the key cache does (as in `test_cache_shared`): the same key returns the same solution, another
+    key solves again, and `held_loads` is None."""
+    for g, t in ((gas_loads.GasLoads(), 0.0), (gas_loads.GasLoads(hold_s=0.5), None)):
+        del counted[:]
+        state = at_time(1.007e-4, t)
+        a = g.meridian(state, RADIUS, T_W)
+        assert g.meridian(at_time(1.007e-4, None if t is None else 0.1), RADIUS, T_W) is a
+        b = g.meridian(at_time(1.007e-4, None if t is None else 0.2), RADIUS, 1400.0)
+        assert b is not a and b.T_wall == 1400.0 and len(counted) == 2
+        assert g.held_loads(state) is None and g._held is None and g._held_t is None
+    assert gas_loads.GasLoads().hold_s is None
+
+
+def test_pickle_keeps_the_held_solution(monkeypatch):
+    """A provider pickled within a hold window (a state saved between two solves) keeps the held solution and its time:
+    after the round trip a call later in the window, at another key, returns a solution equal to the held one without
+    solving. The key cache and the Cantera objects are still dropped."""
+    g = gas_loads.GasLoads(hold_s=0.5)
+    a = g.meridian(at_time(1.007e-4, 1.0), RADIUS, T_W)
+    g2 = pickle.loads(pickle.dumps(g))
+    assert g2._cache == {} and g2._air is None and g2._held_t == 1.0 and g2.hold_s == 0.5
+
+    def solve(*args):
+        raise AssertionError("solved inside the hold window")
+    monkeypatch.setattr(gas_loads.GasLoads, "_solve", solve)
+    b = g2.meridian(at_time(1.1e-4, 1.25), 0.9 * RADIUS, 1400.0)
+    assert b is not a and b is g2._held
+    for f in dataclasses.fields(a):
+        x, y = getattr(a, f.name), getattr(b, f.name)
+        assert np.array_equal(x, y, equal_nan=True) if isinstance(x, np.ndarray) else (x == y or (x != x and y != y)), f.name
+
+
+def test_state_pickled_before_the_hold_solves_every_key(counted):
+    """Review Focus 4: a provider pickled before the hold existed has none of `hold_s`, `_held`, `_held_t` on the
+    instance; it unpickles with the class attributes (no hold) and solves at every new key, even for states that carry a
+    flight time, as it did when it was saved."""
+    g = gas_loads.GasLoads(hold_s=0.5)
+    for name in ("hold_s", "_held", "_held_t"):
+        del g.__dict__[name]
+    old = pickle.loads(pickle.dumps(g))
+    assert old.hold_s is None and old._held is None and old._held_t is None
+    a = old.meridian(at_time(1.007e-4, 0.0), RADIUS, T_W)
+    b = old.meridian(at_time(1.1e-4, 0.1), RADIUS, T_W)
+    assert b is not a and counted == [0.0, 0.1] and old.held_loads(at_time(1.1e-4, 0.1)) is None

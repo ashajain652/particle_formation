@@ -1,5 +1,9 @@
 """The interim gas-loads provider: pressure, wall shear and similarity heat flux round the whole body (0-180 degrees
-from the stagnation point) for the surface flow and the heating, solved once per macro step and shared.
+from the stagnation point) for the surface flow and the heating, solved at most once per --dt of flight and shared.
+With a hold (`GasLoads(hold_s=...)`, the run command's --dt) a solution is held from the flight time of its solve
+(`AeroState.t`) for hold_s and returned to every call within that window, whatever the freestream, nose radius and wall
+temperature, so after the continuum switch (steps of --dt-continuum) the boundary layer is solved once per --dt and not
+at every step; a flight whose step is --dt throughout solves at every step, as before.
 
 Pressure, by the perfect-gas free-stream Mach number M (`daniels_schwartzentruber.condition(...).mach_inf`): at and
 above M = 5 the model's windward `surface_flow.wall_pressure` (modified Newtonian plus Prandtl-Meyer) to 90 degrees; past
@@ -40,6 +44,9 @@ P_FLOOR = 1e-20
 # DS_PRESSURE_MACH_HIGH (perfect-gas free-stream Mach number); linear weight in between.
 DS_PRESSURE_MACH_LOW = 3.5
 DS_PRESSURE_MACH_HIGH = 5.0
+# A call at least hold_s (1 - HOLD_TOL) after the held solve's flight time starts a new window: steps of exactly --dt,
+# whose summed flight times can fall short of a multiple of --dt by round-off, then solve at every step.
+HOLD_TOL = 1e-6
 
 
 def ds_pressure_weight(mach):
@@ -108,8 +115,15 @@ class MeridianLoads:
 
 
 class GasLoads:
-    def __init__(self, gamma_pm=surface_flow.GAMMA_PM, kn_switch=KN_SHEAR_SWITCH, bin_deg=BIN_DEG):
+    # the hold (s of flight; None: no hold), the held solution and its flight time: class attributes, so that a provider
+    # pickled before the hold existed resumes with none and solves at every new key, as it did
+    hold_s = None
+    _held = None
+    _held_t = None
+
+    def __init__(self, gamma_pm=surface_flow.GAMMA_PM, kn_switch=KN_SHEAR_SWITCH, bin_deg=BIN_DEG, hold_s=None):
         self.gamma_pm, self.kn_switch, self.bin_deg = gamma_pm, kn_switch, bin_deg
+        self.hold_s, self._held, self._held_t = hold_s, None, None
         self._cache = {}
         self._air = self._props = self._solver = None
 
@@ -117,7 +131,8 @@ class GasLoads:
         d = dict(self.__dict__)
         d["_cache"] = {}
         d["_air"] = d["_props"] = d["_solver"] = None      # rebuilt on first use (Cantera objects, warm start)
-        return d
+        return d                                            # the held solution and its time are kept: a state saved within a
+                                                            # window resumes on the solution the unbroken flight holds
 
     def _build(self):
         if self._air is None:
@@ -131,7 +146,23 @@ class GasLoads:
         self._build()
         return np.asarray(self._props._h(np.asarray(T, dtype=float)))
 
+    def held_loads(self, state):
+        """The held solution, if `state` falls within its window: a hold is set, `state.t` is not None, a solution is held
+        and 0 <= state.t - (its flight time) < hold_s (1 - HOLD_TOL); otherwise None."""
+        if self.hold_s is None or state.t is None or self._held is None:
+            return None
+        if 0.0 <= state.t - self._held_t < self.hold_s * (1.0 - HOLD_TOL):
+            return self._held
+        return None
+
     def meridian(self, state, radius, T_wall):
+        """The loads at `state` (freestream, speed, flight time), nose radius `radius` [m] and stagnation-patch wall
+        temperature `T_wall` [K]: the held solution within a hold window (`held_loads`); otherwise the cached solution
+        at the same key (density, temperature, speed, radius, wall temperature) or a new solve. With a hold and a flight
+        time, a solution returned outside a window is held from `state.t`."""
+        held = self.held_loads(state)
+        if held is not None:
+            return held
         fs = state.freestream
         key = (fs.rho, fs.T, state.V, radius, T_wall)
         hit = self._cache.get(key)
@@ -140,6 +171,8 @@ class GasLoads:
             if len(self._cache) >= _CACHE_SIZE:
                 self._cache.pop(next(iter(self._cache)))
             self._cache[key] = hit
+        if self.hold_s is not None and state.t is not None:
+            self._held, self._held_t = hit, state.t
         return hit
 
     def _solve(self, state, radius, T_wall):

@@ -1407,7 +1407,8 @@ def test_build_thermal_gives_the_surface_flow_and_the_heating_one_provider_and_c
     """`build_thermal` on the similarity loads (the default) builds one `GasLoads(gamma_pm=--gamma-pm)` and gives it to the
     surface flow it builds -- the skins', the element model's -- and, with --heating physics, to a `SimilarityHeating` with
     --matting-n and --accommodation; the skin body gets `sheltered_angle` pi (ruling R15); the settings record `gas_loads`
-    and, for the similarity heating, the two options it does not read (ruling R16). `classic` builds what it built before:
+    and, for the similarity heating, the two options it does not read (ruling R16). The provider holds its solution for one
+    --dt of flight (`hold_s`, plan 2026-11-14 Task 2), recorded as `gas_loads_hold_s`. `classic` builds what it built before:
     `PhysicsHeating` with --stagnation and --catalycity, a `SurfaceFlow` with no provider on the instance and a skin body with
     no sheltered angle of its own, so the objects pickle as before. --heating sesam keeps SESAM's heating while its surface
     flow reads the provider. Nothing is flown: `CoupledRun` stops the run once the objects are built."""
@@ -1430,8 +1431,9 @@ def test_build_thermal_gives_the_surface_flow_and_the_heating_one_provider_and_c
             cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
         return got[-1]
     melt = PHYSICS + ["--melt", "on", "--fine-band", "0", "--skin-preset", "dev"]
-    body, heat, info = built(melt + ["--gamma-pm", "1.3", "--matting-n", "1.5", "--accommodation", "0.7"])
+    body, heat, info = built(melt + ["--gamma-pm", "1.3", "--matting-n", "1.5", "--accommodation", "0.7", "--dt", "0.25"])
     assert type(heat) is heating.SimilarityHeating and type(body.surface_flow.gas_loads) is GasLoads
+    assert heat.gas_loads.hold_s == 0.25 and info["gas_loads_hold_s"] == 0.25                       # --dt
     assert body.surface_flow.gas_loads is heat.gas_loads and heat.gas_loads.gamma_pm == 1.3 == body.surface_flow.gamma_pm
     assert (heat.matting_n, heat.accommodation, heat.bridging) == (1.5, 0.7, "matting") and body.sheltered_angle == np.pi
     assert info["gas_loads"] == "similarity" and info["heating_unused"] == ["stagnation", "catalycity"]
@@ -1439,10 +1441,11 @@ def test_build_thermal_gives_the_surface_flow_and_the_heating_one_provider_and_c
     body, heat, info = built(melt + ["--gas-loads", "classic"])
     assert type(heat) is heating.PhysicsHeating and body.surface_flow.gas_loads is None
     assert "gas_loads" not in vars(body.surface_flow) and "sheltered_angle" not in vars(body)
-    assert info["gas_loads"] == "classic" and "heating_unused" not in info
+    assert info["gas_loads"] == "classic" and "heating_unused" not in info and "gas_loads_hold_s" not in info
     body, heat, info = built(melt + ["--heating", "sesam"])
     assert type(heat) is heating.SesamEquivalentHeating and type(body.surface_flow.gas_loads) is GasLoads
     assert body.sheltered_angle == np.pi and info["gas_loads"] == "similarity" and "heating_unused" not in info
+    assert body.surface_flow.gas_loads.hold_s == 0.5 == info["gas_loads_hold_s"]                     # the default --dt
     elements = PHYSICS + ["--melt", "on", "--surface-model", "elements", "--prism-layers", "0"]
     body, heat, info = built(elements)
     assert type(heat) is heating.SimilarityHeating and body.flow.gas_loads is heat.gas_loads

@@ -1315,14 +1315,16 @@ def test_a_resumed_state_keeps_the_gas_loads_its_arguments_name(tmp_path, capsys
     assert restart.load(str(tmp_path / "r.end.state.pkl"))["meta"]["args"]["gas_loads"] == "similarity"
 
 
-def test_a_macro_step_of_a_skin_flight_solves_one_meridian_shared_by_the_heating_and_the_surface_flow(tmp_path, monkeypatch):
-    """One provider per flight and a cache keyed on (density, temperature, speed, nose radius, stagnation-patch wall
-    temperature): in every macro step of the melting skins' test flight the similarity heating and the skins' surface flow
-    call the provider at the same key, which is solved once, so a step costs one meridian solve; the history's first row
-    adds one solve, the heating's alone (review T7-4). Counted by wrapping `GasLoads.meridian` and `GasLoads._solve`, not
-    by instrumenting the package."""
+def test_a_skin_flight_solves_one_meridian_per_dt_shared_by_the_heating_and_the_surface_flow(tmp_path, monkeypatch):
+    """One provider per flight, holding its solution for one --dt of flight (`GasLoads.hold_s`, plan 2026-11-14 Task 2):
+    the melting skins' test flight to 0.0625 s has five rows, the first and four macro steps (25 ms, then 12.5 ms ones from
+    the continuum switch at the first step), and the provider solves three times: at 0 s, the heating's alone for the
+    history's first row, then at 0.025 s and 0.05 s, one --dt (25 ms) apart, the heating's call solving and the surface
+    flow's at the same time and key finding the solution. Every other call, at 0.0375 s and 0.0625 s at the freestream of
+    its own time, is within a held window and returns the held solution (review T7-4 counted one solve a macro step
+    before the hold). Counted by wrapping `GasLoads.meridian` and `GasLoads._solve`, not by instrumenting the package."""
     from reentry_model import heating, surface_flow
-    from reentry_model.shared.gas_loads import GasLoads
+    from reentry_model.shared.gas_loads import HOLD_TOL, GasLoads
     pytest.importorskip("cantera")
     calls, solves, caller = [], [], [None]
     meridian, solve = GasLoads.meridian, GasLoads._solve
@@ -1342,18 +1344,53 @@ def test_a_macro_step_of_a_skin_flight_solves_one_meridian_shared_by_the_heating
     key_of = lambda state, radius, T_wall: (state.freestream.rho, state.freestream.T, state.V, radius, T_wall)
 
     def counted_meridian(self, state, radius, T_wall):
-        calls.append((caller[-1], key_of(state, radius, T_wall)))
-        return meridian(self, state, radius, T_wall)
+        got = meridian(self, state, radius, T_wall)
+        calls.append((caller[-1], state.t, key_of(state, radius, T_wall), got))
+        return got
 
     def counted_solve(self, state, radius, T_wall):
-        solves.append(key_of(state, radius, T_wall))
-        return solve(self, state, radius, T_wall)
+        got = solve(self, state, radius, T_wall)
+        solves.append((state.t, key_of(state, radius, T_wall), got))
+        return got
     monkeypatch.setattr(GasLoads, "meridian", counted_meridian)
     monkeypatch.setattr(GasLoads, "_solve", counted_solve)
-    assert cli.main(FLIGHT + ["--t-max", "0.0375", "--outdir", str(tmp_path), "--name", "f"]) == 0
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f"]) == 0
     rows = rows_of(str(tmp_path / "f.csv"))
-    assert len(rows) == 3                                  # the first row and two macro steps (25 ms, then 12.5 ms)
-    assert len(solves) == len(rows) and len(set(solves)) == len(solves)
-    assert {key for _, key in calls} == set(solves)       # every call was at one of the solved keys
-    callers = [sorted(who for who, k in calls if k == key) for key in solves]
-    assert callers == [["heating"]] + [["flow", "heating"]] * (len(rows) - 1), callers
+    times = [float(r["time_s"]) for r in rows]
+    assert times == pytest.approx([0.0, 0.025, 0.0375, 0.05, 0.0625], abs=1e-12)
+    assert [t for t, _, _ in solves] == pytest.approx([0.0, 0.025, 0.05], abs=1e-12)
+    assert len({key for _, key, _ in solves}) == 3
+    for who, t, key, got in calls:
+        t0, key0, held = [s for s in solves if s[0] <= t][-1]          # the latest solve at or before the call
+        assert got is held, (who, t)
+        assert key == key0 if t == t0 else 0.0 < t - t0 < 0.025 * (1.0 - HOLD_TOL), (who, t)
+    callers = {}
+    for who, t, _, _ in calls:
+        callers.setdefault(round(t, 9), []).append(who)
+    assert {t: sorted(w) for t, w in callers.items()} == {
+        round(t, 9): ["heating"] if t == 0.0 else ["flow", "heating"] for t in times}, callers
+    assert json.load(open(str(tmp_path / "f.json")))["settings"]["gas_loads_hold_s"] == 0.025      # --dt
+
+
+def test_a_flight_resumed_inside_a_hold_window_matches_the_unbroken_flight(tmp_path, monkeypatch):
+    """Review Focus 3: the test flight saved at 0.025 s, just after the provider solved there, carries the held solution
+    and its time in its state (`GasLoads.__getstate__` keeps them), so the resumed step to 0.0375 s flies on the held
+    solution without solving, and the next solve is at 0.05 s, one --dt after the held one, as in the unbroken flight.
+    The resumed rows are the flight's from the saved step on, to the last bit."""
+    from reentry_model.shared.gas_loads import GasLoads
+    pytest.importorskip("cantera")
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f", "--save-state-at", "0.025"]) == 0
+    flight = rows_of(str(tmp_path / "f.csv"))
+    state = restart.load(str(tmp_path / "f.state.pkl"))
+    loads = state["run"].heating.gas_loads
+    assert state["step"] == 1 and state["time_s"] == pytest.approx(0.025)
+    assert loads.hold_s == 0.025 and loads._held_t == state["time_s"] and loads._held is not None and loads._cache == {}
+    solves, solve = [], GasLoads._solve
+
+    def counted(self, s, radius, T_wall):
+        solves.append(s.t)
+        return solve(self, s, radius, T_wall)
+    monkeypatch.setattr(GasLoads, "_solve", counted)
+    assert cli.main(["resume", str(tmp_path / "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert solves == pytest.approx([0.05], abs=1e-12)           # the step to 0.0375 s flew on the held solution
+    assert len(flight) == 5 and rows_of(str(tmp_path / "r.csv")) == flight[1:]

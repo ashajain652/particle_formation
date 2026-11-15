@@ -677,11 +677,13 @@ def build_parser():
 def build_thermal(args, settings, mass, spool=None):
     """(ThermalBody or MeltingBody, HeatingModel, settings-provenance dict) for --thermal fem [--melt on]; `spool`, a
     directory for a spraying skin body's droplet records (SOURCE_SPOOL in the run's directory, sub-plan 22 Task 4).
-    On the similarity gas loads (--gas-loads, `GAS_LOADS`) one `GasLoads(gamma_pm=--gamma-pm)` is given to every surface flow
-    built here and, with --heating physics, to `heating.SimilarityHeating`, and the skins read their sheltered corners at
-    `skinbody.SHELTER_WAKE`; on `classic` the objects are those built before the interim gas loads, with the same arguments."""
+    On the similarity gas loads (--gas-loads, `GAS_LOADS`) one `GasLoads(gamma_pm=--gamma-pm, hold_s=--dt)` is given to every
+    surface flow built here and, with --heating physics, to `heating.SimilarityHeating`, and the skins read their sheltered
+    corners at `skinbody.SHELTER_WAKE`; the provider holds each solution for one --dt of flight, so it solves at most once per
+    --dt after the continuum switch, and the settings record that hold as `gas_loads_hold_s`. On `classic` the objects are
+    those built before the interim gas loads, with the same arguments."""
     radius = settings.diameter / 2.0
-    loads = GasLoads(gamma_pm=args.gamma_pm) if args.gas_loads == "similarity" else None     # shared, solved once a step
+    loads = GasLoads(gamma_pm=args.gamma_pm, hold_s=args.dt) if args.gas_loads == "similarity" else None  # shared, once a --dt
     melting = args.melt == "on"
     skins = args.surface_model == "skin"
     h_surface, h_core = args.h_surface * 1e-3 * args.mesh_size, args.h_core * 1e-3 * args.mesh_size
@@ -775,6 +777,8 @@ def build_thermal(args, settings, mass, spool=None):
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
         if loads is not None:                           # kept as given, and said to be unread by the similarity heating
             info["heating_unused"] = list(SIMILARITY_UNUSED)
+    if loads is not None:                               # the provider's solution is held for one --dt of flight (s)
+        info["gas_loads_hold_s"] = loads.hold_s
     if melting and skins:
         info.update({"removal": args.removal, "T_solidus_K": mat.T_solidus, "T_liquidus_K": mat.T_liquidus,
                      "latent_heat_Jkg": mat.latent_heat})
