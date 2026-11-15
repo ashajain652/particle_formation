@@ -342,19 +342,13 @@ def _edge_column(body):
     return int(np.argmin(np.abs(body.markers.normal).max(axis=1)))
 
 
-def test_a_column_with_no_base_takes_its_shortfall_from_its_neighbours(monkeypatch):
-    """Design 21.5: a column that ends before beta, beside a convex edge, has no base: it never draws or returns, and is
-    filled from the neighbour across the boundary it shares deepest. On the test cube an edge column made baseless (its
-    division's cross-section at H given to that neighbour's, so that the columns still tile the layer), 0.05 mm of its
-    top taken (as a release takes it) and the layer accepted (phi moved by it, the division, the fill): the fill never exchanges it at a base, it is full afterwards, the neighbour it
-    took from (`_neighbours`: one with a base, sharing its deepest level) is filled at its own base, and the books -- the skins' and the volume's mass with what was taken, the enthalpy with the
-    heat owed -- are exact."""
+def _baseless_edge(body, monkeypatch):
+    """An edge column of the test cube made baseless (`_edge_column`; its division's cross-section at H given to the
+    neighbour it shares its deepest level with, so that the columns still tile the layer; `stepend.divide` wrapped for
+    the rest of the test) and the layer divided afresh: (its marker, its row, that neighbour's marker)."""
     from dataclasses import replace
     from reentry_model.levelset import stepend
-    body = cube_body()
-    sk, mk = body.skins, body.markers
     m = _edge_column(body)
-    row = mk.skin_index[m]
     d = body.division
     e = np.flatnonzero((d.i == m) | (d.j == m))
     deep = e[np.argmax([np.max(np.flatnonzero(d.length[k] > 0.0), initial=-1) for k in e])]
@@ -369,7 +363,20 @@ def test_a_column_with_no_base_takes_its_shortfall_from_its_neighbours(monkeypat
         area[m, -1] = 0.0
         return replace(out, area=area, volume=area @ w)
     monkeypatch.setattr(stepend, "divide", baseless)
-    body._divide(skinbody._Tally(sk.n))
+    body._divide(skinbody._Tally(body.skins.n))
+    return m, body.markers.skin_index[m], other
+
+
+def test_a_column_with_no_base_takes_its_shortfall_from_its_neighbours(monkeypatch):
+    """Design 21.5: a column that ends before beta, beside a convex edge, has no base: it never draws or returns, and is
+    filled from the neighbour across the boundary it shares deepest. On the test cube an edge column made baseless (its
+    division's cross-section at H given to that neighbour's, so that the columns still tile the layer), 0.05 mm of its
+    top taken (as a release takes it) and the layer accepted (phi moved by it, the division, the fill): the fill never exchanges it at a base, it is full afterwards, the neighbour it
+    took from (`_neighbours`: one with a base, sharing its deepest level) is filled at its own base, and the books -- the skins' and the volume's mass with what was taken, the enthalpy with the
+    heat owed -- are exact."""
+    body = cube_body()
+    sk, mk = body.skins, body.markers
+    m, row, other = _baseless_edge(body, monkeypatch)
     assert body._baseless()[row] and not body._baseless()[mk.skin_index[other]]
     body._fill(skinbody._Tally(sk.n))                    # the two columns' volumes moved, their sum kept: settle them
     before = body.books()
@@ -395,6 +402,262 @@ def test_a_column_with_no_base_takes_its_shortfall_from_its_neighbours(monkeypat
     assert row not in exchanged and giver in exchanged
     assert miss <= skinbody.FILL_RTOL and tally.fill_miss <= skinbody.FILL_RTOL
     assert abs(M1 / M0 - 1.0) <= 1e-12 and abs(E1 / E0 - 1.0) <= 1e-12
+
+
+# -- clear stops and the speck rule (plan 03b Task 7b; the controller's rulings T7-f and T7-g) ------------------------
+SPECK_DEPTH = 6.5e-5     # m: the parted speck's node below phi = 0 in the speck test (the spraying cube's, diagnosis D2)
+SPECK_SHORT = 0.2e-6     # m: how far the move leaves the body shy of its metal there (D2: the correction then lowered
+                         # phi 0.24 um on the spraying cube and 3.1 um on the shoulder, far more than PIECE_GONE's 1 nm)
+
+
+def test_a_speck_the_move_removes_stays_removed_after_the_volume_correction(monkeypatch):
+    """The controller's ruling T7-f (diagnosis D2): a speck the move of phi parts from the body (a piece with no column
+    and none of the volume's metal) is lifted out by `_move_phi`'s speck rule, its nodes to `stepend.PIECE_GONE` (1 nm
+    outside the metal), and must stay out through the per-piece volume correction. Before, the correction's uniform shift
+    over the body's claimed nodes (two rings of cells about it) took a lifted node back below zero whenever the body grew
+    by more than a nanometre, and the speck came back with no marker: it captured two drifted markers' columns on the
+    spraying cube (the split that never ended) and was swallowed by no group's cells on the shoulder (MOVE_SUM_RTOL). The
+    plate's column, its move of phi made (`stepend.move_by_volumes` wrapped) to leave the body SPECK_SHORT shy of its
+    metal and to part a speck at a node two rings of cells above its face: after `_move_phi` phi is one piece holding its
+    metal to 1e-12, the speck counted as used up, its nodes left out of the correction's claims (`fixed`); and the
+    correction given those nodes to claim raises, naming the piece it made in cells that held no metal before it, rather
+    than make the speck again."""
+    from reentry_model.levelset import levelset as ls
+    from reentry_model.levelset import stepend
+    body = plate_body()
+    mesh, sk = body.mesh, body.skins
+    label, _ = pieces(mesh, body.phi)
+    rings, nodes = [], np.unique(mesh.tets[label == 0])
+    for _ in range(2):                                   # the body's claim in the correction: two rings of cells
+        nodes = np.unique(mesh.tets[np.isin(mesh.tets, nodes).any(axis=1)])
+        rings.append(nodes)
+    two = np.setdiff1d(rings[1], rings[0])
+    up = two[mesh.points[two, 2] > 0.0]
+    node = int(up[np.argmin(np.linalg.norm(mesh.points[up, :2], axis=1))])
+    V0 = float(inside_volumes(mesh, body.phi).sum())
+    real_move, real_correct = stepend.move_by_volumes, stepend.correct_volumes
+    calls = []
+
+    def parted(mesh_, phi, x, normal, dV, band=None):
+        moved = real_move(mesh_, phi, x, normal, dV, band=band)
+        out = moved.phi + SPECK_SHORT
+        out[node] = -SPECK_DEPTH
+        gained = float(inside_volumes(mesh_, out).sum() - inside_volumes(mesh_, moved.phi).sum())
+        return moved._replace(phi=out, swept=moved.swept + gained / len(moved.swept))
+
+    def correct(mesh_, phi, label_, targets, **kw):
+        calls.append((phi.copy(), label_.copy(), np.array(targets, float), kw))
+        return real_correct(mesh_, phi, label_, targets, **kw)
+    monkeypatch.setattr(stepend, "move_by_volumes", parted)
+    monkeypatch.setattr(stepend, "correct_volumes", correct)
+    tally = skinbody._Tally(sk.n)
+    body._move_phi(np.zeros(sk.n), tally, "part")
+    label, n = pieces(mesh, body.phi)
+    V1 = float(inside_volumes(mesh, body.phi).sum())
+    phi_in, label_in, targets, kw = calls[0]
+    print("speck at node {} ({:.3f} mm above the face): pieces after the move {}; phi at the node {:.3e} m; the body's "
+          "volume {:.1e} from its metal".format(node, mesh.points[node, 2] * 1e3, n, body.phi[node], V1 / V0 - 1.0))
+    assert n == 1 and body.phi[node] > 0.0
+    assert tally.pieces_used == 1
+    assert V1 == pytest.approx(V0, rel=1e-12)
+    assert kw["fixed"][node] and phi_in[node] == stepend.PIECE_GONE
+    with pytest.raises(RuntimeError, match="held no metal before"):
+        ls.correct_volumes(mesh, phi_in, label_in, targets)
+
+
+def test_a_column_the_fill_cannot_fill_stops_the_run_naming_it(monkeypatch):
+    """The controller's ruling T7-g (diagnosis D2): a column the fill leaves beyond FILL_RTOL of its volume after its
+    rounds stops the run with a RuntimeError naming its marker, its position, its piece, its cells' volume and its
+    column's volume. Before, the fill skipped a column with no base and no neighbour silently (the spraying cube's
+    second step: two columns stranded on a speck kept 0.73 and 0.52 mm3 of metal in columns of 1e-20 m3, the next part's
+    move ratio was 4.3e9, and the split never ended). On the test cube an edge column made baseless (`_baseless_edge`)
+    and given no neighbour, 0.05 mm of its top taken: the fill raises, naming it."""
+    from reentry_model.levelset import stepend
+    body = cube_body()
+    sk, mk = body.skins, body.markers
+    m, row, _ = _baseless_edge(body, monkeypatch)
+    body._fill(skinbody._Tally(sk.n))
+    sk.take_between([row], 0.0, 0.05e-3)
+    monkeypatch.setattr(stepend.StepEnd, "_neighbours", lambda self, r, base: None)
+    with pytest.raises(RuntimeError, match="the fill left") as stop:
+        body._fill(skinbody._Tally(sk.n))
+    print("unfilled column: {}".format(stop.value))
+    x = "({:.3f}, {:.3f}, {:.3f}) mm".format(*(mk.x[m] * 1e3))
+    held, column = "{:.6e} m3".format(sk.cells_volume()[row]), "{:.6e} m3".format(sk.column_volume()[row])
+    for part in ("marker {} ".format(m), x, "piece {}".format(body.division.piece[m]), held, column):
+        assert part in str(stop.value), part
+
+
+def test_a_piece_with_layer_and_no_column_stops_the_run(monkeypatch):
+    """The controller's ruling T7-g (diagnosis D2): a division that finds a piece of phi with layer but no column (no
+    marker on it, its closure factor infinite, as two of the shoulder's divisions did unseen before its stop) stops the
+    run with a RuntimeError naming the piece, and so does a piece whose closure factor departs from one by more than
+    `stepend.DIVISION_GROSS` (the speck that took two columns on the spraying cube closed with a factor of 0.0033); the
+    body only recorded the factor before. Two spheres on 1 mm cells, 2.2 mm and 1.8 mm in radius (the larger piece 0)
+    and 2.8 mm apart, markers on the larger alone (26 directions): `_divide` raises naming the smaller, piece 1; with the
+    division's factor for the larger replaced by 1 + 2 DIVISION_GROSS, it raises naming that."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from reentry_model.levelset import stepend
+    from reentry_model.levelset.boxmesh import build
+    from reentry_model.levelset.levelset import redistance
+    from reentry_model.levelset.markers import Markers
+
+    class Host(stepend.StepEnd):
+        pass
+    mesh = build(BoxBase.around((-7e-3, -4e-3, -4e-3), (7e-3, 4e-3, 4e-3), 1e-3))
+    a, b, R = np.array([-3.4e-3, OFF, OFF]), np.array([3.4e-3, OFF, OFF]), 2.2e-3
+    phi = redistance(mesh, np.minimum(np.linalg.norm(mesh.points - a, axis=1) - R,
+                                      np.linalg.norm(mesh.points - b, axis=1) - 1.8e-3))
+    assert pieces(mesh, phi)[1] == 2
+    u = np.array([(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1) if (i, j, k) != (0, 0, 0)], float)
+    u /= np.linalg.norm(u, axis=1)[:, None]
+    n = len(u)
+    host = Host()
+    host.mesh, host.phi, host.settings = mesh, phi, SETTINGS
+    host.markers = Markers(a + R * u, u, np.ones(n), np.zeros((n, 2)), np.arange(n), np.full(n, -1), 2e-3)
+    host.skins = SimpleNamespace(n=n, set_profile=lambda levels, area: None)
+    with pytest.raises(RuntimeError, match="layer but no column") as stop:
+        host._divide(skinbody._Tally(n))
+    print("a piece with no column: {}".format(stop.value))
+    assert "piece 1" in str(stop.value)
+    divide = stepend.divide
+    monkeypatch.setattr(stepend, "divide", lambda *a_, **k: (lambda d: replace(
+        d, factor=np.r_[1.0 + 2.0 * stepend.DIVISION_GROSS, d.factor[1:]]))(divide(*a_, **k)))
+    with pytest.raises(RuntimeError, match="closure factor") as stop:
+        host._divide(skinbody._Tally(n))
+    print("a gross factor: {}".format(stop.value))
+    assert "piece 0" in str(stop.value)
+
+
+def test_a_split_past_PARTS_MAX_stops_naming_the_worst_column(monkeypatch):
+    """The controller's ruling T7-g (diagnosis D2): a split never asks for more than PARTS_MAX shorter parts; past that the
+    step stops with a RuntimeError naming the column whose move sets the part's ratio (its marker and its ratio), where
+    it once asked for ceil(4.3e9) parts at every level to SPLIT_DEPTH_MAX and never ended. The test cube at rest with a
+    carry (planning ruling 4's volume change at a column's top) of three PARTS_MAX allowances on one face column, which
+    no part's length shrinks: the step raises after its first part, naming that column's marker and the ratio 3 PARTS_MAX
+    (a part run again would be the split, and stops the test instead of hanging it)."""
+    import re
+    body = cube_body()
+    sk, mk = body.skins, body.markers
+    m = int(np.flatnonzero(mk.normal[:, 0] > 0.9)[0])
+    row = mk.skin_index[m]
+    allowance = skinbody.MOVE_SHARE * body.spacing * sk.profile[row, 0]          # m3: the volume a part may move it
+    body.carry[row] = 3.0 * skinbody.PARTS_MAX * allowance
+    runs = []
+    part_once = skinbody.LevelSetSkinBody._part_once
+
+    def once(self, *a, **k):
+        if runs:
+            raise AssertionError("the part was split into {} parts".format(skinbody.PARTS_MAX * 3))
+        runs.append(1)
+        return part_once(self, *a, **k)
+    monkeypatch.setattr(skinbody.LevelSetSkinBody, "_part_once", once)
+    with pytest.raises(RuntimeError, match="PARTS_MAX") as stop:
+        body.advance(0.05)
+    print("split past PARTS_MAX: {}".format(stop.value))
+    assert "marker {} ".format(m) in str(stop.value)
+    ratio = float(re.search(r"ratio ([0-9.e+-]+)", str(stop.value)).group(1))
+    assert ratio == pytest.approx(3.0 * skinbody.PARTS_MAX, rel=1e-6)
+
+
+BEAM_X = np.array([1.0, 0.0, 0.0])   # a beam arriving along -x, on the cube's +x face
+BEAM_Q = 6.0e6                       # W/m2
+
+
+def _beam(body, q0=BEAM_Q):
+    """A prescribed beam q0 along -BEAM_X as each marker takes it on phi as it is: the mean of its patches' projections
+    max(n_p . BEAM_X, 0) over the area of phi it owns under the ownership that sets its area (`Markers.owned_patches`;
+    none for a marker that owns none), times q0 [W/m2] per marker, a function of the markers (`advance`'s q_prescribed)."""
+    from reentry_model.levelset.cutcell import patches
+
+    def q(mk):
+        P = patches(body.mesh, body.phi)
+        W = mk.owned_patches(body.mesh, body.phi, P)
+        A = np.asarray(W.sum(axis=1)).ravel()
+        f = q0 * np.maximum(P.normal @ BEAM_X, 0.0)
+        return np.divide(np.asarray(W @ f).ravel(), A, out=np.zeros(mk.n), where=A > 0.0)
+    return q
+
+
+def _watch_passes(monkeypatch):
+    """Every pass of the body's parts recorded (a list, returned): (phi then, the marker fluxes it takes [W/m2] in the
+    markers' order, the heat they take per second, sum q_i A_i [W], the beam's power on phi then [W], and the runoff's
+    forcing it takes)."""
+    from reentry_model.levelset.cutcell import patches
+    seen = []
+    real_pass = skinbody.LevelSetSkinBody._pass
+
+    def watched(self, dt, T_b, ctx, trial, sheet):
+        mk, sk = self.markers, self.skins
+        P = patches(self.mesh, self.phi)
+        q = ctx["q"][mk.skin_index].copy()
+        seen.append((self.phi, q, float((q * sk.area[mk.skin_index]).sum()),
+                     BEAM_Q * float((P.area * np.maximum(P.normal @ BEAM_X, 0.0)).sum()), ctx["forcing"]))
+        return real_pass(self, dt, T_b, ctx, trial, sheet)
+    monkeypatch.setattr(skinbody.LevelSetSkinBody, "_pass", watched)
+    return seen
+
+
+def _surfaces(seen):
+    """The surfaces (phi's arrays) the recorded passes ran on, each once, in order."""
+    out = []
+    for phi, *_ in seen:
+        if not out or out[-1] is not phi:
+            out.append(phi)
+    return out
+
+
+def test_each_markers_heat_is_retaken_on_the_moved_surface_every_part(monkeypatch):
+    """The controller's ruling T7-i (diagnosis D1; design 21.5, one partition of phi for the areas and the fluxes, and
+    21.6, the areas given afresh on the moved phi): each marker's top flux is taken under `Markers.owned_patches`, the
+    ownership that sets its area, and taken again on the moved surface whenever the areas are given afresh, at every
+    part. Before, the flux was fixed at the step's start while the areas it multiplies followed phi, so that on the
+    stage 3 box the heat booked in a part ran 25 % over the beam's power once its face was uneven. The test cube with
+    its liquid removed as it forms, one 0.25 s step of a 6 MW/m2 beam on its +x face (`_beam`, a function of the
+    markers), in which the face recedes unevenly (its rim stands) over several parts: at every pass of every part the
+    heat the skins take, sum q_i A_i, is the beam's power on phi as it is to 1e-9."""
+    seen = _watch_passes(monkeypatch)
+    body = cube_body(remove="feed")
+    book = body.advance(0.25, q_prescribed=_beam(body))
+    worst = max(abs(took / beam - 1.0) for _, _, took, beam, _ in seen)
+    print("beam: {} parts, {} passes on {} surfaces; the heat taken against the beam's power on phi as it is, {:.1e} at "
+          "worst".format(book.parts, len(seen), len(_surfaces(seen)), worst))
+    assert len(_surfaces(seen)) >= 2
+    assert worst <= 1e-9
+
+
+def test_a_flight_takes_its_loads_once_per_part_under_the_part_s_ownership(monkeypatch):
+    """The controller's ruling T7-i in flights, as ruling T7b-a settles it: the convective flux (`loads.by_patches`,
+    from the step's one aero state) is taken again on the moved surface at every part, under the ownership that sets the
+    markers' areas there (`Markers.owned_patches`), no new gas state evaluated, while the runoff's forcing is held at the
+    step's start (taken again, it folded the spraying fixture's liquid under the cube's bottom face, measured once in
+    plan 03b Task 7b). The gas body at the gas state raised to 1e-4 kg/m3, a 0.1 s step started as three parts:
+    `by_patches` is called once for each surface a part runs on, in order, with that surface's ownership, every pass on
+    it takes that call's fluxes, and every pass takes the step start's forcing."""
+    from reentry_model.levelset import loads
+    seen = _watch_passes(monkeypatch)
+    calls = []
+    real = loads.by_patches
+
+    def by_patches(loads_, state, markers, P, *a, W=None, **k):
+        apart = abs(W - markers.owned_patches(body.mesh, body.phi, P)).max() if W is not None else np.inf
+        q, flow = real(loads_, state, markers, P, *a, W=W, **k)
+        calls.append((body.phi, apart, q.copy()))
+        return q, flow
+    monkeypatch.setattr(loads, "by_patches", by_patches)
+    body = gas_body()
+    body._hint = 3                                       # the step starts as three parts
+    book = body.advance(0.1, state=gas_state(rho=1e-4))
+    ran = _surfaces(seen)
+    print("flight: {} parts, {} by_patches calls, {} surfaces the parts ran on; ownership apart by {:.1e} m2 at "
+          "most".format(book.parts, len(calls), len(ran), max(c[1] for c in calls)))
+    assert len(ran) >= 2
+    assert len(calls) == len(ran) and all(c[0] is phi for c, phi in zip(calls, ran))    # once per surface, in order
+    assert all(c[1] == 0.0 for c in calls)               # under the ownership that sets the markers' areas there
+    for phi, q, _, _, _ in seen:
+        assert np.array_equal(q, next(c[2] for c in calls if c[0] is phi))
+    assert all(f is seen[0][4] for *_, f in seen)          # the forcing held at the step's start (ruling T7b-a)
 
 
 def test_a_molten_cell_returned_to_the_volume_lowers_phi_above_its_column():
@@ -459,6 +722,54 @@ def test_a_remesh_carries_phi_and_rebuilds_beta(monkeypatch):
     assert tally.fill_miss <= skinbody.FILL_RTOL and closure(body) <= CLOSE_RTOL
     assert abs(M1 / M0 - 1) <= 1e-12
     assert [e["kind"] for e in tally.corrections] == ["remesh"]
+
+
+SPECK_AWAY = 7.5e-3       # m: x of the point near which the remesh's speck is made (the cube's +x face is at 5.13 mm)
+
+
+def test_a_remesh_that_parts_off_a_markerless_speck_lifts_it(monkeypatch):
+    """The controller's ruling T7b-b (plan 03b Task 7b, finding B): the speck rule extends to the step end's remesh. phi
+    carried to the new mesh (interpolated and reset) can part off a piece no marker stands on: the stage 3 box's second
+    step met one of 2.3e-16 m3 in its unreceded rim, which the remesh's rule (the pieces share the old metal by their
+    volumes) kept and the division then stopped on (a piece with layer and no column, ruling T7-g). By `_move_phi`'s
+    criterion (`_piece_targets`: no column maps to it and it holds none of the volume's metal) such a piece is lifted to
+    PIECE_GONE before the remesh's correction, its metal the largest piece's, and its nodes are left out of the
+    correction's claims. The test cube's mesh rebuilt to three quarters of its target (as in
+    `test_a_remesh_carries_phi_and_rebuilds_beta`), its reset phi given a speck SPECK_DEPTH deep at a node in the gas
+    near (SPECK_AWAY, OFF, OFF), a piece of its own: the step end's rebuild divides without stopping, phi is one piece
+    holding the old metal to 1e-12, the speck is counted as used up and the books close."""
+    from reentry_model.levelset.stepend import StepEnd
+    body = cube_body()
+    V0 = float(inside_volumes(body.mesh, body.phi).sum())
+    M0 = sum(body.books()[k] for k in ("mass_volume", "mass_skins"))
+    target = body._target
+    monkeypatch.setattr(body, "_target", lambda *a, **k: (lambda f: lambda x, s: 0.75 * np.asarray(f(x, s)))(
+        target(*a, **k)))
+    monkeypatch.setattr(body, "_needs_rebuild", lambda target, region: True)
+    old_mesh, made = body.mesh, []
+
+    def reset(mesh, phi):
+        out = StepEnd._reset(body, mesh, phi)
+        if mesh is not old_mesh:                         # the remesh's phi: a speck in the gas, a piece of its own
+            far = np.flatnonzero(out > 1.5e-3)
+            for k in far[np.argsort(np.linalg.norm(mesh.points[far] - [SPECK_AWAY, OFF, OFF], axis=1))]:
+                trial = out.copy()
+                trial[k] = -SPECK_DEPTH
+                if pieces(mesh, trial)[1] == 2:
+                    made.append(k)
+                    return trial
+        return out
+    monkeypatch.setattr(body, "_reset", reset)
+    tally = skinbody._Tally(body.skins.n)
+    body._rebuild(tally, body._samples())
+    label, n = pieces(body.mesh, body.phi)
+    V1 = float(inside_volumes(body.mesh, body.phi).sum())
+    M1 = sum(body.books()[k] for k in ("mass_volume", "mass_skins"))
+    print("remesh speck at node {} ({} mm): pieces after {}; phi there {:.1e} m; volume {:.1e}; books {:.1e}".format(
+        made, np.round(body.mesh.points[made[0]] * 1e3, 2), n, body.phi[made[0]], V1 / V0 - 1.0, M1 / M0 - 1.0))
+    assert made and n == 1 and body.phi[made[0]] > 0.0
+    assert tally.pieces_used == 1
+    assert V1 == pytest.approx(V0, rel=1e-12) and abs(M1 / M0 - 1.0) <= 1e-12
 
 
 def test_metal_thinner_than_twice_the_skin_depth_stops_the_run():
@@ -673,13 +984,16 @@ CONTINUUM = dict(rho=1e-4, kn=1e-3)   # 7.5 km/s at a density of 1e-4 kg/m3 with
                                       # layer's branch, where Girin's closure gives a conjugate depth
 
 
-RUNAWAY = ("plan 03b Task 7 (the controller's ruling T6-d), measured once: on the cube rounded to 2 mm the first spraying "
-           "step completes (5 parts, no THIN_METAL), but the second 0.05 s step never ends: after 9 parts (35.7 ms) a part's "
-           "move ratio is 4.3e9 and does not shrink with the part's length, because one column (row 28, its marker at "
-           "(5.58, 0.29, -1.40) mm on the rounded +x edge) was left a top cross-section of 2.4e-16 m2 by the moved phi "
-           "while its cells still hold 1.35 mg (5.2e-10 m3), and `skinbody.split_part` splits such a part into "
-           "ceil(4.3e9) parts at every level to SPLIT_DEPTH_MAX; skinbody's move ratio and split count are Task 5's "
-           "code, for the controller's ruling")
+SPURIOUS_PAIRS = ("plan 03b Task 7b (rulings T7-f, T7b-a and T7-k), measured once: the runaway split is gone (the speck "
+                  "that stranded two columns stays out), and the second 0.05 s step runs its parts but stops at its end "
+                  "on stepend.THIN_METAL with 2 pairs of opposed columns (n_i . n_j -0.56 and -0.51) whose markers are "
+                  "2.90 and 3.24 mm apart with metal all the way between them (2.89 and 3.23 mm of it along the "
+                  "straight line, reaching 0.67 and 0.75 mm below phi): not metal thinner than twice the skin depth "
+                  "(2.4 mm), the spurious pairs of ruling T7-k, Task 7c's subject")
+
+
+class ThinMetalStop(RuntimeError):
+    """A step's THIN_METAL stop (`stepend.THIN_METAL`) and no other, for an expected failure to name."""
 
 
 @pytest.fixture(scope="module")
@@ -719,18 +1033,23 @@ def test_liquid_formed_on_the_face_sprays_and_the_books_close(sprayed):
     assert max(owed(body, book)) <= OWED_SHARE
 
 
+@pytest.mark.xfail(raises=ThinMetalStop, strict=True, reason=SPURIOUS_PAIRS)
 def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
     """Fix round 1 of Task 9 (ruling a), the smallest case found that reproduced the skyscrapers' runaway: the spraying
     step above and a second 0.05 s step at the same state. A part that meets its allowance only after splits, or never,
     carries the splits' shortness into the skyscrapers' estimate; here a step's hint is at most 1.25 times the parts it
     took: both steps stay within PART_BOUND parts, the second step's hint is at most the skyscrapers' for it, both hints
-    are 1.25 times their step's parts at most, and the books close. The first step's hint is checked; the second step is
-    not run and the test xfails at run time (RUNAWAY: that step never ends)."""
+    are 1.25 times their step's parts at most, and the books close. It fails (SPURIOUS_PAIRS): the second step stops on
+    THIN_METAL, which the test raises as ThinMetalStop (any other stop is a failure)."""
     body, _, first, _, stop = sprayed
     assert stop is None, stop
     assert first.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * first.parts)))
-    pytest.xfail(RUNAWAY)                                 # the second step never ends (RUNAWAY): not run
-    second = body.advance(0.05, state=gas_state(**CONTINUUM))
+    try:
+        second = body.advance(0.05, state=gas_state(**CONTINUUM))
+    except RuntimeError as err:
+        if str(err).startswith(skinbody.THIN_METAL):
+            raise ThinMetalStop(str(err)) from err
+        raise
     print("two flow-on steps: parts {} then {}; hints {} then {}; the skyscrapers' hints {} then {}".format(
         first.parts, second.parts, first.parts_next, second.parts_next, first.parts_skyscrapers,
         second.parts_skyscrapers))
@@ -1183,11 +1502,14 @@ REF_STEPS = 100                 # the reference's backward-Euler steps over BOX_
 EDGE_RTOL = 0.05                # the probe column's temperature rise against the reference's over that column, relative
 REGION_STEP = 0.02e-3           # m: the samples of a column's part of a level surface beside the edge (`_column_region`)
 REGION_REACH = (4.99e-3, 4.0e-3)   # m: they reach this far along the edge from its middle and from the edge itself
-EDGE_FAILS = ("plan 03b Task 6 with the controller's ruling T6-b, measured once: the probe's column (an unheated-face "
-              "column wrapping the edge, its marker's normal +y; 0.50 to 1.98 mm from the heated face at the probe's "
-              "0.496 mm depth) rises 26.30 K with the conductance over the columns' centroids' distance, 7.3 % under the "
-              "reference's 28.37 K mean over the column's part of the layer there (25.73 K, 9.3 % under, over the markers' "
-              "distance); the reference's rise at the probe itself is 30.71 K; EDGE_RTOL kept at 5 %")
+EDGE_FAILS = ("the 2 mm markers do not resolve the heated edge (Task 7b's diagnosis D1, the controller's rulings T6-e and "
+              "T7-j; re-measured in Task 7b, once each): the probe sits in a column that straddles the edge (an "
+              "unheated-face column, its marker's normal +y, 0.50 to 1.98 mm from the heated face at the probe's 0.496 mm "
+              "depth, 28 % of its part there under the heated face), whose one temperature per depth cannot follow the "
+              "steep fall across the edge: it rises 26.30 K, 7.3 % under the reference's 28.37 K mean over that part "
+              "(30.71 K at the probe itself); with the markers 1 mm apart the probe falls in a heated-face column, which "
+              "rises 28.87 K against 30.73 K, 6.0 % under, still beyond EDGE_RTOL (5 %, kept): design 21.10's finer "
+              "markers near edges are the remedy")
 
 
 def _box_phi0():

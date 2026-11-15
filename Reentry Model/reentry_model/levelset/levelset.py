@@ -150,11 +150,18 @@ BRENT_XTOL = 1e-18  # m: Brent's method's tolerance on a piece's shift (`correct
 BRENT_ITER = 200    # its iterations at most
 
 
-def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60, misses=None):
+def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60, misses=None, fixed=None):
     """Shift phi uniformly over each piece (its cells' nodes, dilated by `rings` rings of cells) so that the
     piece's volume equals targets[p] to round-off. Returns (phi, largest relative correction); with `misses` a list,
     each piece's miss before the correction, as a share of its target, is appended to it in label order (stage 3 Task
     11's fix round 2: the body's, piece 0's, beside the worst).
+
+    Nodes `fixed` (bool per node) are claimed by no piece and keep their values (plan 03b Task 7b, the controller's
+    ruling T7-f): the nodes of a speck a move parted and lifted out (`stepend.StepEnd._move_phi`, to 1 nm outside the
+    metal) lay within the body's two rings, and the body's shift took them back below zero whenever it grew by more
+    than that nanometre (0.24 um on the spraying cube, 3.1 um on the shoulder; diagnosis D2), so the speck came back with
+    no target. A piece the correction makes wholly in cells that held no metal before it (label < 0 in all its cells)
+    raises RuntimeError, naming it.
 
     Pieces whose dilations meet (Task 9, fix round 4): each node is shifted with the first piece (in label order) that
     reaches it, and each cell holding no metal before is counted with the first piece that reaches it, so no metal is
@@ -177,7 +184,7 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60,
     if (targets <= 0).any():
         raise ValueError("volume target of piece {} is not positive; remove the piece instead".format(
             int(np.flatnonzero(targets <= 0)[0])))
-    claimed_nodes = np.zeros(len(mesh.points), bool)
+    claimed_nodes = np.zeros(len(mesh.points), bool) if fixed is None else np.array(fixed, dtype=bool)
     claimed_cells = np.zeros(len(mesh.tets), bool)
     sets = []
     for p in range(len(targets)):
@@ -237,8 +244,27 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60,
             shift[p] = c
         if len(targets) == 1 or all(abs(t - inside_volumes(mesh, phi, sets[p][1]).sum()) <= rtol * t
                                     for p, t in enumerate(targets)):
+            _check_no_new_piece(mesh, phi, label)
             return phi, worst
     raise RuntimeError("the volume correction did not hold every piece's target at once in {} sweeps".format(SWEEPS_MAX))
+
+
+def _check_no_new_piece(mesh, phi, label):
+    """RuntimeError if phi (after a volume correction) has a piece of metal wholly in cells that held none before it
+    (`label` < 0 there), naming the first: its volume, cells and centroid (`correct_volumes`)."""
+    fresh, n = pieces(mesh, phi)
+    metal = fresh >= 0
+    held = np.bincount(fresh[metal], (label[metal] >= 0).astype(float), minlength=n)
+    new = np.flatnonzero(held == 0.0)
+    if not len(new):
+        return
+    cells = fresh == new[0]
+    vol = inside_volumes(mesh, phi)[cells]
+    at = (mesh.centroids[cells] * vol[:, None]).sum(axis=0) / vol.sum() * 1e3
+    raise RuntimeError("the volume correction made {} piece(s) of metal wholly in cells that held no metal before it, "
+                       "the first {:.3e} m3 in {} cells about ({:.3f}, {:.3f}, {:.3f}) mm (a piece lifted out before the "
+                       "correction must be left out of its claims: `fixed`)".format(len(new), vol.sum(), int(cells.sum()),
+                                                                                     *at))
 
 
 def patches_area(mesh, phi, cells):

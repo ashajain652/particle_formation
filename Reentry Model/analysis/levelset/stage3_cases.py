@@ -42,19 +42,24 @@ metal at the solid's density, exactly full), as the skyscrapers' plate reads it;
 reported beside it.
 
 The q6p box (Ruling 5): 8 x 10 x 10 mm at 700 K, 6 MW/m2 by projection on its 10 x 10 face (flight along -x; each
-marker the mean projection of the patches of phi nearest it, `projected_heat`, whose docstring says why), 2 s at
+marker the mean projection of the patches of phi it owns, taken again on the moved phi before every part,
+`projected_heat`, whose docstring says why), 2 s at
 0.5 s steps, dev cells, the design's meshes (0.7 mm fine cells over a 4 mm margin, a 0.25 mm curvature floor), the
 volume flow held (stage 3) and the skins' own flow on (the runoff driven by the flight's deceleration, PUSH_DECEL along
 the flight direction, with no gas pressure gradient or shear), `remove="feed"`. Judged: the face centre's recession
 (phi's zero on the axis) within RECESSION_TOL of REFERENCE_1D at 1.0, 1.5 and 2.0 s (the liquidus reference reported),
 the books, no marker trapped; the edges reported: each of the twelve edges' rounding radius, estimated from phi's zero
 contour in the plane normal to it through its midpoint (`edge_rounding`), and the recession along the bisector of the
-heated face's +y edge. The cost per step is recorded against the old design's 31.4, 175.3, 772.1 and 1175.9 s
-(OLD_BOX_STEP_S; design 21.8 item 10).
+heated face's +y edge, and the face's recession on a 9 x 9 grid 1 mm apart about its axis (`box_grid`); a step that
+stops records the face and the edges as it left them (`run_steps`' `failed`; plan 03b Task 7b, Task 7's minor M2). The
+cost per step is recorded against the old design's 31.4, 175.3, 772.1 and 1175.9 s (OLD_BOX_STEP_S; design 21.8 item
+10).
 
 The shoulder: a segment of a sphere of radius SHOULDER_R (the 50 mm sphere, as the marker tests' "25 mm sphere") about
 its 45 degree station, cut by flat faces (a closed body: SHOULDER_HALF_X along the meridian, SHOULDER_HALF_Y across,
-SHOULDER_DEPTH deep), at the skyscrapers' pushed plate's loads (`PUSHES["flight"]` of analysis/skin_plate.py: dp/ds
+SHOULDER_DEPTH deep), the station SHOULDER_OFF off the origin along each axis so that the faces cut the cells (plan 03b
+Task 7b, the controller's ruling T7-h: on the mesh's planes of nodes they left the division's closure 3.7e-3 from one),
+at the skyscrapers' pushed plate's loads (`PUSHES["flight"]` of analysis/skin_plate.py: dp/ds
 and shear down the meridian on its curved face, the deceleration along the flight direction), 700 K, 6 MW/m2 projected
 on the curved face upstream of the station (the windward cap; the heat ends at the station) and nothing behind, the
 liquid kept, dev cells, fine cells to the design's margin but no curvature floor below the fine size (the cut faces'
@@ -168,10 +173,15 @@ BOX_HI = np.array([BOX_OFF + BOX_LENGTH, BOX_OFF + BOX_HALF, BOX_OFF + BOX_HALF]
 EDGE_READ = (1.5e-3, 3.0e-3)       # m: an edge's faces are read this far from it along each face (`edge_rounding`)
 EDGE_OUT, EDGE_IN = 2.0e-3, 8.0e-3   # m: each reading starts this far outside the face (in the mesh box) and runs this far
 EDGE_ROUNDS = 3                    # readings of the faces, each from the last corner found
+FACE_GRID = BOX_OFF + np.linspace(-4e-3, 4e-3, 9)   # m: the heated face read on a 9 x 9 grid 1 mm apart about its axis
+                                                   # (`box_grid`; Task 7's and diagnosis D1's grid)
 COLD_T0 = 700.0                    # K
 SHOULDER_R = 25e-3                 # m: the sphere's radius
 SHOULDER_HALF_X, SHOULDER_HALF_Y, SHOULDER_DEPTH = 7e-3, 3e-3, 6e-3   # m: the segment about the station (local frame:
-                                                                    # station at the origin, normal +z, meridian +x)
+                                                                    # normal +z, meridian +x)
+SHOULDER_OFF = 0.13e-3             # m: the station's offset from the origin along each axis, off the mesh's planes of
+                                   # nodes, as the box's BOX_OFF (plan 03b Task 7b, the controller's ruling T7-h: with its
+                                   # cut faces on those planes the division closed 3.7e-3 from one, 3.7e-5 shifted)
 SHOULDER_Q = 6.0e6                 # W/m2, upstream of the station (x < 0)
 CURVED_FACE = 0.5                  # a marker whose normal's dot with the radial direction exceeds this is on the sphere
 DEPOSIT_RIGID_SHARE = 0.9          # of the metal deposited past the heat's end at 2.0 s, at least this share rigid
@@ -377,7 +387,7 @@ class Profile:
         self._wrap(B, "_pass", self._pass_label)
         self._wrap(CutThermal, "step", self._solve_label)
         for owner, name, label in (
-                (B, "_interface", "interface (patch groups)"), (B, "_accept", "part books"),
+                (B, "_interface", "interface (patch groups)"), (B, "_accept", "part books"), (B, "_take_loads", "loads"),
                 (B, "mass_centroid", "loads"), (B, "_summary", "summary"),
                 (S, "_move_phi", "base moves"), (S, "_psi", "surfaces psi"), (S, "_settle", "markers"),
                 (S, "_repartition", "re-partition"), (S, "_divide", "division"), (S, "_needs_rebuild", "remesh"),
@@ -602,15 +612,21 @@ def projected_heat(body, q0, direction, where=None):
     """A flux q0 [W/m2] arriving along -`direction` (a beam from the side `direction` points to) by projection, given to
     the markers by the patches of phi they own, as the gas loads now are (`loads.patch_mean`, stage 3 Task 11's fix, item
     2) and as the skyscrapers' plate gives each column the projection of its own dual cell (`projected_flux`): each marker
-    takes q0 times the area-weighted mean, over phi's patches nearest it, of their own projection max(n_p . direction, 0),
-    on its own area; `where(centroids)` (bool) heats only some patches. Returns q per marker [W/m2]. (Each marker's own
-    normal, q0 max(n . direction, 0), gave the q6p box's markers 73.6 mm2 of projected area against phi's 99.3 mm2,
-    measured once after its first step: its edges, rounded to the stub's 0.8 mm, lie between markers 2 mm apart.)"""
+    takes q0 times the area-weighted mean, over the patches of phi as it is that it owns, of their own projection
+    max(n_p . direction, 0), on its own area; `where(centroids)` (bool) heats only some patches. Returns q per marker
+    [W/m2]. The ownership is the one that sets the markers' areas (`Markers.owned_patches`, with the same-side and
+    same-piece rules), so that the heat the markers take, sum q_i A_i, is the beam's power on phi; the body calls this
+    again before every part on a moved phi (`skinbody.LevelSetSkinBody._take_loads`; plan 03b Task 7b, the controller's
+    ruling T7-i: meaned under `loads.owned`, the nearest marker alone, and taken once a step, the box's heat in ran 5.5 %
+    over the beam's over its second step and up to 25 % in its last part once the face was uneven; diagnosis D1). (Each
+    marker's own normal, q0 max(n . direction, 0), gave the q6p box's markers 73.6 mm2 of projected area against phi's
+    99.3 mm2, measured once after its first step: its edges, rounded to the stub's 0.8 mm, lie between markers 2 mm
+    apart.)"""
     P = patches(body.mesh, body.phi)
     proj = np.maximum(P.normal @ np.asarray(direction, float), 0.0)
     if where is not None:
         proj = np.where(where(P.centroid), proj, 0.0)
-    return q0 * loads_mod.patch_mean(body.markers, P, proj)
+    return q0 * loads_mod.patch_mean(body.markers, P, proj, W=body.markers.owned_patches(body.mesh, body.phi, P))
 
 
 def heat_coverage(body, direction, q=None, q0=1.0, where=None):
@@ -682,12 +698,14 @@ def save_state(body, path):
     return path
 
 
-def run_steps(body, advance, steps, label, extra=None, before_step=None):
+def run_steps(body, advance, steps, label, extra=None, before_step=None, failed=None):
     """`steps` macro steps of `advance(body)` under the profiler, a row each (`step_row`, plus extra(body, book) if given);
     a step that raises ends the run and is recorded, with its time until it raised, the parts it accepted, its cost
-    split, its division line and its solver watch. With STAGE3_STATE_DIR set, the body is pickled there before each
-    step and kept, its path in the failure, when the step raises (Task 11's review, M6: a failing case left nothing to
-    diagnose), and after each step that succeeds. Returns (rows, failure or None)."""
+    split, its division line, its solver watch and, with `failed`, the case's measures of the body as the stop left it,
+    `failed(body)` (a dict; where the state does not allow them, the error they raised; plan 03b Task 7b, Task 7's minor
+    M2: the box's stopped step's face and edges were measured only in scratch). With STAGE3_STATE_DIR set, the body is
+    pickled there before each step and kept, its path in the failure, when the step raises (Task 11's review, M6: a
+    failing case left nothing to diagnose), and after each step that succeeds. Returns (rows, failure or None)."""
     rows, failure = [], None
     tag = label.replace(" ", "_")
     states = os.environ.get("STAGE3_STATE_DIR")
@@ -710,6 +728,11 @@ def run_steps(body, advance, steps, label, extra=None, before_step=None):
                            "wall_s": round(wall, 2), "parts_accepted": delta["calls"].get("part books", 0),
                            "cost_split_s": split_step(delta, wall), "division_cost": division_cost(delta),
                            "solver_watch": dict(prof.watch)}
+                if failed is not None:                     # the case's measures of the body the stop left
+                    try:
+                        failure["measures"] = failed(body)
+                    except Exception as why:
+                        failure["measures"] = {"error": "{}: {}".format(type(why).__name__, why)}
                 if before is not None:                     # the body the failing step started from, kept
                     failure["state"] = os.path.join(states, "{}_failed_from_t{:.2f}.pkl".format(tag, t_start))
                     os.replace(before, failure["state"])
@@ -892,6 +915,14 @@ def box_centre(body):
     return x, float(d.min()) if len(d) else float("nan")
 
 
+def box_grid(body):
+    """The heated face's solid top [m] (phi's zero along +x, read from the gas) on the FACE_GRID x FACE_GRID points (y
+    by rows, z by columns), (9, 9); NaN where no zero is found."""
+    Y, Z = np.meshgrid(FACE_GRID, FACE_GRID, indexing="ij")
+    starts = np.column_stack([np.full(Y.size, -H0), Y.ravel(), Z.ravel()])
+    return (-H0 + zeros_along(body.mesh, body.phi, starts, (1.0, 0.0, 0.0), H0 + BOX_LENGTH)).reshape(Y.shape)
+
+
 def box_edges():
     """The box's twelve edges as (name, (axis, sign) of one face's outward normal, the other's): the heated face's four
     (-x with +-y, +-z), the rear face's four (+x with them) and the four along x (+-y with +-z)."""
@@ -974,6 +1005,8 @@ def box(preset="dev", steps=None, save=True):
     t_build = time.perf_counter() - t_build
     v_hat = body.v_hat
     c0, _ = box_centre(body)
+    grid0 = box_grid(body)
+    grid = [grid0]                                         # the face on the grid at the start of the step running
     top0, d0, edge0 = box_face(body)
     edges0 = box_edge_roundings(body, c0)
     face_x0 = float(np.median(top0))
@@ -991,7 +1024,9 @@ def box(preset="dev", steps=None, save=True):
         face_rows = b.markers.skin_index[b.markers.normal[:, 0] < -FACE_NORMAL]
         fr = A_group[face_rows] / b.skins.base_area()[face_rows]
         edges = box_edge_roundings(b, c)
+        grid[0] = box_grid(b)
         return {"recession_mm": (c - c0) * 1e3, "centre_marker_off_axis_mm": d * 1e3,
+                "face_grid_recession_mm": (grid[0] - grid0) * 1e3,
                 "edges": edges, "edge_radius_mm": edge_summary(edges),
                 "face_group_ratio": [float(fr.min()), float(np.median(fr)), float(fr.max())] if len(fr) else None,
                 "face_flatness_mm": float(np.ptp(rec)) if len(rec) else None,
@@ -1011,7 +1046,18 @@ def box(preset="dev", steps=None, save=True):
                 if tilted.any() else None}
 
     n = int(round(T_END / DT)) if steps is None else steps
-    rows, failure = run_steps(body, box_advance, n, "box " + preset, extra)
+    def failed(b):
+        """The face and edges as a stopped step left them (Task 7's minor M2): the face centre's recession, the face's
+        recession on the 9 x 9 grid since the start and its change over the stopped step [mm, a recession positive],
+        and the edges' radii."""
+        c, _ = box_centre(b)
+        now = box_grid(b)
+        edges = box_edge_roundings(b, c)
+        return {"recession_mm": (c - c0) * 1e3, "face_grid_mm": FACE_GRID * 1e3,
+                "face_grid_recession_mm": (now - grid0) * 1e3, "face_grid_step_change_mm": (now - grid[0]) * 1e3,
+                "edges": edges, "edge_radius_mm": edge_summary(edges)}
+
+    rows, failure = run_steps(body, box_advance, n, "box " + preset, extra, failed=failed)
     at = {round(r["t"], 6): r for r in rows}
     compare, verdict = {}, []
     for t in JUDGED_TIMES:
@@ -1042,7 +1088,8 @@ def box(preset="dev", steps=None, save=True):
 
 
 # -- the shoulder ------------------------------------------------------------------------------------------------------
-SHOULDER_CENTRE = np.array([0.0, 0.0, -SHOULDER_R])
+SHOULDER_CENTRE = np.array([SHOULDER_OFF, SHOULDER_OFF, SHOULDER_OFF - SHOULDER_R])   # the sphere's centre, below the
+                                                                                      # station
 
 
 def shoulder_v_hat():
@@ -1053,11 +1100,13 @@ def shoulder_v_hat():
 
 
 def shoulder_phi0():
+    """The segment's level set: the sphere cut by its flat faces about the station (SHOULDER_OFF off the origin)."""
     c, R = SHOULDER_CENTRE, SHOULDER_R
 
     def phi0(x):
-        return np.maximum.reduce([np.linalg.norm(x - c, axis=1) - R, np.abs(x[:, 0]) - SHOULDER_HALF_X,
-                                  np.abs(x[:, 1]) - SHOULDER_HALF_Y, -x[:, 2] - SHOULDER_DEPTH])
+        y = x - SHOULDER_OFF
+        return np.maximum.reduce([np.linalg.norm(x - c, axis=1) - R, np.abs(y[:, 0]) - SHOULDER_HALF_X,
+                                  np.abs(y[:, 1]) - SHOULDER_HALF_Y, -y[:, 2] - SHOULDER_DEPTH])
     return phi0
 
 

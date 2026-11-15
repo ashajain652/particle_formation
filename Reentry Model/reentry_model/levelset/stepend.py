@@ -23,8 +23,18 @@ volume, the skins' cells at their own densities, the volume's metal (beta's) and
 beta is derived afresh, and `CutThermal.move` fills the volume's new nodes (an island the old metal's extension cannot
 reach takes the skins' temperature at its nodes, `_temperature_field`), the enthalpy it removed being the caller's to
 book as heat owed to the volume. A piece of phi the move parts from the body with no column and none of the volume's
-metal in it (a speck) is lifted out, its metal the largest piece's. The markers stay where the step began until its end,
-but their areas, the top fluxes', are given afresh on the moved phi at every acceptance (`_own`).
+metal in it (a speck) is lifted out, its metal the largest piece's, and its nodes are left out of the correction's
+claims, so that it stays out (plan 03b Task 7b, the controller's ruling T7-f: the body's shift over its two rings of
+cells took a lifted node back below zero whenever the body grew by more than PIECE_GONE, and the speck came back with no
+target: on the spraying cube it captured two drifted markers' columns and the split never ended, and on the shoulder no
+group counted the cells that swallowed it; diagnosis D2). The markers stay where the step began until its end, but
+their areas, the top fluxes', are given afresh on the moved phi at every acceptance (`_own`), and the top fluxes are
+taken again under the same ownership before the next part (`skinbody.LevelSetSkinBody._take_loads`).
+
+Clear stops (plan 03b Task 7b, the controller's ruling T7-g): a division that finds a piece of phi with layer but no
+column, or a piece whose closure factor departs from one by more than DIVISION_GROSS, raises (`_divide`); so does a fill
+that leaves a column beyond FILL_RTOL of its volume after its rounds (`_fill`), naming it. Every completed step of every
+recorded case filled to 4e-16 of a column's volume at worst and closed within 4e-3, so neither fires on a good step.
 
 Filling the columns (`_fill`, planning ruling 3 step 7). After the division (`_divide`), every column whose cells'
 volume m / rho(T) differs from its own by more than FILL_RTOL is filled, in at most FILL_ROUNDS rounds: first the columns
@@ -50,9 +60,12 @@ volumes do not add) and of metal passed between columns by a fill. The volume's 
 
 At the macro step's end (`_end_step`): the last part's carry moves phi (ruling 4); psi from phi (`_psi`); the mesh
 rebuilt from `criteria.make_target` only where it no longer meets the targets (`_needs_rebuild`, with slack), phi
-carried to it (interpolated, reset keeping its contour, corrected to its pieces' volumes; the controller's ruling T2-b),
-beta derived, and `CutThermal.remesh` (its enthalpy residual booked as heat owed); the markers settled (`_settle`):
-snapped onto phi to SNAP_TOL, the trapped and the patchless released (each giving its skin to the nearest marker that
+carried to it (interpolated, reset keeping its contour, corrected to its pieces' volumes; the controller's ruling T2-b;
+a piece the carried phi parts off with no column and none of the volume's metal is lifted out first by the speck rule of
+the moves, `_lift_specks`, its nodes left out of the correction's claims: the controller's ruling T7b-b, after the stage
+3 box's second step met one of 2.3e-16 m3 in its rim, which the division then stopped on), beta derived, and
+`CutThermal.remesh` (its enthalpy residual booked as heat owed); the markers settled (`_settle`): snapped onto phi to
+SNAP_TOL, the trapped and the patchless released (each giving its skin to the nearest marker that
 may own its part of phi, by depth, `Markers.release`; planning ruling 6), given their areas of phi (`_tessellate`), the
 layer divided among them and their skins re-partitioned across that division (below), split and merged, snapped, given
 their areas, divided and re-partitioned again, the skins regridded and given their markers' areas; then given the last
@@ -117,6 +130,9 @@ AREA_FLOOR = 1e-6                 # of the target spacing squared: the least top
                                   # releases it, so that the runoff's operators, over the top areas, stay finite)
 MOVE_SUM_RTOL = 1e-12             # of the body's volume: the groups' swept volumes must sum to phi's change of volume to
                                   # this (the controller's ruling 3 of Task 5's dispatch)
+DIVISION_GROSS = 0.1              # a piece's closure factor more than this from one stops the run (`_divide`; the
+                                  # controller's ruling T7-g: the speck that took two columns on the spraying cube closed
+                                  # at 0.0033, every recorded step within 4e-3; DIVISION_TOL, 1e-3, is the tests' bound)
 NO_CORE = ("the body has no rigid metal left: psi finds no metal below T_rigid ({:.1f} K) anywhere in it, so its molten "
            "metal has nothing to stand on (it has melted through); that is beyond level-set stage 3, which holds the "
            "volume's melt (no flow solve)")
@@ -234,35 +250,60 @@ class StepEnd:
         sk = self.skins
         return sk.cells_volume() - sk.column_volume() + self.carry
 
-    def _piece_targets(self, phi, beta_old, phi_old):
+    def _piece_targets(self, phi, beta_old, phi_old, mesh=None):
         """Each piece of phi's metal volume [m3], label and count: the cells' volume (m / rho(T)) and the carry of the
         rows whose columns it holds, and beta_old's metal in its cells (where outside every piece, the largest's). A
         row's piece is the piece of phi that holds most of the metal its column's piece of `phi_old` held (the division's
         pieces, `Division.piece`, numbered as `levelset.pieces(phi_old)`): within a step the markers stand where it
         began, off the moved phi, and placed by position one could fall to a speck the move parted off, which would then
-        be filled with its column."""
-        mesh, mk, sk = self.mesh, self.markers, self.skins
+        be filled with its column. phi_old and beta_old are on the body's mesh; phi is too, or on `mesh` (the remesh's
+        new mesh, `_rebuild`; the controller's ruling T7b-b), where each old cell's metal is placed by its centroid
+        (`transfer.locate`) and an old piece's new piece is the one holding most of its old metal."""
+        old_mesh, mk, sk = self.mesh, self.markers, self.skins
+        mesh = old_mesh if mesh is None else mesh
         label, n = pieces(mesh, phi)
         if n == 0:
             raise RuntimeError("the gas surface holds no metal after a move")
-        old, n_old = pieces(mesh, phi_old)
-        v_new = inside_volumes(mesh, phi)
+        old, n_old = pieces(old_mesh, phi_old)
+        if mesh is old_mesh:                                # each old cell's new piece, and what weighs it
+            at_new, weight = label, inside_volumes(mesh, phi)
+        else:
+            at_new, weight = label[locate(mesh, old_mesh.centroids)[0]], inside_volumes(old_mesh, phi_old)
         image = np.zeros(max(n_old, 1), dtype=np.int64)          # each old piece's new piece: where most of it lies
         for q in range(n_old):
-            at = (old == q) & (label >= 0)
+            at = (old == q) & (at_new >= 0)
             if at.any():
-                image[q] = int(np.argmax(np.bincount(label[at], v_new[at], minlength=n)))
+                image[q] = int(np.argmax(np.bincount(at_new[at], weight[at], minlength=n)))
         if self.division is not None and len(self.division.piece) == mk.n:
             was = self.division.piece
         else:
-            was = _marker_pieces(mesh, mk.x, old, patches(mesh, phi_old))
+            was = _marker_pieces(old_mesh, mk.x, old, patches(old_mesh, phi_old))
         piece = image[np.clip(was, 0, max(n_old - 1, 0))]
         held = (sk.cells_volume() + self.carry)[mk.skin_index]
-        v_beta = inside_volumes(mesh, beta_old)
-        where = np.where(label >= 0, label, 0)
+        v_beta = inside_volumes(old_mesh, beta_old)
+        where = np.where(at_new >= 0, at_new, 0)
         # summed piece by piece with numpy's pairwise sums (bincount's running sum lost 1e-13 of a move's volume)
         t = np.array([held[piece == p].sum() + v_beta[where == p].sum() for p in range(n)])
         return t, label, n
+
+    def _lift_specks(self, mesh, phi, beta_old, phi_old, tally, what):
+        """phi (on `mesh`) with every piece but the largest that is owed no metal (`_piece_targets`: no column maps to
+        it and none of beta_old's metal lies in it) lifted to PIECE_GONE, round after round (at most PIECE_ROUNDS), its
+        metal the largest piece's; the lifted pieces counted in `tally.pieces_used`. Returns (phi, the pieces' targets,
+        label, count, the lifted nodes (bool per node), to be left out of the correction's claims: ruling T7-f).
+        `what` names the caller in the error raised if pieces keep being left with no metal."""
+        lifted = np.zeros(len(phi), dtype=bool)
+        for _ in range(PIECE_ROUNDS):
+            targets, label, n = self._piece_targets(phi, beta_old, phi_old, mesh)
+            gone = np.flatnonzero(targets[1:] <= 0.0) + 1
+            if not len(gone):
+                return phi, targets, label, n, lifted
+            nodes = np.unique(mesh.tets[np.isin(label, gone)])
+            phi = phi.copy()
+            phi[nodes] = np.maximum(phi[nodes], PIECE_GONE)
+            lifted[nodes] = True
+            tally.pieces_used += len(gone)
+        raise RuntimeError("pieces of phi kept being left with no metal by {} after {} rounds".format(what, PIECE_ROUNDS))
 
     def _move_phi(self, dC, tally, kind):
         """phi moved by the rows' volume changes dC [m3] (n,) and their carry, corrected per piece, beta derived and the
@@ -281,24 +322,14 @@ class StepEnd:
                                "than {:.0e} of the body's volume apart: cells no marker may own changed".format(
                                    swept, change, MOVE_SUM_RTOL))
         tally.move_miss = max(tally.move_miss, float(moved.miss.max(initial=0.0)))
-        phi = moved.phi
-        for _ in range(PIECE_ROUNDS):                       # a speck the move parted from the body (no marker on it and
-            targets, label, _ = self._piece_targets(phi, beta0, phi0)    # none of the volume's metal) leaves, its
-            gone = np.flatnonzero(targets[1:] <= 0.0) + 1                # metal the largest piece's (stage 3 Task 9's
-            if not len(gone):                                            # rule for used-up pieces of beta)
-                break
-            nodes = np.unique(mesh.tets[np.isin(label, gone)])
-            phi = phi.copy()
-            phi[nodes] = np.maximum(phi[nodes], PIECE_GONE)
-            tally.pieces_used += len(gone)
-        else:
-            raise RuntimeError("pieces of phi kept being left with no metal by a move after {} rounds".format(
-                PIECE_ROUNDS))
+        # a speck the move parted from the body (no marker on it and none of the volume's metal) leaves, its metal the
+        # largest piece's (stage 3 Task 9's rule for used-up pieces of beta), its nodes out of the correction's claims
+        phi, targets, label, _, lifted = self._lift_specks(mesh, moved.phi, beta0, phi0, tally, "a move")
         if targets[0] <= 0.0:
             raise RuntimeError("the gas surface's largest piece has no metal left after a move ({:.3e} m3)".format(
                 targets[0]))
         misses = []
-        phi, worst = correct_volumes(mesh, phi, label, targets, misses=misses)
+        phi, worst = correct_volumes(mesh, phi, label, targets, misses=misses, fixed=lifted)
         tally.correction = max(tally.correction, worst)
         tally.corrections.append({"kind": kind, "worst": float(worst), "body": float(misses[0])})
         self.phi = phi
@@ -330,17 +361,39 @@ class StepEnd:
     def _divide(self, tally, d=None):
         """The layer divided among the markers (`_division`; or `d`, a division of them as they stand on phi as it is,
         such as the step end's settle leaves) and the skins given its profile; the largest departure of a piece's
-        closure factor from one into `tally.layer_factor`."""
+        closure factor from one into `tally.layer_factor`. RuntimeError, before the skins take the profile, where a
+        piece of phi has layer but no column (no marker on it: its factor infinite) or a factor more than DIVISION_GROSS
+        from one (module docstring; the controller's ruling T7-g)."""
         mk, sk = self.markers, self.skins
         d = self._division() if d is None else d
         if len(d.area) != mk.n:
             raise ValueError("the division must be of the markers as they stand: one column per marker")
+        if len(d.factor):
+            tally.layer_factor = max(tally.layer_factor, float(np.abs(d.factor - 1.0).max()))
+            self._check_division(d)
         area = np.zeros((sk.n, len(d.levels)))
         area[mk.skin_index] = d.area
         sk.set_profile(d.levels, area)
         self.division = d
-        if len(d.factor):
-            tally.layer_factor = max(tally.layer_factor, float(np.abs(d.factor - 1.0).max()))
+
+    def _check_division(self, d):
+        """RuntimeError naming the first piece of phi that the division `d` left with layer but no column, or whose
+        closure factor departs from one by more than DIVISION_GROSS (`_divide`)."""
+        off = np.abs(d.factor - 1.0) > DIVISION_GROSS
+        if not off.any():
+            return
+        p = int(np.flatnonzero(off)[0])
+        label, _ = pieces(self.mesh, self.phi)
+        layer = inside_volumes(self.mesh, self.phi) - inside_volumes(self.mesh, self.phi + self.settings.depth)
+        cells = label == p
+        at = (self.mesh.centroids[cells] * layer[cells][:, None]).sum(axis=0) / max(layer[cells].sum(), 1e-300) * 1e3
+        where = "its layer {:.3e} m3 about ({:.3f}, {:.3f}, {:.3f}) mm".format(layer[cells].sum(), *at)
+        if np.isinf(d.factor[p]):
+            raise RuntimeError("piece {} of phi has layer but no column: no marker stands on it ({}; the controller's "
+                               "ruling T7-g)".format(p, where))
+        raise RuntimeError("the division's closure factor of piece {} of phi is {:.6g}, more than DIVISION_GROSS ({}) from "
+                           "one, over its {} column(s) ({}; the controller's ruling T7-g)".format(
+                               p, d.factor[p], DIVISION_GROSS, int((d.piece == p).sum()), where))
 
     def _baseless(self):
         """Each row's column has no base (n,) bool: its division base at most BASELESS_SHARE of its top."""
@@ -422,11 +475,13 @@ class StepEnd:
         from their neighbours, then those with one at their bases, in at most FILL_ROUNDS rounds; each row's carry
         takes its cells' volume change less the mass the volume gave it over rho_s. A column with a base draws at its
         base temperature, its group's area mean of beta's patch temperatures (`_interface`, once; the controller's ruling
-        T5-k); RuntimeError if a short one has no group. Counts in `tally`: `drawn`,
-        `handed` [kg] the base exchange each way, `to_volume` [kg m/s] the returned cells' momentum (the held volume
-        takes it), `fill_miss` the largest miss left as a share of its column's volume, `baseless` the columns with no
-        base. Returns the enthalpy [J] the skins took from the volume (negative where they returned more), for the
-        caller to book as heat owed."""
+        T5-k); RuntimeError if a short one has no group, and RuntimeError naming the worst (its marker, position and
+        piece, its cells' volume and its column's) where a column is still beyond FILL_RTOL of its volume after the
+        rounds (the controller's ruling T7-g: a column with no base and no neighbour was skipped silently). Counts in
+        `tally`: `drawn`, `handed` [kg] the base exchange each way, `to_volume` [kg m/s] the returned cells' momentum (the
+        held volume takes it), `fill_miss` the largest miss left as a share of its column's volume, `baseless` the
+        columns with no base. Returns the enthalpy [J] the skins took from the volume (negative where they returned
+        more), for the caller to book as heat owed."""
         sk = self.skins
         V_col = sk.column_volume()
         base = ~self._baseless()
@@ -462,9 +517,20 @@ class StepEnd:
             tally.handed -= float(ex.mass[ex.mass < 0.0].sum())
             tally.to_volume -= ex.P.sum(axis=0)
             taken += float(ex.H.sum())
-        miss = np.abs(V_col - sk.cells_volume())
+        held = sk.cells_volume()
+        miss = np.abs(V_col - held)
         share = np.divide(miss, V_col, out=np.where(miss > 0.0, np.inf, 0.0), where=V_col > 0.0)
         tally.fill_miss = max(tally.fill_miss, float(share.max(initial=0.0)))
+        left = miss > FILL_RTOL * V_col
+        if left.any():
+            r = int(np.argmax(np.where(left, share, -1.0)))
+            m = int(self._row_marker()[r])
+            raise RuntimeError("the fill left {} column(s) beyond FILL_RTOL ({:.0e}) of their volume after {} rounds; the "
+                               "worst, marker {} at ({:.3f}, {:.3f}, {:.3f}) mm on piece {} ({}), its cells hold {:.6e} m3 "
+                               "against its column's {:.6e} m3, {:.3e} m3 apart ({:.3e} of its volume; the controller's "
+                               "ruling T7-g)".format(int(left.sum()), FILL_RTOL, FILL_ROUNDS, m, *(self.markers.x[m] * 1e3),
+                                                     int(self.division.piece[m]), "with a base" if base[r] else "no base",
+                                                     held[r], V_col[r], miss[r], share[r]))
         return taken
 
     def _layer(self, dC, tally, kind):
@@ -512,6 +578,9 @@ class StepEnd:
             label, n = pieces(new, phi)
             if n == 0:
                 raise RuntimeError("the gas surface has no metal on the rebuilt mesh")
+            lifted = np.zeros(len(phi), dtype=bool)
+            if n > 1:                                      # a speck the carried phi parted off leaves, as a move's does
+                phi, _, label, n, lifted = self._lift_specks(new, phi, self.beta, self.phi, tally, "the remesh")
             targets = np.zeros(n)
             targets[0] = v_old.sum()
             if n > 1:                                      # the pieces share the old metal by their volumes here
@@ -519,7 +588,7 @@ class StepEnd:
                 share = np.array([v_new[label == p].sum() for p in range(n)])
                 targets = share * (v_old.sum() / share.sum())
             misses = []
-            phi, worst = correct_volumes(new, phi, label, targets, misses=misses)
+            phi, worst = correct_volumes(new, phi, label, targets, misses=misses, fixed=lifted)
             tally.correction = max(tally.correction, worst)
             tally.corrections.append({"kind": "remesh", "worst": float(worst), "body": float(misses[0])})
             beta = skin_base(new, phi, self.settings.depth, band=self.band)

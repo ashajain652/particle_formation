@@ -25,15 +25,18 @@ its group by the area W_mp of p it holds, q0 = sum_m a_m W_mp / (A(G_m) A_p), q1
 temperature T_b is the area mean over its group of the patch temperatures the solve applies its law at -- so the volume
 receives exactly sum_m (a_m + b_m T_b,m) dt.
 
-One macro step (`advance`, design 10.1 with 20 and 21): the gas loads once per marker at the step's start
+One macro step (`advance`, design 10.1 with 20 and 21): the gas loads per marker from the step's one aero state
 (`loads.GasLoads` at the pieces of phi's patches each marker owns, `Markers.owned_patches`, each marker the mean over its
-own, `loads.by_patches`; the leeward test, the fitted nose), or a prescribed heating; the surface flow's forcing for the
-runoff (with an aero state or a deceleration); Girin's plan once (`spraying.spray_plan`, with a spray model and a
-state; b is always the skin's flowing depth, the wave's regions on the division's boundaries at phi); then the step as
-parts (Ruling 7: none longer than PART_MAX while any top
-is at or above T_rigid or about to be, and a part whose move of phi exceeds MOVE_SHARE of the markers' target spacing --
-the part ratio max |dV_i / A_i(0)| / (MOVE_SHARE spacing), A_i(0) the column's cross-section at phi -- rerun as shorter
-parts, at most SPLIT_DEPTH_MAX levels). Each part:
+own, `loads.by_patches`; the leeward test, the fitted nose), or a prescribed heating, taken at the step's start and
+again on the moved phi before every part, under the ownership that sets the markers' areas there (`_take_loads`; plan 03b
+Task 7b, the controller's ruling T7-i); the surface flow's forcing for the runoff (with an aero state or a deceleration),
+taken at the step's start and held over it (the controller's ruling T7b-a, `_take_loads`); Girin's plan once
+(`spraying.spray_plan`, with a spray model and a state; b is always the skin's flowing depth, the wave's regions on the
+division's boundaries at phi); then the step as parts (Ruling 7: none longer than
+PART_MAX while any top is at or above T_rigid or about to be, and a part whose move of phi exceeds MOVE_SHARE of the
+markers' target spacing -- the part ratio max |dV_i / A_i(0)| / (MOVE_SHARE spacing), A_i(0) the column's cross-section
+at phi -- rerun as shorter parts, at most SPLIT_DEPTH_MAX levels and at most PARTS_MAX parts a split, past which the
+step stops naming the column; the controller's ruling T7-g). Each part:
 
 1. the trial pass on saved skins (their cells, their flow memory, their profile, the plan's books): every heat sub-step's
    conduction with the trial sensitivity, the columns conducting sideways across the division's shared boundaries
@@ -55,8 +58,9 @@ parts, at most SPLIT_DEPTH_MAX levels). Each part:
    its carry), the move of phi by it, the per-piece correction to the metal's volume, beta derived, `CutThermal.move`,
    the division and the profile, and the fill (the columns with no base from their neighbours, then those with one at
    their bases); the enthalpy the move removed against what the fill took booked as pending at the bases; the
-   markers' areas, the top fluxes', given afresh on the moved phi (the markers themselves settle at the step's end). No
-   metal crosses beta within a pass (the in-pass draw of stage 3 is retired with its minimum mass).
+   markers' areas, the top fluxes', given afresh on the moved phi (the markers themselves settle at the step's end),
+   and the top fluxes taken again on it before the next part (`_take_loads`). No metal crosses beta within a pass (the
+   in-pass draw of stage 3 is retired with its minimum mass).
 
 At the macro step's end (`stepend.StepEnd._end_step`): the last part's carry moves phi, psi, the mesh rebuilt where it
 no longer meets its refinement targets (phi carried), the markers settled on phi, the layer divided and filled, and the
@@ -120,7 +124,10 @@ GROUP_CANDIDATES = 64             # patches nearest a base searched first when i
 PENDING_TIME_MIN = 0.010          # s: the pending heat is delivered at its amount over the macro step's time left, but never
                                   # over less than this (the heat sub-step); what the step's last parts leave stays owed
                                   # into the next step (fix round 3: a whole deferral within a 2 ns part was 1e14 W/m2)
-PARTS_MAX = 1000                  # a macro step never starts with more parts: the next step's hint is capped here
+PARTS_MAX = 1000                  # a macro step never starts with more parts (the next step's hint is capped here), and
+                                  # a split never asks for more (`split_part` raises instead; plan 03b Task 7b, the
+                                  # controller's ruling T7-g: a column's move that no part's length shrinks once asked for
+                                  # ceil(4.3e9) parts at every level and the step never ended)
 # the interface's damped repetition (the skyscrapers' "damped" rule, their skinbody.py and skin.py)
 INTERFACE_TOLERANCE = 1e-3        # of sum |E_top| + |E_base|: the total relative mismatch that ends the repetition
 DAMPED_MAX_PASSES = 12            # passes of a part at most (the last pass's mismatch is deferred)
@@ -153,11 +160,12 @@ class StepBook:
     deepest split while still over their move allowance. `snap_fallback` the markers the snap's last round
     (`stepend.StepEnd._snap`) brought onto phi by Newton steps from farther than `markers.NEWTON_REACH`, and
     `snap_slide_max` [m] the largest sideways slide (along the surface) of that round's Newton steps.
-    `pieces_used_up` the pieces of phi the step's moves parted from the body holding no metal (no marker on them and
-    none of the volume's metal), lifted out (`stepend.StepEnd._move_phi`). `volume_repartitioned_share` the layer's
-    volume passed between columns at the step end, summed over its re-partitions, over the layer's volume after it (an
-    area's share, `area_repartitioned_share`, until plan 03b Task 6 moved the re-partition to the division's volumes;
-    renamed in Task 7, and a book pickled under the old name loads under the new one, `__setstate__`), and
+    `pieces_used_up` the pieces of phi the step's moves and its remesh parted from the body holding no metal (no
+    marker on them and none of the volume's metal), lifted out (`stepend.StepEnd._lift_specks`).
+    `volume_repartitioned_share` the layer's volume passed between columns at the step end, summed over its
+    re-partitions, over the layer's volume after it (an area's share, `area_repartitioned_share`, until plan 03b Task 6
+    moved the re-partition to the division's volumes; renamed in Task 7, and a book pickled under the old name loads
+    under the new one, `__setstate__`), and
     `stretch_min`, `stretch_max` the least and largest stretch of an old column in them (`repartition`, Task 9b;
     `LevelSetSkinBody.last_settle` keeps each re-partition).
     `group_area_ratio_min`, `group_area_ratio_max` the least and largest area of a marker's group of patches of beta over
@@ -328,19 +336,26 @@ class PartCount:
     over: int
 
 
-def split_part(run, dt, dt_macro, depth):
+def split_part(run, dt, dt_macro, depth, worst=None):
     """Ruling 7's splitting: `run(dt)` runs a part of length dt [s] and returns (its move ratio, accept, undo), the
     largest move of phi over MOVE_SHARE of the target spacing; a ratio over one below SPLIT_DEPTH_MAX levels undoes the
     part and runs it again as ceil(ratio) parts one level down, otherwise the part is accepted. Returns the `PartCount`.
     A part split into shorter parts of which one was accepted at the deepest level still over its allowance counts as
     failed, with nothing below it counted (fix round 5 of Task 9: a move that does not shrink with the part's length is
     not helped by splitting, and the parts and move ratios the splitting produced around it -- sibling parts of a few
-    nanoseconds -- must not set the next step's count)."""
+    nanoseconds -- must not set the next step's count). A split that would ask for more than PARTS_MAX parts undoes the
+    part and raises RuntimeError instead, naming the column that sets its ratio, `worst()` (a description, called before
+    the undo; the controller's ruling T7-g)."""
     ratio, accept, undo = run(dt)
     if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:
-        undo()
         k = int(math.ceil(ratio))
-        kids = [split_part(run, dt / k, dt_macro, depth + 1) for _ in range(k)]
+        if k > PARTS_MAX:
+            named = worst() if worst is not None else "ratio {:.6e}".format(ratio)
+            undo()
+            raise RuntimeError("a part of {:.6e} s would be split into {} parts, more than PARTS_MAX ({}): its move of "
+                               "phi does not fit the allowance; the worst column, {}".format(dt, k, PARTS_MAX, named))
+        undo()
+        kids = [split_part(run, dt / k, dt_macro, depth + 1, worst) for _ in range(k)]
         deepest, over = max(c.depth for c in kids), sum(c.over for c in kids)
         if any(c.failed for c in kids):
             return PartCount(0, 0.0, True, deepest, over)
@@ -713,13 +728,35 @@ class LevelSetSkinBody(StepEnd):
     # -- one part --------------------------------------------------------------------------------------------------------
     def _part(self, dt, dt_macro, depth, ctx, tally):
         """One part of a macro step (module docstring, steps 1-6), a part whose move of phi exceeds MOVE_SHARE of the
-        markers' target spacing run again as shorter parts (Ruling 7, `split_part`). Returns its `PartCount`."""
-        return split_part(lambda h: self._part_once(h, dt_macro, ctx, tally), dt, dt_macro, depth)
+        markers' target spacing run again as shorter parts (Ruling 7, `split_part`; past PARTS_MAX of them it stops,
+        naming `_worst_column`). Returns its `PartCount`."""
+        return split_part(lambda h: self._part_once(h, dt_macro, ctx, tally), dt, dt_macro, depth,
+                          worst=self._worst_column)
+
+    def _moves(self):
+        """Each row's move of phi [m] (n,) as the part's passes left it: its volume change since its column was last
+        filled, its cells' and its carry, over its column's cross-section at phi, A(0) (a column with none, zero)."""
+        sk = self.skins
+        dC = sk.cells_volume() - sk.column_volume()
+        A0 = sk.profile[:, 0] if sk.profile is not None else sk.area
+        return np.divide(np.abs(dC + self.carry), A0, out=np.zeros(sk.n), where=A0 > 0.0)
+
+    def _worst_column(self):
+        """The column whose move sets a part's ratio (`_moves`): its marker, position, move and ratio, for a stop."""
+        move, allowance = self._moves(), MOVE_SHARE * self.spacing
+        r = int(np.argmax(move))
+        m = int(self._row_marker()[r])
+        return ("marker {} at ({:.3f}, {:.3f}, {:.3f}) mm: its move of phi {:.6e} m against the allowance {:.6e} m "
+                "(MOVE_SHARE of the spacing), ratio {:.6e}".format(m, *(self.markers.x[m] * 1e3), move[r], allowance,
+                                                                   move[r] / allowance))
 
     def _part_once(self, dt, dt_macro, ctx, tally):
         """Run one part of length dt [s] (steps 1-4) and return (its move ratio, accept, undo): `accept()` books it and
-        settles the layer (steps 5-6), `undo()` restores the state it started from."""
+        settles the layer (steps 5-6), `undo()` restores the state it started from. The top fluxes are first taken again
+        if phi has moved since they were last taken (`_take_loads`)."""
         sk, solver = self.skins, self.solver
+        if ctx["surface"] is not self.phi:
+            self._take_loads(ctx)
         S, A_group, base = self._interface()
         has = A_group > 0.0
         tally.guarded = max(tally.guarded, self.last_guarded)
@@ -771,8 +808,7 @@ class LevelSetSkinBody(StepEnd):
             err.part_restored = True                        # `advance` may then ask whether rigid metal is left
             raise
         dC = sk.cells_volume() - sk.column_volume()          # the cells' volume change (planning ruling 3, step 1)
-        A0 = sk.profile[:, 0] if sk.profile is not None else sk.area
-        move = np.divide(np.abs(dC + self.carry), A0, out=np.zeros(sk.n), where=A0 > 0.0)
+        move = self._moves()
         ratio = float(move.max() / (MOVE_SHARE * self.spacing)) if len(move) else 0.0
         return ratio, lambda: self._accept(dt, dt_macro, ratio, passes, book, mismatch, Q, E_vol0, share, base, has,
                                            dC, tally), \
@@ -814,52 +850,88 @@ class LevelSetSkinBody(StepEnd):
             self._layer(dC, tally, "part")
 
     # -- the macro step --------------------------------------------------------------------------------------------------
+    def _take_loads(self, ctx):
+        """The top fluxes [W/m2] (`ctx["q"]`) taken on phi as it is (module docstring; plan 03b Task 7b, the controller's
+        ruling T7-i), each marker's under the ownership that sets its area (`Markers.owned_patches`, as
+        `stepend.StepEnd._own` gives the areas), so that the heat the skins take, sum q_i A_i, is the heat on the surface
+        as it is; and, with an aero state, at the step's start only, the runoff's forcing (`ctx["forcing"]`, held over the
+        step: ruling T7b-a, below). With an aero state, `loads.by_patches` at phi's patches as they are (each at its own
+        angle and leeward test) from the step's own loads state (`ctx["loads"]`: the state, the nose fit, the mass
+        centroid and the top temperatures at the step's start; no new gas state, the state's flux redistributed over the
+        moved surface); a prescribed heating (`ctx["prescribed"]`) replaces the flux: a function of the markers is called
+        again, an array is held. Called at the step's start and, before a part, whenever phi has moved since
+        (`_part_once`): the areas are given afresh at every acceptance that moves phi. (Taken once at the step's start, the
+        fluxes stayed while the areas they multiply followed phi: on the stage 3 box the heat in ran 5.5 % over the beam's
+        power over a step and up to 25 % in its last part once the face was uneven, and the excess dug a trough inside the
+        rim; under one ownership and taken again, +0.5 %, no trough; diagnosis D1.)
+
+        Why the forcing is held (the controller's ruling T7b-a): ruling T7-i's reason is the heat book, flux times area
+        equal to the heat on the surface as it is, which the flux alone satisfies; no book or diagnosis asks for the
+        forcing's re-take. Taken again at every part as well, measured once on the spraying fixture's first spraying step
+        (plan 03b Task 7b), it folded the liquid into a sheet 0.7 mm under the cube's bottom face and the step stopped on
+        THIN_METAL, while with the forcing held the step completed. Within a step the markers stand up to 2 mm off phi
+        (diagnosis D2), and a re-taken forcing is theirs. `ctx["surface"]` is the phi the fluxes were taken on,
+        `ctx["q_max"]` the largest flux so far."""
+        mk, sk = self.markers, self.skins
+        src = ctx["loads"]
+        if src is not None:
+            P_phi = cut_patches(self.mesh, self.phi)
+            lee_p = loads_mod.leeward_patches(self.mesh, self.phi, P_phi, self.v_hat, self.leeward, src["centroid"])
+            ang_p = nose.load_angles(np.arccos(np.clip(P_phi.normal @ self.v_hat, -1.0, 1.0)), ~lee_p)
+            q, flow = loads_mod.by_patches(self.loads, src["state"], mk, P_phi, src["T_top"], ang_p, src["fit"],
+                                           self.v_hat, W=mk.owned_patches(self.mesh, self.phi, P_phi))
+            ctx["q"] = np.zeros(sk.n)
+            ctx["q"][mk.skin_index] = q
+            if ctx["surface"] is None:                    # the step's start: the forcing, held over the step (T7b-a)
+                g = flow.deceleration * self.v_hat if src["decel_vec"] is None else np.asarray(src["decel_vec"], float)
+                ctx["forcing"] = Forcing.from_surface_flow(flow, g, self.v_hat, self.material.liquid.sigma,
+                                                           mk.kappa.sum(axis=1))
+                ctx["taken"] = (P_phi, lee_p, flow, g)
+        prescribed = ctx["prescribed"]
+        if prescribed is not None:
+            q = prescribed(mk) if callable(prescribed) else np.asarray(prescribed, float)
+            ctx["q"] = np.zeros(sk.n)
+            ctx["q"][mk.skin_index] = np.broadcast_to(q, (mk.n,))
+        ctx["surface"] = self.phi
+        ctx["q_max"] = max(ctx["q_max"], float(np.max(ctx["q"], initial=0.0)))
+
     def advance(self, dt, state=None, decel_vec=None, q_prescribed=None):
         """One macro step dt [s] (module docstring). `state` the aero state (the shared loads, the surface flow's forcing
         and, with a spray model, Girin's plan); `decel_vec` [m/s2] (3,) the acceleration the metal feels in the body's frame
         (default the surface flow's deceleration along v_hat; with no state it alone turns the flow sub-steps on, with no
         pressure gradient or shear); `q_prescribed` the convective heating [W/m2] per marker (an array in the markers'
-        order, or a function of the markers), instead of the state's. Returns a StepBook."""
+        order, held over the step, or a function of the markers, called again before every part on a moved phi:
+        `_take_loads`), instead of the state's. Returns a StepBook."""
         if self.division is None:                            # a body pickled before plan 03b Task 5
             self._adopt()
         mk, sk, mat = self.markers, self.skins, self.material
         start = self.books()
         M0 = start["mass_volume"] + start["mass_skins"]
         E0 = start["enthalpy_volume"] + start["enthalpy_skins"] + start["pending_J"]
-        ctx = {"q": np.zeros(sk.n), "forcing": None, "plan": None}
-        T_top = self._top_T()[mk.skin_index]
-        flow = None
+        ctx = {"q": np.zeros(sk.n), "forcing": None, "plan": None, "loads": None, "prescribed": q_prescribed,
+               "surface": None, "q_max": 0.0}
         if state is not None:
             if self.loads is None:
                 raise ValueError("an aero state needs the body's GasLoads (loads=...)")
             centroid = self.mass_centroid()
-            theta = loads_mod.marker_angles(mk, self.v_hat)
-            P_phi = cut_patches(self.mesh, self.phi)
-            lee_p = loads_mod.leeward_patches(self.mesh, self.phi, P_phi, self.v_hat, self.leeward, centroid)
-            lee = loads_mod.leeward(self.mesh, self.phi, P_phi, mk, self.v_hat, self.leeward, centroid, patch_lee=lee_p)
-            ang = nose.load_angles(theta, ~lee)
-            fit = loads_mod.fit_nose(mk, centroid, self.v_hat, "current", fallback=self._radius(centroid))
-            ang_p = nose.load_angles(np.arccos(np.clip(P_phi.normal @ self.v_hat, -1.0, 1.0)), ~lee_p)
-            q, flow = loads_mod.by_patches(self.loads, state, mk, P_phi,
-                                           np.nan_to_num(T_top, nan=float(np.nanmean(T_top))), ang_p, fit, self.v_hat,
-                                           W=mk.owned_patches(self.mesh, self.phi, P_phi))
-            ctx["q"][mk.skin_index] = q
-            g = flow.deceleration * self.v_hat if decel_vec is None else np.asarray(decel_vec, float)
-            ctx["forcing"] = Forcing.from_surface_flow(flow, g, self.v_hat, mat.liquid.sigma, mk.kappa.sum(axis=1))
-            if self.spray_model is not None:
-                windward = ang <= 0.5 * np.pi
-                w_n = float(np.linalg.norm(g)) * np.maximum(np.cos(ang), 0.0)
-                ctx["plan"] = spray_plan(sk, mk, flow, state, self.spray_model, windward, w_n, dt,
-                                         self._radius(centroid), fit.used, slurry=self.slurry_spray, theta=ang,
-                                         centre=centroid, v_hat=self.v_hat, division=self.division)
+            T_top = self._top_T()[mk.skin_index]
+            ctx["loads"] = {"state": state, "centroid": centroid, "decel_vec": decel_vec,
+                            "T_top": np.nan_to_num(T_top, nan=float(np.nanmean(T_top))),
+                            "fit": loads_mod.fit_nose(mk, centroid, self.v_hat, "current", fallback=self._radius(centroid))}
         elif decel_vec is not None:
             still = _StillGas(np.zeros(mk.n), np.zeros(mk.n))
             ctx["forcing"] = Forcing.from_surface_flow(still, np.asarray(decel_vec, float), self.v_hat,
                                                        mat.liquid.sigma, mk.kappa.sum(axis=1))
-        if q_prescribed is not None:
-            q = q_prescribed(mk) if callable(q_prescribed) else np.asarray(q_prescribed, float)
-            ctx["q"] = np.zeros(sk.n)
-            ctx["q"][mk.skin_index] = np.broadcast_to(q, (mk.n,))
+        self._take_loads(ctx)
+        if state is not None and self.spray_model is not None:      # Girin's plan once, at the step's start
+            P_phi, lee_p, flow, g = ctx["taken"]
+            lee = loads_mod.leeward(self.mesh, self.phi, P_phi, mk, self.v_hat, self.leeward, centroid, patch_lee=lee_p)
+            ang = nose.load_angles(loads_mod.marker_angles(mk, self.v_hat), ~lee)
+            windward = ang <= 0.5 * np.pi
+            w_n = float(np.linalg.norm(g)) * np.maximum(np.cos(ang), 0.0)
+            ctx["plan"] = spray_plan(sk, mk, flow, state, self.spray_model, windward, w_n, dt, self._radius(centroid),
+                                     ctx["loads"]["fit"].used, slurry=self.slurry_spray, theta=ang, centre=centroid,
+                                     v_hat=self.v_hat, division=self.division)
         self.plan = ctx["plan"]
 
         # the parts (Ruling 7)
@@ -914,7 +986,7 @@ class LevelSetSkinBody(StepEnd):
             stretch_max=max((float(r.stretch.max()) for r in reps), default=1.0),
             group_area_ratio_min=tally.group_min, group_area_ratio_max=tally.group_max,
             group_area_ratio_trimmed_max=tally.group_trimmed, pending_flux_max=tally.pending_flux,
-            surface_flux_max=float(np.max(ctx["q"], initial=0.0)), passes=tally.passes, enthalpy_in=tally.E_top,
+            surface_flux_max=ctx["q_max"], passes=tally.passes, enthalpy_in=tally.E_top,
             mass_sprayed=tally.sprayed, enthalpy_sprayed=tally.sprayed_H, mass_removed=tally.removed,
             enthalpy_removed=tally.removed_H, enthalpy_radiated=tally.E_rad, mass_volume=end["mass_volume"],
             mass_skins=end["mass_skins"], enthalpy_volume=end["enthalpy_volume"], enthalpy_skins=end["enthalpy_skins"],

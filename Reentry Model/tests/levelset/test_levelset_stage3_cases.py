@@ -84,6 +84,84 @@ def test_a_failing_step_keeps_the_body_it_started_from(monkeypatch, tmp_path):
     assert kept.time == 1.5 and "_rebuild" not in kept.__dict__
 
 
+def test_a_stopped_step_s_failure_record_carries_the_case_s_measures(monkeypatch, tmp_path):
+    """Plan 03b Task 7b (Task 7's carried minor M2): a step that stops leaves in its failure record the case's own
+    measures of the body as the stop left it (the box's face grid and edge radii), where the state allows, so that a
+    strict expected failure's reason cites recorded numbers only; a measure the state does not allow is recorded as the
+    error it raised."""
+    c = _cases()
+    monkeypatch.setattr(c, "OUT", str(tmp_path))
+    monkeypatch.delenv("STAGE3_STATE_DIR", raising=False)
+    _, failure = c.run_steps(_Stalled(), _stall, 1, "stalled case", failed=lambda b: {"time_s": b.time})
+    assert failure["measures"] == {"time_s": 1.5}
+
+    def unmeasurable(b):
+        raise ValueError("no face left to read")
+    _, failure = c.run_steps(_Stalled(), _stall, 1, "stalled case", failed=unmeasurable)
+    assert failure["measures"] == {"error": "ValueError: no face left to read"}
+
+
+def test_the_projected_heat_is_meaned_under_the_ownership_that_sets_the_markers_areas(monkeypatch):
+    """The controller's ruling T7-i (diagnosis D1): the cases' beam (`projected_heat`) gives each marker the mean
+    projection of the patches of phi it owns under `Markers.owned_patches`, the ownership (with the same-side and
+    same-piece rules) that sets its area, not under `loads.owned` (the nearest marker alone), so that the heat the
+    markers take, sum q_i A_i, is the beam's power on phi. The hot plate's column, its face one marker: the projection
+    reads phi's patches through `owned_patches` on phi as it is and never through `loads.owned`, and the heat taken is
+    the beam's to 1e-12."""
+    from reentry_model.levelset import loads, markers
+    from reentry_model.levelset.cutcell import patches
+    c = _cases()
+    body = c.plate_body("hot", "dev")
+    used = []
+    owned_patches = markers.Markers.owned_patches
+
+    def spy(self, mesh, phi, P=None, live=None):
+        used.append(phi is body.phi)
+        return owned_patches(self, mesh, phi, P, live)
+    monkeypatch.setattr(markers.Markers, "owned_patches", spy)
+    monkeypatch.setattr(loads, "owned", lambda *a, **k: pytest.fail("projected_heat used loads.owned"))
+    q0 = c.PLATE_CASES["hot"][1]
+    q = c.projected_heat(body, q0, (0.0, 0.0, 1.0))
+    P = patches(body.mesh, body.phi)
+    beam = q0 * float((P.area * np.maximum(P.normal[:, 2], 0.0)).sum())
+    assert used == [True]
+    assert float((q * body.markers.area).sum()) == pytest.approx(beam, rel=1e-12)
+
+
+SHOULDER_PROBE_DEPTH = 3e-3   # m: below the station, where the shoulder's faces are probed (inside the sphere there)
+SHOULDER_FINEST = 8           # the shoulder's planes of nodes checked down to its base cells over this (0.35 mm, half its
+                              # finest cells: fine size and curvature floor 0.7 mm)
+
+
+def test_the_shoulder_s_flat_faces_lie_off_its_meshes_planes_of_nodes():
+    """The controller's ruling T7-h (diagnosis D2): the shoulder is built SHOULDER_OFF (0.13 mm) off its mesh's planes of
+    nodes in each axis, as the box (BOX_OFF) and the test cube are: with its cut faces on those planes, 451 nodes had phi
+    = 0 exactly and its division closed 3.7e-3 from one at 24 levels (first order in the level spacing), against 3.7e-5
+    shifted. Each of its five flat faces (x = +-SHOULDER_HALF_X, y = +-SHOULDER_HALF_Y and z = -SHOULDER_DEPTH about the
+    station, which stands SHOULDER_OFF from the origin along each axis) bounds the metal where it should (phi0 changes
+    sign across it, probed SHOULDER_PROBE_DEPTH below the station) and lies at least SHOULDER_OFF from every plane of
+    nodes of the case's mesh box, down to cells of its base cells over SHOULDER_FINEST; the sphere's centre lies
+    SHOULDER_R below the station."""
+    c = _cases()
+    station = np.full(3, c.SHOULDER_OFF)
+    lo = np.array([-c.SHOULDER_HALF_X, -c.SHOULDER_HALF_Y, -c.SHOULDER_DEPTH]) - c.H0      # the mesh box's corner
+    phi0 = c.shoulder_phi0()
+    eps = 1e-7
+    faces = [(0, s, station[0] + s * c.SHOULDER_HALF_X) for s in (-1, 1)] + \
+            [(1, s, station[1] + s * c.SHOULDER_HALF_Y) for s in (-1, 1)] + [(2, -1, station[2] - c.SHOULDER_DEPTH)]
+    for axis, s, at in faces:
+        for h in c.H0 / 2.0 ** np.arange(int(np.log2(SHOULDER_FINEST)) + 1):
+            k = (at - lo[axis]) / h
+            assert abs(k - round(k)) * h >= c.SHOULDER_OFF * (1.0 - 1e-9), (axis, at, h)
+        p = station - [0.0, 0.0, SHOULDER_PROBE_DEPTH]
+        p[axis] = at
+        inside, outside = p.copy(), p.copy()
+        inside[axis] -= s * eps
+        outside[axis] += s * eps
+        assert phi0(inside[None])[0] < 0.0 < phi0(outside[None])[0], (axis, s)
+    np.testing.assert_allclose(c.SHOULDER_CENTRE, station - [0.0, 0.0, c.SHOULDER_R], rtol=0.0, atol=1e-15)
+
+
 def test_a_case_s_summary_is_stamped_with_the_code_it_ran_on(monkeypatch, tmp_path):
     """Task 11's review, M5: each case's summary carries the commit it ran on and whether the level-set package or the
     case script differed from it, so that the record cannot mix runs from different code unseen; the stamp is taken when
