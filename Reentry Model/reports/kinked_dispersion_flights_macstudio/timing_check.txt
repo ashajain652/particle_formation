@@ -1,0 +1,12 @@
+state /Users/ashajain/kinked-dispersion-flights/states/d050__handdown-off.state.pkl at 178.5 s (step 357): 2367 columns, macro step 0.5 s, spray model saved on table
+girin_plan on table: 0.037, 0.061, 0.047, 0.045, 0.047 s; median 0.047 s
+girin_plan on profile: 1.189, 1.343, 1.275, 1.265, 1.262 s; median 1.265 s
+profile path: 909 columns resolved, 752 of them floor-like
+added time of the plan on profile over table (median less median): 1.218 s
+macro step 177.5 to 178 s: 2609.5 s of wall time (wall_skins_s + wall_3d_s + wall_move_s + wall_rebuild_s)
+macro step 178 to 178.5 s: 3119.5 s of wall time (wall_skins_s + wall_3d_s + wall_move_s + wall_rebuild_s)
+macro step 178.5 to 179 s: 4642.6 s of wall time (wall_skins_s + wall_3d_s + wall_move_s + wall_rebuild_s)
+macro step 179 to 179.5 s: 3840.5 s of wall time (wall_skins_s + wall_3d_s + wall_move_s + wall_rebuild_s)
+macro step's wall time, median of 4 steps: 3480.0 s
+added time 1.218 s is 0.035 % of it, against a budget of 5 %: PASS
+exit 0

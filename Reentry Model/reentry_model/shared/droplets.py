@@ -28,7 +28,9 @@ def write_particles(run_dir, body, history, window=10.0):
     import csv
     from . import spray
     os.makedirs(run_dir, exist_ok=True)
-    cols = spray.source_columns(body.source_rows)
+    # a body that names its records (the layered skins: 36 columns on the profile path) has them even before the first
+    names = body.record_names() if hasattr(body, "record_names") else None
+    cols = spray.source_columns(body.source_rows, names)
     npz = os.path.join(run_dir, "particles.npz")
     np.savez_compressed(npz, **cols)
     c = history.columns

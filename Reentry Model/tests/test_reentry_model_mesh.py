@@ -52,6 +52,36 @@ def test_generation_is_cached(tmp_path):
     assert m.volume() == pytest.approx(4.0 / 3.0 * math.pi * 0.01 ** 3, rel=3e-2)        # crude 2 mm elements on a 10 mm sphere
 
 
+def test_each_writer_meshes_into_a_temporary_file_of_its_own(tmp_path, monkeypatch):
+    """Handoff defect 2 (2026-11-11): every process meshing a sphere wrote the same temporary file, `<name>.tmp.msh`, before
+    moving it into the cache, so two meshing the same sphere at once could move each other's half-written file into place.
+    Each writer now writes a name of its own, with its process id and a random suffix, ending in `.msh` (gmsh picks the
+    format from it): a stale `<name>.tmp.msh` is left untouched, and a write that fails leaves no temporary file behind."""
+    import gmsh
+    name = mesh.mesh_file_name(0.01, 2e-3, 4e-3)
+    path = str(tmp_path / name)
+    stale = tmp_path / (name[:-4] + ".tmp.msh")
+    stale.write_text("another writer's")
+    written, write = [], gmsh.write
+    monkeypatch.setattr(gmsh, "write", lambda p: written.append(p) or write(p))
+    assert mesh.generate_sphere_mesh(0.01, 2e-3, 4e-3, str(tmp_path)) == path
+    assert stale.exists() and stale.read_text() == "another writer's"
+    assert len(written) == 1 and written[0].endswith(".msh") and str(os.getpid()) in os.path.basename(written[0])
+    assert sorted(os.listdir(tmp_path)) == sorted([name, stale.name])
+    a, b = mesh.temporary_mesh_path(path), mesh.temporary_mesh_path(path)
+    assert a != b and a.endswith(".msh") and b.endswith(".msh") and os.path.dirname(a) == str(tmp_path)
+
+    def fail(p):
+        with open(p, "w") as fh:
+            fh.write("half a mesh")
+        raise RuntimeError("the disk is full")
+    os.remove(path)
+    monkeypatch.setattr(gmsh, "write", fail)
+    with pytest.raises(RuntimeError, match="disk is full"):
+        mesh.generate_sphere_mesh(0.01, 2e-3, 4e-3, str(tmp_path))
+    assert os.listdir(tmp_path) == [stale.name]
+
+
 def test_points_are_mutable_and_surface_follows(coarse_sphere_mesh):
     m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets)
     area0 = m.surface().area

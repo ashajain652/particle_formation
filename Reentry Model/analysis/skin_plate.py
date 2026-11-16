@@ -209,11 +209,12 @@ def save_state(path, body, q):
 
 def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=True, h=2e-3, width=WIDTH, r_flat=R_FLAT,
         r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0, swell=False, fine=FINE, flow=False,
-        push=None, release=None, flow_cycles=None, record=False, save_at=None, save_path=None):
+        push=None, release=None, flow_cycles=None, record=False, save_at=None, save_path=None, rheology=None):
     """The plate (module docstring) to t_end at macro steps dt; returns (body, rows, centre columns, failure) and, with
     `record`, every macro step's `column_record` as a fifth item. `flow` turns the flow on (the liquid kept), driven by
     `push` (PUSHES) with the release `release` [kg/(m2 s), RELEASES] and `flow_cycles` (None: chosen); `save_at` [s]
-    keeps the skins' state at the first macro step ending at or after it in `save_path`."""
+    keeps the skins' state at the first macro step ending at or after it in `save_path`; `rheology` names the skins'
+    viscosity law (`SkinSettings.rheology`, the library default if None)."""
     if not flow and (push is not None or release is not None or flow_cycles is not None):
         raise ValueError("a push, a release and the flow sub-steps need the flow on")
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
@@ -221,7 +222,8 @@ def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=T
     m.points[:, 1:] -= 0.5 * width                                 # the face's centre on the x axis
     if fine is not None and fine[0] > 0.0:                         # the fine band (depth, size) m, as a skin run's
         m = movemesh.refined_mesh(m, fine[0], min(fine[1], h))
-    settings = skin.SkinSettings(cell=skin.SKIN_PRESETS[preset], swell=swell)
+    settings = skin.SkinSettings(cell=skin.SKIN_PRESETS[preset], swell=swell,
+                                 **({} if rheology is None else {"rheology": rheology}))
     if flow:                                                       # the liquid stays and flows (sub-plan 21 Task 8)
         body = skinbody.SkinBody(m, mat, thermal_solver(solver), mat.rho * m.volume(), settings, T0=T_start,
                                  emissivity=0.0, v_hat=(-1.0, 0.0, 0.0) if push is None else inclined(push[0]),

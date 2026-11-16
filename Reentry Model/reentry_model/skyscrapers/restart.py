@@ -14,6 +14,7 @@ name holding that factor, so a hierarchy built before the save solves after it e
 resumed from its state in a fresh process repeated the unbroken one to the last bit. The objects the flight holds are
 never altered by a save."""
 import ast
+import io
 import os
 import pickle
 
@@ -59,17 +60,39 @@ class _Pickler(pickle.Pickler):
         return NotImplemented
 
 
-def save(path, state):
-    """Write `state` to `path`: pickled (protocol 5), the coarse solvers as above, into path + PART and then renamed, so
-    a save cut short leaves no file at `path` (and its part removed when the failure is Python's)."""
+def dumps(state):
+    """`state` pickled (protocol 5), the coarse solvers as above, as bytes. These are the pickling buffer itself, not a
+    copy: `BytesIO.getvalue` hands over the buffer it wrote into, trimmed to the pickle's length, when nothing else holds
+    it, as here. So a save or a copy of a completed step holds the pickle once (final fix wave of the geometry stop,
+    2026-11-12, measured with tracemalloc: at its peak 1.125 times the pickle, the buffer's growth margin, and the pickle
+    alone once returned; peak resident memory did not rise at the `getvalue` of an 800 MB pickle). `getbuffer` would keep
+    the growth margin, up to an eighth of the pickle, for as long as the bytes are held."""
+    buf = io.BytesIO()
+    _Pickler(buf, protocol=5).dump(state)
+    return buf.getvalue()
+
+
+def loads(data):
+    """The state `dumps` made `data` of, as a new object graph."""
+    return pickle.loads(data)
+
+
+def write_bytes(path, data):
+    """Write `data` to `path` through path + PART and a rename, so a write cut short leaves no file at `path` (and its
+    part removed when the failure is Python's)."""
     part = path + PART
     try:
         with open(part, "wb") as fh:
-            _Pickler(fh, protocol=5).dump(state)
+            fh.write(data)
         os.replace(part, path)
     finally:
         if os.path.exists(part):
             os.remove(part)
+
+
+def save(path, state):
+    """Write `state` to `path`: `dumps` of it, by `write_bytes`."""
+    write_bytes(path, dumps(state))
 
 
 def load(path):

@@ -1,0 +1,12 @@
+{
+ "provenance": "written by hand on 2026-11-12, not by floor_sweep: `run --only flight` was stopped during its resolution step, before it wrote its own timing file (which would hold only flight_s, flight_cases, flight_resolution_s and workers). The start time is the launching shell's `date`; the end time is flight.csv's modification time; the worker-seconds are the sums of flight.csv's `seconds` column by mode; the resolution checks were re-run by `floor_sweep resolution` (timing_resolution_flight.json).",
+ "flight_cases": 87,
+ "own_speed_cases": 69,
+ "scaled_cases": 18,
+ "flight_wall_s": 1627,
+ "started": "2026-11-12 12:31:07 EST",
+ "flight_csv_written": "2026-11-12 12:58:14 EST",
+ "worker_seconds_own": 4616,
+ "worker_seconds_scaled": 1836,
+ "workers": 4
+}

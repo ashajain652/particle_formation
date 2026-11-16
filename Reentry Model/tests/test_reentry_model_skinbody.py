@@ -1,5 +1,7 @@
 """The skin body (layered-skin design sections 6.6 and 7, sub-plan 20 Task 7): skins on every corner from time zero, the
 trial and real passes around the 3D step, the base moving the 3D mesh, and the books."""
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -7,12 +9,16 @@ from reentry_model import coupled, heating, material, mesh, movemesh, skin, skin
 from reentry_model.thermal import thermal_solver
 
 DEV = skin.SkinSettings(cell=20e-6)
+# the tests whose values were set on the bridge law, the library default until the near-liquidus viscosity's merge into
+# main (2026-11-13), name it, so that they keep checking what they checked
+DEV_BRIDGE = skin.SkinSettings(cell=20e-6, rheology="bridge")
 
 
 def make(m, T0=880.0, name="skfem", settings=DEV, **kw):
     copy = mesh.VolumeMesh(m.points.copy(), m.tets.copy(), dict(m.params))
     mat = material.Material.from_drama_json("AA7075_scheil")
-    return skinbody.SkinBody(copy, mat, thermal_solver(name), 1.47, settings, T0=T0, v_hat=(-1.0, 0.0, 0.0), **kw)
+    kw.setdefault("v_hat", (-1.0, 0.0, 0.0))
+    return skinbody.SkinBody(copy, mat, thermal_solver(name), 1.47, settings, T0=T0, **kw)
 
 
 def front_loads(b, q0):
@@ -772,11 +778,13 @@ def test_the_flow_is_driven_by_the_surface_flow_on_the_corners_taken_at_each_par
     """Every macro step the skin body evaluates the surface flow on its corners, as the heating is, from the step's aero
     state and the tops' temperatures: the pressure gradient along the meridian, the gas shear along it on the top cells,
     and the deceleration, which the metal feels along the flight direction. Each part takes them interpolated linearly
-    between the last macro step's and this one's at its middle, as it takes the heating."""
+    between the last macro step's and this one's at its middle, as it takes the heating. The expected flow is evaluated at
+    each corner's own normal's angle (`theta`) and the shear laid along each base normal's meridian, the earlier rule's
+    loads, so the body names `windward_loads="normals"` (the fitted-sphere loads design, 2026-11-13)."""
     pytest.importorskip("cantera")
     from test_reentry_model_surface_flow import aero_state_at
     from reentry_model import surface_flow
-    b = make(coarse_sphere_mesh, T0=600.0, flow=True, remove=False)
+    b = make(coarse_sphere_mesh, T0=600.0, flow=True, remove=False, windward_loads="normals")
     seen = []
     advance = skin.advance
 
@@ -864,7 +872,8 @@ def test_a_skin_body_with_a_prescribed_release_keeps_its_books_and_reports_the_d
     needs the flow: with it off the heat-only skins remove the liquid as it forms."""
     with pytest.raises(ValueError):
         make(coarse_sphere_mesh, release=skin.prescribed_release(2.0))
-    b = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1, release=skin.prescribed_release(2.0))
+    b = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1, release=skin.prescribed_release(2.0),
+             settings=DEV_BRIDGE)  # values set on the bridge law
     M0 = b.mass()
     for k in range(2):
         b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), forcing=newtonian(b))
@@ -875,7 +884,7 @@ def test_a_skin_body_with_a_prescribed_release_keeps_its_books_and_reports_the_d
     assert stats["momentum_residual"] < 1e-12 and np.abs(b.droplet_momentum).max() > 0.0
     Pi, _, flagged = skin.droplet_momentum_ratio(b.droplet_momentum, b.droplet_shear)
     assert stats["droplet_momentum_ratio"] == Pi > 0.0 and stats["droplet_momentum_flagged"] == flagged
-    off = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1)
+    off = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1, settings=DEV_BRIDGE)
     assert off.skin_stats()["droplet_momentum_ratio"] == 0.0 and off.skin_stats()["released_mass_kg"] == 0.0
 
 
@@ -943,7 +952,8 @@ def test_a_plate_pushed_along_its_face_closes_its_books_and_its_metal_runs_the_w
     -y as before; books 2.2e-16, 3.1e-12, 1.1e-17."""
     sp_ = skin_plate_module()
     body, rows, _, failure, records = sp_.run(dt=0.1, t_end=0.2, T_start=880.0, q0=6e6, flow=True,
-                                              push=sp_.PUSHES["flight"], record=True, **SMALL_PLATE)
+                                              push=sp_.PUSHES["flight"], record=True, rheology="bridge",   # values set on the bridge law
+                                              **SMALL_PLATE)
     assert failure is None and body.flow_on and body.removed_mass == 0.0 and body.released_mass == 0.0
     assert max(abs(x["mass_error"]) for x in rows) < 1e-13
     assert max(abs(x["energy_residual"]) for x in rows) < 1e-8
@@ -1014,11 +1024,11 @@ def girin_flow(n, closure, u, tau, decel=106.0, branch=None):
     return f
 
 
-def plan_on(sk, col, flow, slurry=False, theta=None):
+def plan_on(sk, col, flow, slurry=False, theta=None, dispersion="table"):
     from reentry_model import spray
     from test_reentry_model_spray import FakeState
-    return skinbody.girin_plan(sk, flow, FakeState(), spray.SprayModel(sk.material.liquid), np.zeros(sk.n) if theta is None
-                               else theta, col.area, col.edges, 0.05, 0.0125, slurry=slurry)
+    return skinbody.girin_plan(sk, flow, FakeState(), spray.SprayModel(sk.material.liquid, dispersion=dispersion),
+                               np.zeros(sk.n) if theta is None else theta, col.area, col.edges, 0.05, 0.0125, slurry=slurry)
 
 
 def crest(lam, h):
@@ -1117,7 +1127,8 @@ def test_the_slurry_cascade_sprays_exposed_slurry_by_its_own_properties_only_wit
     col, _ = strip_grid(5, 2, h=20e-3)
     tops = [902.0, 906.0, 907.0, 907.5, 907.9]
     temps = [[LIQUID] + [T] + [SLURRY] * 48 + [RIGID] * 10 for T in tops] * 2
-    sk = stacked(col, temps)
+    from test_reentry_model_skin import with_bridge
+    sk = with_bridge(stacked(col, temps))  # values set on the bridge law
     flow = girin_flow(col.n, [surface_flow.CLOSURE_GIRIN] * col.n, [2000.0] * col.n, [50.0] * col.n)
     off, on = plan_on(sk, col, flow), plan_on(sk, col, flow, slurry=True)
     assert not off.rate_slurry.any() and np.isnan(off.slurry["mu"]).all()
@@ -1137,6 +1148,25 @@ def test_the_slurry_cascade_sprays_exposed_slurry_by_its_own_properties_only_wit
     np.testing.assert_array_equal(s["T"], sk.T[:, 1])
     np.testing.assert_array_equal(on.release(sk).T_slurry, sk.T[:, 1])     # its rate for slurry at least as warm
     np.testing.assert_array_equal(on.rate, off.rate)            # the liquid's own mode: the flag moves only its cap
+
+
+def test_slurry_modes_composite():
+    """The slurry's mode under the composite law: its viscosity is `composite_viscosity` of the exposed cell's solid
+    fraction to 1e-12, whatever the shear rate, and the recorded rate is not clipped at 367 1/s (the bridge law's
+    rate cap). The cascade test's five columns at a high gas shear."""
+    import dataclasses
+    from reentry_model import rheology, surface_flow
+    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
+    col, _ = strip_grid(5, 2, h=20e-3)
+    tops = [902.0, 906.0, 907.0, 907.5, 907.9]
+    sk = stacked(col, [[LIQUID] + [T] + [SLURRY] * 48 + [RIGID] * 10 for T in tops] * 2)
+    sk.settings = dataclasses.replace(sk.settings, rheology="composite")
+    flow = girin_flow(col.n, [surface_flow.CLOSURE_GIRIN] * col.n, [2000.0] * col.n, [500.0] * col.n)
+    s = plan_on(sk, col, flow, slurry=True).slurry
+    mat = sk.material
+    f_s = 1.0 - sk.props.liquid_fraction(sk.T[:, 1])
+    np.testing.assert_allclose(s["mu"], rheology.composite_viscosity(f_s, mat.liquid.mu), rtol=1e-12)
+    assert (s["gamma"] > rheology.GAMMA_MAX).any()
 
 
 def test_a_skin_body_sprays_by_girin_from_its_top_cells_once_a_macro_step_and_keeps_its_books(coarse_sphere_mesh,
@@ -1159,7 +1189,7 @@ def test_a_skin_body_sprays_by_girin_from_its_top_cells_once_a_macro_step_and_ke
         make(coarse_sphere_mesh, spray=model)
     with pytest.raises(ValueError):
         make(coarse_sphere_mesh, flow=True, remove=False, spray=model, release=skin.prescribed_release(1.0))
-    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model)
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model, settings=DEV_BRIDGE)  # values set on the bridge law
     plans, flows = [], []
     girin, advance = skinbody.girin_plan, skin.advance
 
@@ -1205,8 +1235,10 @@ def test_a_plan_s_records_are_one_per_column_and_mode_with_the_released_cells_so
     from test_reentry_model_spray import FakeState
     col, pts = strip_grid(3, 2, h=20e-3)
     WARM = 907.9
-    sk = stacked(col, [[LIQUID] * 5 + [RIGID] * 10, [WARM] * 3 + [SLURRY] * 47 + [RIGID] * 10,
-                       [LIQUID] + [WARM] * 3 + [SLURRY] * 46 + [RIGID] * 10, [RIGID] * 10, [RIGID] * 10, [RIGID] * 10])
+    from test_reentry_model_skin import with_bridge
+    sk = with_bridge(stacked(col, [[LIQUID] * 5 + [RIGID] * 10, [WARM] * 3 + [SLURRY] * 47 + [RIGID] * 10,
+                                   [LIQUID] + [WARM] * 3 + [SLURRY] * 46 + [RIGID] * 10, [RIGID] * 10, [RIGID] * 10,
+                                   [RIGID] * 10]))  # values set on the bridge law
     mat = sk.material
     liquid = sk.valid & (sk.T >= mat.T_liquidus)
     sk.U = np.where(liquid[..., None], [2.0, 0.0, 0.0], [0.0, 0.5, 0.0]) * sk.valid[..., None]
@@ -1290,7 +1322,11 @@ def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_write
     since time zero, the radius median and largest over the step's rows, the smallest angle and the area of the
     columns whose plan sprays, the release angle's mean by mass -- the mean recomputed from the step's rows -- least and
     largest, and b and the resolved sheared depth over delta_m on the wet windward columns; and from those columns the
-    coupled writer writes the summary, whose released mass is the step's rows'."""
+    coupled writer writes the summary, whose released mass is the step's rows'.
+
+    Its values were set on the earlier windward loads, each corner at its own normal's angle (the wet windward columns
+    recomputed here are those with `theta` at most 90 degrees, and the release angles were measured on them), so the
+    body names `windward_loads="normals"` (the fitted-sphere loads design, 2026-11-13)."""
     pytest.importorskip("cantera")
     from test_reentry_model_surface_flow import aero_state_at
     from reentry_model import coupled, spray
@@ -1298,7 +1334,8 @@ def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_write
     mat = material.Material.from_drama_json("AA7075_scheil")
     np.random.seed(12345)              # pyamg's draws, as a run seeds them: the histograms' round-off is the path's
     b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid),
-             slurry_spray=True, spool=str(tmp_path / "spool"))
+             slurry_spray=True, spool=str(tmp_path / "spool"), settings=DEV_BRIDGE,  # values set on the bridge law
+             windward_loads="normals")                                               # and on the normals' angles
     plans, books, spooled = [], [], []
     girin, book, append = skinbody.girin_plan, skinbody.SprayPlan.book, spray.SourceSpool.append
 
@@ -1454,6 +1491,49 @@ def test_the_resolved_sheared_depth_is_the_straight_line_depth_carrying_the_comp
     assert got[1] == pytest.approx(2.0 * sk.thickness()[1], rel=1e-14)
     assert np.allclose(dz[2], dz[2, 0]) and got[2] == pytest.approx(10.7 * dz[2, 0], rel=1e-12)
     assert np.isnan(got[3:]).all()
+
+
+def test_layer_columns_reads_the_cells_as_the_skins_see_them():
+    """`skinbody.layer_columns` (kinked-profile dispersion Task 4, spec 6.4) hands the shared fit the skins' cells as plain
+    arrays: each cell's velocity projected on the top cell's direction -- here every cell also moves across it, and the
+    direction is off the x axis -- the viscosities `cell_viscosity` at `cell_shear_rates`, the densities `density(T)`,
+    the front `depth_above(T_rigid)`, and the contiguous flowing and fully liquid runs from the top. Four columns: liquid
+    over slurry over rigid metal; liquid, slurry, liquid, slurry over rigid (the liquid run stops at the first slurry
+    cell, the flowing run at the rigid one); a rigid top over slurry, at rest (no run); and liquid all through (the front
+    is the whole skin). Beyond each column's cells: z, u, T and rho NaN, dz and m 0, mu inf, no run."""
+    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
+    from reentry_model.shared import melt_profile
+    from reentry_model.skyscrapers import skin as sky, skinbody as body_mod
+    col, _ = strip_grid(2, 2)
+    temps = [[LIQUID] * 3 + [SLURRY] * 4 + [RIGID] * 3, [LIQUID, SLURRY, LIQUID, SLURRY, RIGID],
+             [RIGID, SLURRY, RIGID], [LIQUID] * 6]
+    sk = stacked(col, temps)
+    K = sk.m.shape[1]
+    along = np.array([0.6, 0.8, 0.0])
+    across = np.array([-0.8, 0.6, 0.0])
+    speed = np.linspace(2.0, 0.2, K)[None, :] * np.array([1.0, 0.5, 0.0, 1.5])[:, None]
+    side = np.linspace(0.0, 0.3, K)[None, :] * np.array([1.0, 1.0, 0.0, 1.0])[:, None]
+    speed = np.where(sk.valid, speed, 0.0)
+    sk.U = np.where(sk.valid[..., None], speed[..., None] * along + side[..., None] * across, 0.0)
+    tau = np.array([50.0, 20.0, 0.0, 10.0])
+    cols = body_mod.layer_columns(sk, tau)
+    assert isinstance(cols, melt_profile.LayerColumns)
+    v = sk.valid
+    np.testing.assert_allclose(cols.u[v], speed[v], rtol=1e-14, atol=1e-15)
+    assert np.array_equal(cols.mu, sky.cell_viscosity(sk, sky.cell_shear_rates(sk, tau)))
+    assert np.array_equal(cols.front, sk.depth_above(sk.material.T_rigid))
+    assert cols.front[3] == sk.thickness()[3]
+    dz = sk.dz()
+    assert np.array_equal(cols.dz, dz) and np.array_equal(cols.m, sk.m * v)
+    assert np.array_equal(cols.z[v], (np.cumsum(dz, axis=1) - 0.5 * dz)[v])
+    assert np.array_equal(cols.T[v], sk.T[v]) and np.array_equal(cols.rho[v], sk.density(sk.T)[v])
+    for a in (cols.z, cols.u, cols.T, cols.rho):
+        assert np.isnan(a[~v]).all()
+    assert np.isinf(cols.mu[~v]).all() and (cols.m[~v] == 0.0).all()
+    runs = lambda a: a.sum(axis=1).tolist()
+    assert runs(cols.flowing) == [7, 4, 0, 6] and runs(cols.liquid) == [3, 1, 0, 6]
+    assert (cols.flowing[:, :1] | ~cols.flowing).all() and not (cols.liquid & ~cols.flowing).any()
+    assert melt_profile.reducible(cols).tolist() == [True, True, False, True]
 
 
 # -- spreading the deposit (sub-plan 22 Task 5c; Asha 2026-11-06) ----------------------------------------------------------
@@ -1989,6 +2069,8 @@ def test_a_body_saved_without_the_sideways_pairing_flies_on(coarse_sphere_mesh, 
 
 
 # -- the windward loads from a sphere fitted to the skins' tops (sub-plan 22 Task 5g, Asha 2026-11-10) --------------------
+# Since the fitted-sphere loads design (2026-11-13) this is the earlier rule, `windward_loads="normals"`: the tests of its
+# 30-degree cap and of `size_feedback` name it, as the bridge-law tests name the bridge; the bound is both rules'
 
 
 def with_tops(b, points=None, theta=None):
@@ -1999,6 +2081,7 @@ def with_tops(b, points=None, theta=None):
     b.surface = columns_mod.CornerSurface.from_points(pts, b.columns.faces)
     b.theta = b.surface.angles_to(b.v_hat) if theta is None else theta
     b._leeward_raw = None                           # the centroid test of the new surface, made at the first read
+    b._sphere_raw = None                            # the sphere rule's fit of the new surface, made at the first read
     b._nose_raw = b._fit_nose()
     return b
 
@@ -2022,7 +2105,7 @@ def test_the_fitted_nose_radius_of_an_untouched_sphere_is_its_own_radius(coarse_
     """The 4 mm sphere's tops are the bases moved out by the 0.8 mm skins: the cap within 30 degrees of the flow (about 140
     corners) fits a sphere within 2 % of the mesh's 50 mm radius, which `nose_radius()` returns under the default
     `current`; the bound is 1.67 times the windward transverse radius and the cap is convex (sub-plan 22 Task 5g)."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     R, f = 0.05, b.nose_fit
     assert f.points >= 50 and not f.concave and abs(f.fitted / R - 1.0) < 0.02
     assert b.size_feedback == "current" and b.nose_radius() == f.used == f.fitted
@@ -2033,7 +2116,7 @@ def test_a_flattened_windward_cap_gives_the_radius_of_the_flattened_cap(coarse_s
     """Tops on a sphere of twice the radius over the cap (100 mm against 50): the fit is within 5 % of it, and
     `nose_radius()` returns the mesh's 50 mm under `initial`. At twice the radius the fit (100 mm) is flatter than the bound
     (83.5 mm), so under `current` the bound is used (Asha, 2026-11-10, option B); at 1.5 times (75 mm) the fit itself is."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     pts, R2 = flatten_front(b)
     with_tops(b, pts)
     assert abs(b.nose_fit.fitted / R2 - 1.0) < 0.05 and not b.nose_fit.concave
@@ -2050,7 +2133,7 @@ def test_a_cap_flatter_than_the_bound_uses_the_bound_and_reports_both(coarse_sph
     """A cap flatter than the flat-face value (the 2R sphere's 100 mm against 1.67 times the 50 mm transverse radius, 83.5 mm)
     is used at the bound, a flat face heating like a sphere of 1.67 times its radius (Asha, 2026-11-10, option B), while the
     fitted radius is still reported above it; a sharper cap has no lower bound."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     with_tops(b, flatten_front(b)[0])
     f = b.nose_fit
     assert f.fitted > f.bound and f.used == f.bound == b.nose_radius()
@@ -2066,7 +2149,7 @@ def test_the_heating_and_the_surface_flow_both_receive_the_fitted_radius(coarse_
     `CoupledRun.loads_at` and the surface flow through `flow_forcing`."""
     from types import SimpleNamespace
     from reentry_model import coupled
-    b = make(coarse_sphere_mesh, flow=True)
+    b = make(coarse_sphere_mesh, windward_loads="normals", flow=True)
     with_tops(b, flatten_front(b, factor=1.5)[0])
     seen = {}
     ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: "state"), body=b,
@@ -2084,7 +2167,7 @@ def test_the_heating_and_the_surface_flow_both_receive_the_fitted_radius(coarse_
 def test_a_cap_with_fewer_than_four_corners_falls_back_to_the_original_radius(coarse_sphere_mesh):
     """Three corners within 30 degrees of the flow cannot fix a sphere: no fit (not-a-number), the mesh's 50 mm used, the
     cap's three corners counted, the row says so and the bound is still reported."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     theta = np.full(b.columns.n, 1.0)
     theta[:3] = 0.1
     with_tops(b, theta=theta)
@@ -2098,7 +2181,7 @@ def test_a_cap_with_fewer_than_four_corners_falls_back_to_the_original_radius(co
 def test_a_concave_cap_uses_the_flat_face_bound_and_says_so(coarse_sphere_mesh):
     """Tops dished toward the flow (the cap's edge nearer the flow than its middle): the fitted centre is on the flow side, no
     sphere of positive curvature describes it, so the radius used is the bound and the row records a concave cap."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     R = 0.05
     c0, v = b.mesh.points.mean(axis=0), b.v_hat
     pts = b.surface.points.copy()
@@ -2133,7 +2216,7 @@ def test_a_pool_behind_the_body_does_not_move_the_bound(coarse_sphere_mesh):
 def test_a_cap_coplanar_to_rounding_is_a_flat_face_and_reads_the_bound(coarse_sphere_mesh):
     """Cap corners set exactly in a plane have no sphere (the least-squares system is rank-deficient and its minimum-norm answer
     depends on where the plane sits): they are read as concave, no fitted radius, the bound used (review of 2026-11-10)."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     c0, v = b.mesh.points.mean(axis=0), b.v_hat
     pts = b.surface.points.copy()
     X = pts - c0
@@ -2160,7 +2243,7 @@ def test_size_feedback_initial_changes_nothing_to_the_last_bit(coarse_sphere_mes
             skinbody.SkinBody.nose_radius = lambda self: float(self.mesh.params.get("radius_m", 0.05))
         try:
             kw = {"size_feedback": "initial"} if how == "initial" else {"size_feedback": "current"} if how == "current" else {}
-            b = make(coarse_sphere_mesh, T0=893.0, flow=True, remove=False, flow_cycles=1, **kw)
+            b = make(coarse_sphere_mesh, windward_loads="normals", T0=893.0, flow=True, remove=False, flow_cycles=1, **kw)
             if how == "default":
                 del vars(b)["size_feedback"]                     # as a state saved before Task 5g
                 assert b.size_feedback == "initial"
@@ -2185,14 +2268,14 @@ def test_size_feedback_initial_changes_nothing_to_the_last_bit(coarse_sphere_mes
     assert runs[0][0].energy() == runs[1][0].energy() == runs[2][0].energy()
     assert skinbody.SkinBody.size_feedback == "initial" and all(np.isfinite(r["fitted_nose_radius_mm"]) for _, r in runs[0][1])
     with pytest.raises(ValueError, match="size_feedback"):
-        make(coarse_sphere_mesh, size_feedback="shrinking")
+        make(coarse_sphere_mesh, windward_loads="normals", size_feedback="shrinking")
 
 
 def test_a_body_saved_without_size_feedback_flies_on_as_initial(coarse_sphere_mesh):
     """The states saved before Task 5g have neither `size_feedback` nor a fit on the instance: the class's default gives them
     the mesh's radius and they advance as before, the fit made at the first ask; a resume can give them `current`, which
     reads the fit of the top surface as it stands."""
-    b = make(coarse_sphere_mesh, T0=700.0)
+    b = make(coarse_sphere_mesh, windward_loads="normals", T0=700.0)
     b.emissivity = 0.0
     del vars(b)["size_feedback"], vars(b)["_nose_raw"]
     assert "size_feedback" not in vars(b) and b.size_feedback == "initial" and b._nose_raw is None
@@ -2209,7 +2292,8 @@ def test_with_the_hand_down_off_a_release_s_momentum_is_not_counted_twice(coarse
     release's) took, which the release book had already counted. The command line's spraying flight missed its momentum books
     by 4.4e-6 of the impulses with the hand-down off, and the 50 mm comparison flight by up to 1.4e-5 after spraying began.
     The prescribed-release body of sub-plan 21 Task 7, with the hand-down off, closes its momentum books to round-off."""
-    b = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1, release=skin.prescribed_release(2.0), hand_down=False)
+    b = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1, release=skin.prescribed_release(2.0), hand_down=False,
+             settings=DEV_BRIDGE)  # values set on the bridge law
     for k in range(2):
         b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), forcing=newtonian(b))
     assert b.released_mass > 0.0 and np.abs(b.droplet_momentum).max() > 0.0 and b.handed_mass == 0.0
@@ -2346,6 +2430,8 @@ def test_the_skins_hand_girin_plan_their_nose_radius(coarse_sphere_mesh, monkeyp
 
 
 # -- the leeward test by the body's centroid (sub-plan 22 Task 5j; Asha, 2026-11-10) ----------------------------------------
+# `leeward_test` is read only under the earlier rule, `windward_loads="normals"` (the fitted-sphere loads design, 2026-11-13):
+# the tests of what it does to the angles and the fit name that rule; the centroid and the leeward columns are both rules'
 def centroid_body(m, **kw):
     return make(m, leeward_test="centroid", **kw)
 
@@ -2401,7 +2487,7 @@ def test_the_effective_angle_leaves_a_corner_ahead_of_the_plane_as_it_is_and_tur
     the effective angle is theta where it is and the larger of theta and 90 degrees plus a microradian where not. `facing`
     returns `theta` itself. The count of corners that face the flow from behind the plane is the history's `leeward_corners`,
     with either setting."""
-    b = centroid_body(coarse_sphere_mesh)
+    b = centroid_body(coarse_sphere_mesh, windward_loads="normals")
     moved = b.load_angles() != b.theta                                       # only an equator corner or two, a hair behind the plane
     assert moved.sum() < 10 and (b.theta[moved] > 1.5).all()
     k = put_behind(b)
@@ -2416,20 +2502,99 @@ def test_the_effective_angle_leaves_a_corner_ahead_of_the_plane_as_it_is_and_tur
     with_tops(b, theta=theta)
     assert b.load_angles()[away] == 2.0 and b.load_angles()[k] == 0.5 * np.pi + 1e-6
     assert b.skin_stats()["leeward_corners"] >= 1
-    f = make(coarse_sphere_mesh, leeward_test="facing")
+    f = make(coarse_sphere_mesh, windward_loads="normals", leeward_test="facing")
     put_behind(f)
     assert f.load_angles() is f.theta and f.skin_stats()["leeward_corners"] >= 1
 
 
+def test_on_provider_runs_only_the_sheltered_corners_go_to_pi(coarse_sphere_mesh):
+    """Decision 2a with ruling R15 (interim gas loads, Task 7): on a run whose loads come from the provider (`sheltered_angle`
+    pi, which `cli.build_thermal` gives a run on the similarity loads) the corners the centroid test shelters -- their normal
+    faces the flow but they lie behind the plane through the centroid -- are read at pi, the separated wake's rear stagnation
+    point; every windward corner keeps theta and every corner facing away keeps its true angle, so the provider's lee loads
+    reach it. On the untouched 4 mm sphere that is 3 of 2254 corners, the same ones the classic rule moves to 90 degrees plus
+    a microradian. The class default is the classic rule, so a body saved before this change, with no such attribute, is
+    classic; under `facing` the angle is `theta` itself either way; an angle outside (90, 180] degrees is refused. The
+    centroid test is the earlier rule's, `windward_loads="normals"` (the sphere rule's is
+    `test_under_the_sphere_rule_on_the_provider_sheltered_corners_read_the_wake_and_corners_facing_away_their_angle`)."""
+    assert skinbody.SkinBody.sheltered_angle == 0.5 * np.pi + 1e-6 and skinbody.SHELTER_WAKE == np.pi
+    c = centroid_body(coarse_sphere_mesh, windward_loads="normals")
+    w = centroid_body(coarse_sphere_mesh, windward_loads="normals", sheltered_angle=np.pi)
+    assert "sheltered_angle" not in vars(c) and w.sheltered_angle == np.pi
+    np.testing.assert_array_equal(w.theta, c.theta)
+    sheltered = (w.theta <= 0.5 * np.pi) & ~w.windward_corners()
+    eff = w.load_angles()
+    assert sheltered.sum() == 3 and w.theta.size == 2254 and (eff[sheltered] == np.pi).all()
+    np.testing.assert_array_equal(eff[~sheltered], w.theta[~sheltered])          # windward and facing away: as they are
+    np.testing.assert_array_equal(c.load_angles() != c.theta, sheltered)         # the classic rule moves the same corners
+    k = put_behind(w)
+    away = int([i for i in np.flatnonzero(w.columns.normal @ w.v_hat > 0.5) if i != k][0])
+    theta = w.theta.copy()
+    theta[away] = 2.0                                                    # ahead of the plane but facing away
+    with_tops(w, theta=theta)
+    eff = w.load_angles()
+    assert eff[k] == np.pi and eff[away] == 2.0 and w.theta[k] == 0.5
+    del vars(w)["sheltered_angle"]                                       # as a body saved before this change: classic
+    assert w.load_angles()[k] == 0.5 * np.pi + 1e-6 and w.load_angles()[away] == 2.0
+    f = make(coarse_sphere_mesh, windward_loads="normals", leeward_test="facing", sheltered_angle=np.pi)
+    put_behind(f)
+    assert f.load_angles() is f.theta
+    for bad in (0.5 * np.pi, 3.5, float("nan")):
+        with pytest.raises(ValueError, match="sheltered_angle"):
+            make(coarse_sphere_mesh, sheltered_angle=bad)
+
+
+def test_under_the_provider_a_sheltered_corner_reads_the_wake_and_a_corner_facing_away_the_lee_loads(coarse_sphere_mesh):
+    """Interim gas loads, Task 7 (decision 2a, ruling R15): on the provider's loads (`SurfaceFlow(gas_loads=...)`,
+    `SimilarityHeating`, `sheltered_angle` pi) the sheltered corner put behind the plane gets no shear, a finite pressure
+    gradient (the provider's at pi, the rear of the separated wake) and no heating, through the routines a macro step calls
+    (`flow_forcing` and `CoupledRun.loads_at`); the corners facing away from the flow between 95 and 140 degrees, ahead of
+    separation (148 degrees in this state), get the provider's lee shear and heating. On the classic loads the same corner
+    gets no shear, no gradient and no heating, and the lee none either (the gas state of the 100 mm flight at 93 s, Kn_body
+    0.0027, a body at 890 K). The body is on the earlier rule, `windward_loads="normals"`, whose centroid test this is."""
+    pytest.importorskip("cantera")
+    from types import SimpleNamespace
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import surface_flow
+    from reentry_model.shared.gas_loads import GasLoads
+    state = aero_state_at(93.0)
+    provider = GasLoads()
+    for loads in ("similarity", "classic"):
+        if loads == "similarity":
+            b = centroid_body(coarse_sphere_mesh, windward_loads="normals", T0=890.0, flow=True, remove=False, flow_cycles=1,
+                              sheltered_angle=np.pi, surface_flow=surface_flow.SurfaceFlow(gas_loads=provider))
+            heat = heating.SimilarityHeating(provider)
+        else:
+            b = centroid_body(coarse_sphere_mesh, windward_loads="normals", T0=890.0, flow=True, remove=False, flow_cycles=1,
+                              surface_flow=surface_flow.SurfaceFlow())
+            heat = heating.PhysicsHeating()
+        k = put_behind(b)
+        f = b.flow_forcing(state)
+        ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: state), body=b, heating=heat)
+        q = coupled.CoupledRun.loads_at(ran, 0.0, np.zeros(6))[1].q_conv
+        lee = (b.theta > np.radians(95.0)) & (b.theta < np.radians(140.0))
+        assert lee.sum() > 100 and f.tau[k] == 0.0 and q[k] == 0.0 and (q[b.load_angles() <= 0.5 * np.pi] >= 0.0).all()
+        if loads == "similarity":
+            L = provider.meridian(state, b.nose_radius(), float(b.surface_temperature()[np.argmin(b.load_angles())]))
+            assert np.isfinite(f.dp_ds[k]) and f.result.p_w[k] == pytest.approx(L.at(np.pi, "p_w"), rel=1e-12)
+            assert (f.tau[lee] > 0.0).all() and (q[lee] > 0.0).all()
+        else:
+            assert f.dp_ds[k] == 0.0 and (f.tau[lee] == 0.0).all() and (q[lee] == 0.0).all()
+
+
+@pytest.mark.parametrize("loads", ["classic", "similarity"])
 def test_a_corner_behind_the_centroid_that_faces_the_flow_gets_no_shear_no_spray_and_no_rayleigh_taylor(coarse_sphere_mesh,
-                                                                                                         monkeypatch):
+                                                                                                         monkeypatch, loads):
     """The wiring through `SkinBody.advance`: the surface flow and the spray plan both receive the effective angle, so the
     corner put behind the plane (theta 0.5 rad, its normal facing the flow) has no shear and a non-windward patch; the spray
     model is told it is not windward and its Rayleigh-Taylor deceleration is zero; and no droplet leaves it. A corner ahead of
-    the plane that faces away gets no shear or spray either."""
+    the plane that faces away gets no spray either. On the classic loads both get no shear and no pressure gradient; on the
+    provider's (interim gas loads, Task 7) the sheltered corner is read at pi, with no shear and a finite gradient, and the
+    corner facing away keeps its true angle (2 rad), where the provider's lee shear acts."""
     pytest.importorskip("cantera")
     from test_reentry_model_surface_flow import aero_state_at
     from reentry_model import spray, surface_flow
+    from reentry_model.shared.gas_loads import GasLoads
     mat = material.Material.from_drama_json("AA7075_scheil")
     seen = {}
 
@@ -2443,8 +2608,9 @@ def test_a_corner_behind_the_centroid_that_faces_the_flow_gets_no_shear_no_spray
             seen["flow_theta"] = np.array(theta)
             seen["result"] = super().evaluate(state, theta, *a, **k)
             return seen["result"]
-    b = centroid_body(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=Model(mat.liquid),
-                      surface_flow=Flow())
+    provider = {"sheltered_angle": np.pi} if loads == "similarity" else {}
+    b = centroid_body(coarse_sphere_mesh, windward_loads="normals", T0=890.0, flow=True, remove=False, flow_cycles=1,
+                      spray=Model(mat.liquid), surface_flow=Flow(gas_loads=GasLoads() if provider else None), **provider)
     k = put_behind(b)
     away = int([i for i in np.flatnonzero(b.columns.normal @ b.v_hat > 0.5) if i != k][3])
     theta = b.theta.copy()
@@ -2457,9 +2623,14 @@ def test_a_corner_behind_the_centroid_that_faces_the_flow_gets_no_shear_no_spray
     np.testing.assert_array_equal(seen["flow_theta"], eff)
     np.testing.assert_array_equal(plans[0][0], eff)
     assert eff[k] > 0.5 * np.pi and not seen["windward"][k] and seen["w_n"][k] == 0.0 and seen["w_n"][away] == 0.0
+    assert eff[k] == (np.pi if provider else 0.5 * np.pi + 1e-6) and eff[away] == 2.0
     res = seen["result"]
     for j in (k, away):
-        assert res.tau[j] == 0.0 and res.dp_ds[j] == 0.0 and plans[0][1].mass[j] == 0.0 and plans[0][1].result.branch[j] == -1
+        assert plans[0][1].mass[j] == 0.0 and plans[0][1].result.branch[j] == -1
+    if provider:
+        assert res.tau[k] == 0.0 and np.isfinite(res.dp_ds[k]) and res.tau[away] > 0.0
+    else:
+        assert all(res.tau[j] == 0.0 and res.dp_ds[j] == 0.0 for j in (k, away))
 
 
 def test_the_heating_reads_the_effective_angle(coarse_sphere_mesh):
@@ -2469,7 +2640,7 @@ def test_the_heating_reads_the_effective_angle(coarse_sphere_mesh):
     from reentry_model import coupled
     got = {}
     for how in ("centroid", "facing"):
-        b = make(coarse_sphere_mesh, leeward_test=how)
+        b = make(coarse_sphere_mesh, windward_loads="normals", leeward_test=how)
         k = put_behind(b)
         ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: "state"), body=b,
                               heating=SimpleNamespace(evaluate=lambda a, theta, T, R, T_mean=None: got.setdefault(how, np.array(theta))))
@@ -2500,7 +2671,8 @@ def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_m
         try:
             kw = {"leeward_test": "facing"} if how == "legacy" else {}
             model = spray.SprayModel(mat.liquid, spray_gates="2026-11-10", slip_band=True)
-            b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model, **kw)
+            b = make(coarse_sphere_mesh, windward_loads="normals", T0=890.0, flow=True, remove=False, flow_cycles=1,
+                     spray=model, **kw)
             if how == "default":
                 del vars(b)["leeward_test"]                 # as a state saved before Task 5j
                 assert b.leeward_test == "facing"
@@ -2529,7 +2701,7 @@ def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_m
     # (`flow_forcing`, the routine `advance` calls), with no macro step run and no spray model
     forcing = {}
     for how in ("centroid", "facing"):
-        b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, leeward_test=how)
+        b = make(coarse_sphere_mesh, windward_loads="normals", T0=890.0, flow=True, remove=False, flow_cycles=1, leeward_test=how)
         k = put_behind(b)
         forcing[how] = b.flow_forcing(aero_state_at(93.0))
     assert forcing["centroid"].tau[k] == 0.0 and forcing["centroid"].dp_ds[k] == 0.0
@@ -2537,7 +2709,7 @@ def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_m
     assert (forcing["centroid"].tau != 0.0).any()                       # the flow is not zero everywhere for another reason
     assert skinbody.SkinBody.leeward_test == "facing" and skinbody.LEEWARD_TESTS == ("facing", "centroid")
     with pytest.raises(ValueError, match="leeward_test"):
-        make(coarse_sphere_mesh, leeward_test="behind")
+        make(coarse_sphere_mesh, windward_loads="normals", leeward_test="behind")
 
 
 def test_the_fit_takes_only_windward_corners_within_the_cap(coarse_sphere_mesh):
@@ -2546,7 +2718,7 @@ def test_the_fit_takes_only_windward_corners_within_the_cap(coarse_sphere_mesh):
     of the fit (the count falls by ten) and a faraway corner behind it, with a base normal facing the flow, leaves the bound as
     it was; under `facing` Task 5g's selection is unchanged (the count stays, the faraway corner raises the bound)."""
     for how in ("centroid", "facing"):
-        b = make(coarse_sphere_mesh, leeward_test=how)
+        b = make(coarse_sphere_mesh, windward_loads="normals", leeward_test=how)
         n0, bound0 = b.nose_fit.points, b.nose_fit.bound
         c = b.mass_centroid()
         cap = np.flatnonzero(b.theta <= np.radians(30.0))
@@ -2613,3 +2785,888 @@ def test_a_spraying_body_in_the_slip_band_keeps_the_three_books(coarse_sphere_me
     s = b.skin_stats()
     assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-12)
     assert abs(b.energy_balance_residual()) < 1e-8 and s["momentum_residual"] < 1e-12 and b.impulse_size > 0.0
+
+
+def test_an_undeformed_body_has_its_front_at_the_radius_and_tops_enclosing_its_metal(coarse_sphere_mesh):
+    b = make(coarse_sphere_mesh)
+    g = b.geometry_stats()
+    # the core's surface lies one minimum skin (0.8 mm) under the sphere's, so its front is 49.2 mm on this 50 mm sphere
+    assert g["core_front_mm"] == pytest.approx(coarse_sphere_mesh.params["radius_m"] * 1e3, rel=2e-2)
+    assert abs(g["tops_volume_ratio"] - 1.0) < 0.01
+    assert b.geometry_breach() is None
+    assert set(skinbody.GEOMETRY_COLUMNS) <= set(b.skin_stats())
+
+
+def test_the_breach_names_the_volume_test_first_then_the_centre(coarse_sphere_mesh, monkeypatch):
+    b = make(coarse_sphere_mesh)
+    monkeypatch.setattr(skinbody, "GEOMETRY_FRONT_LIMIT_MM", 1e3)
+    assert b.geometry_breach()[0] == "centre"
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    test, value = b.geometry_breach()
+    assert test == "volume" and value == pytest.approx(b.geometry_stats()["tops_volume_ratio"])
+
+
+def test_the_enclosed_volume_does_not_depend_on_the_winding_of_the_top_triangles(coarse_sphere_mesh):
+    b = make(coarse_sphere_mesh)
+    before = b.geometry_stats()["tops_volume_ratio"]
+    b.surface = dataclasses.replace(b.surface, faces=b.surface.faces[:, ::-1].copy())
+    assert b.geometry_stats()["tops_volume_ratio"] == pytest.approx(before, rel=1e-12)
+
+
+# -- the profile path: Girin's gradient mode on the skins' own profile (kinked-profile dispersion Task 7) ----------------
+BRIDGE_TOP = [907.95 - 0.05 * i for i in range(10)]     # K: the bridge just below the liquidus (908 K), none of it liquid
+
+
+def floor_skins(col, tops=BRIDGE_TOP, peak=None, rheology=None):
+    """Skins on `col`, 10 um of solid metal's mass a cell, top first: ten bridge cells at `tops` (cooling from 907.95 K by
+    0.05 K a cell), twenty of slurry at 902 K (30 % solid) and ten rigid at 880 K, every flowing cell moving along x: the
+    speed falls linearly from 0.3 m/s at the surface to 0.05 m/s at the tenth cell's centre, and from there to rest at
+    the rigid front (`depth_above(T_rigid)`), a drop in shear onto the slurry to about a tenth -- a kink, and a floor.
+    With `peak` [m/s] the second cell moves at it instead: a plug, its speed peaking below the surface. `rheology` names
+    the law (the library default if None) before the flowing cells are found."""
+    import dataclasses
+    from test_reentry_model_skin import RIGID, SLURRY, stacked
+    sk = stacked(col, [list(tops) + [SLURRY] * 20 + [RIGID] * 10] * col.n)
+    if rheology is not None:
+        sk.settings = dataclasses.replace(sk.settings, rheology=rheology)
+    dz = sk.dz()
+    z = np.cumsum(dz, axis=1) - 0.5 * dz
+    F, z9 = sk.depth_above(sk.material.T_rigid)[:, None], z[:, 9:10]
+    u = np.where(z <= z9, 0.3 - 0.25 * z / z9, 0.05 * (F - z) / (F - z9))
+    if peak is not None:
+        u[:, 1] = peak
+    flowing = sk.valid & np.isfinite(skin.cell_viscosity(sk, 0.0))
+    sk.U[:, :, 0] = np.where(flowing, np.clip(u, 0.0, None), 0.0)
+    return sk
+
+
+def profile_column(name):
+    from reentry_model import spray
+    return spray.PROFILE_COLUMNS.index(name)
+
+
+def test_on_profile_a_floor_like_column_sprays_by_the_gas_driven_mode_at_its_kink():
+    """Spec 6.3-6.6 on the skins: six columns of the bridge over slurry under Girin's closure, 1000 m/s at the edge (a
+    gas-driven wavelength of 1.7 mm): the shear drops to about a tenth at the tenth cell, whose floor Reynolds number is
+    far below 1 (the slurry beneath it is some 700 times as viscous as the liquid), so the wall is the kink there; the
+    layer above it is one straight segment, so the gradient mode does not grow, and the gas-driven mode sprays on the wall
+    (branch 1): its film is the wall's depth, which binds against lambda*/8, and the viscous film's floor is the wall,
+    with the layer's Couette viscosity above it. The release run's threshold is the ninth cell's temperature, the cell
+    above the kink, so the cascade takes the nine cells above the kink however long the step and nothing beneath them;
+    the crest cap reads that run's depth, and the droplets carry its cells' mass-weighted density and viscosity. No
+    floating-point error or warning is raised."""
+    import warnings
+    from reentry_model import spray, surface_flow
+    from test_reentry_model_skin import strip_grid
+    col, _ = strip_grid(3, 2, h=20e-3)
+    sk = floor_skins(col, rheology="bridge")  # values set on the bridge law
+    flow = girin_flow(6, [surface_flow.CLOSURE_GIRIN] * 6, [1000.0] * 6, [50.0] * 6)
+    with np.errstate(all="raise"), warnings.catch_warnings():
+        warnings.simplefilter("error")
+        plan = plan_on(sk, col, flow, dispersion="profile")
+    mat, liq = sk.material, sk.material.liquid
+    cols = skinbody.layer_columns(sk, np.abs(flow.tau))
+    wall = cols.z[:, 9]
+    assert plan.resolved.all() and plan.profile.shape == (6, len(spray.PROFILE_COLUMNS))
+    np.testing.assert_array_equal(plan.profile[:, profile_column("floor_like_wall")], 1.0)
+    np.testing.assert_array_equal(plan.profile[:, profile_column("depth_to_wall_m")], wall)
+    np.testing.assert_array_equal(plan.profile[:, profile_column("kink_T_K")], sk.T[:, 9])
+    assert (plan.profile[:, profile_column("floor_re")] < 0.1).all()
+    np.testing.assert_array_equal(plan.profile[:, profile_column("growth_rate_per_s")], 0.0)
+    assert np.isnan(plan.profile[:, profile_column("release_depth_m")]).all()
+    np.testing.assert_array_equal(plan.profile[:, profile_column("girin_delta_m_m")], plan.result.delta_m)
+    np.testing.assert_array_equal(plan.profile[:, profile_column("girin_v_s_ms")], plan.result.v_s)
+    # the gas-driven mode on the wall
+    assert (plan.result.branch == spray.BRANCH_THIN).all() and (plan.rate > 0.0).all()
+    lam, tau = spray.thin_film_mode(flow.mach_e, flow.rho_e * flow.u_eff ** 2, liq)
+    assert (wall < lam / 8.0).all()
+    np.testing.assert_allclose(plan.rate, liq.rho * wall / tau, rtol=1e-12)
+    np.testing.assert_array_equal(plan.result.h_floor, wall)
+    nu_eff, _ = skinbody.melt_profile.couette_viscosity(cols, wall)
+    np.testing.assert_allclose(plan.result.gamma_tau, spray.viscous_film(lam, tau, wall, liq, nu=nu_eff)[0], rtol=1e-12)
+    # the run: the nine cells above the kink, at the ninth cell's temperature, and nothing beneath them
+    np.testing.assert_array_equal(plan.T_run, sk.T[:, 8])
+    assert (skin.mode_run(sk, plan.T_run).sum(axis=1) == 9).all()
+    dz, m = sk.dz(), sk.m[:, :9]
+    np.testing.assert_allclose(plan.result.cap_depth, dz[:, :9].sum(axis=1), rtol=1e-12)
+    np.testing.assert_allclose(plan.props.rho, (m * sk.density(sk.T[:, :9])).sum(axis=1) / m.sum(axis=1), rtol=1e-12)
+    np.testing.assert_allclose(plan.props.mu, (m * cols.mu[:, :9]).sum(axis=1) / m.sum(axis=1), rtol=1e-12)
+    assert plan.props.sigma == liq.sigma and (plan.props.mu > 1.2 * liq.mu).all()
+    c = plan.release(sk)
+    np.testing.assert_array_equal(c.T_run, plan.T_run)
+    taken, _ = skin.cascade_mass(sk, c.rate, c.rate_slurry, col.area, 10.0, False, c.T_slurry, c.T_run)
+    np.testing.assert_allclose(taken, m.sum(axis=1), rtol=1e-12)
+
+
+def test_on_profile_a_column_whose_top_does_not_move_falls_back_to_today():
+    """Spec 6.4's fallback (decision 2): a wet windward column whose top cell does not move takes today's theoretical
+    path. The six columns of the first Girin test -- thick, thin, Rayleigh-Taylor, two held off Girin's closure and exposed
+    slurry -- first all at rest, then with the first column's liquid moving (resolved): every SprayResult entry of a
+    column at rest is the table path's to the last bit, its rate, its crest cap's depth and its slurry mode too, with
+    slurry spraying off and on; its threshold is NaN (today's liquid run), its droplets the liquid's, and its profile
+    record NaN but for Girin's delta_m and V_s."""
+    import dataclasses
+    from reentry_model import spray, surface_flow
+    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
+    col, _ = strip_grid(3, 2, h=20e-3)
+    temps = [[LIQUID] * 86 + [RIGID] * 10, [LIQUID] * 4 + [RIGID] * 10, [LIQUID] * 428 + [RIGID] * 10,
+             [LIQUID] * 26 + [SLURRY] * 340 + [RIGID] * 10, [LIQUID] * 4 + [SLURRY] * 50 + [RIGID] * 10,
+             [SLURRY] * 50 + [RIGID] * 10]
+    G, C = surface_flow.CLOSURE_GIRIN, surface_flow.CLOSURE_COUETTE
+    flow = girin_flow(6, [G, G, C, C, C, G], [2000.0, 2000.0, 5.0, 5.0, 2000.0, 2000.0], [50.0, 50.0, 0.01, 0.01, 50.0, 50.0])
+    for moving in (False, True):
+        sk = stacked(col, temps)
+        if moving:
+            sk.U[0, :86, 0] = np.linspace(1.0, 0.01, 86)
+        rest = np.arange(6) >= (1 if moving else 0)
+        for slurry in (False, True):
+            table = plan_on(sk, col, flow, slurry=slurry)
+            prof = plan_on(sk, col, flow, slurry=slurry, dispersion="profile")
+            assert prof.resolved.tolist() == (~rest).tolist()
+            for f in dataclasses.fields(spray.SprayResult):
+                a, b = getattr(table.result, f.name), getattr(prof.result, f.name)
+                if f.name == "rt_active" or (f.name == "cap_depth" and a is None):
+                    continue
+                np.testing.assert_array_equal(np.asarray(a)[rest], np.asarray(b)[rest], err_msg=f.name)
+            np.testing.assert_array_equal(table.rate[rest], prof.rate[rest])
+            np.testing.assert_array_equal(table.rate_slurry[rest], prof.rate_slurry[rest])
+            for key, value in table.slurry.items():
+                np.testing.assert_array_equal(value[rest], prof.slurry[key][rest], err_msg=key)
+            assert np.isnan(prof.T_run[rest]).all() and (prof.props.rho[rest] == sk.material.liquid.rho).all()
+            assert (prof.props.mu[rest] == sk.material.liquid.mu).all()
+            np.testing.assert_array_equal(prof.result.cap_depth[rest], table.cap_depth[rest])
+            extra = prof.profile[rest]
+            assert np.isnan(extra[:, :profile_column("girin_delta_m_m")]).all()
+            np.testing.assert_array_equal(extra[:, profile_column("girin_delta_m_m")], table.result.delta_m[rest])
+        if not moving:
+            assert table.result.rt_active == prof.result.rt_active
+
+
+def test_profile_records_have_36_columns_and_slurry_rows_carry_no_release_depth():
+    """Spec 6.8 and the plan's call 6: on the profile path the records are `record_columns(36)` wide, every row carrying
+    its column's profile record after the 27 SOURCE_COLUMNS; the slurry's rows carry the column's wall and kink values
+    and Girin's delta_m and V_s, but no release depth and no growth rate, which are the liquid's mode's. The table path's
+    rows stay 27 wide. The bridge over slurry with slurry spraying on, released by the plan's cascade in three sub-steps
+    of 2 ms."""
+    from reentry_model import spray, surface_flow
+    from test_reentry_model_skin import strip_grid
+    from test_reentry_model_spray import FakeState
+    col, pts = strip_grid(3, 2, h=20e-3)
+    flow = girin_flow(6, [surface_flow.CLOSURE_GIRIN] * 6, [1000.0] * 6, [50.0] * 6)
+    widths = {}
+    for dispersion in ("table", "profile"):
+        sk = floor_skins(col)
+        plan = skinbody.girin_plan(sk, flow, FakeState(), spray.SprayModel(sk.material.liquid, dispersion=dispersion),
+                                   np.zeros(6), col.area, col.edges, 0.05, 0.0125, slurry=True, points=pts)
+        for _ in range(3):
+            c = plan.release(sk)
+            dm, _ = skin.cascade_mass(sk, c.rate, c.rate_slurry, col.area, 2e-3, True, c.T_slurry, c.T_run)
+            ph = skin.release_top(sk, dm, True, c.T_run).by_phase if c.T_run is not None else \
+                skin.release_top(sk, dm, True).by_phase
+            fb = skin.FlowBook.zero(6)
+            fb.phase_mass, fb.phase_H, fb.phase_p, fb.phase_solid = ph.mass, ph.enthalpy, ph.momentum, ph.solid
+            plan.book(fb)
+        plan.count(plan.props.rho)
+        rows = plan.source_block(0.0125)
+        widths[dispersion] = rows.shape[1]
+        if dispersion == "profile":
+            n_liq, n_sl = int((plan.mass > 0.0).sum()), int((plan.mass_slurry > 0.0).sum())
+            assert n_liq == 6 and n_sl > 0 and len(rows) == n_liq + n_sl
+            names = spray.record_columns(36)
+            i = np.concatenate([np.flatnonzero(plan.mass > 0.0), np.flatnonzero(plan.mass_slurry > 0.0)])
+            extra = rows[:, len(spray.SOURCE_COLUMNS):]
+            np.testing.assert_array_equal(extra[:n_liq], plan.profile[i[:n_liq]])
+            slurry_rows = plan.profile[i[n_liq:]].copy()
+            no = [profile_column("release_depth_m"), profile_column("growth_rate_per_s")]
+            slurry_rows[:, no] = np.nan
+            np.testing.assert_array_equal(extra[n_liq:], slurry_rows)
+            assert np.isfinite(extra[n_liq:, profile_column("depth_to_wall_m")]).all()
+            assert names[len(spray.SOURCE_COLUMNS):] == list(spray.PROFILE_COLUMNS)
+    assert widths == {"table": 27, "profile": 36}
+
+
+def test_a_plug_column_whose_run_is_empty_releases_nothing_or_by_the_slurry_s_mode():
+    """Review Focus 1 and the controller's ruling on plug columns, through the plan's own wiring: the bridge over slurry
+    with its second cell moving fastest (a plug) and its top, at 907.5 K, colder than the bridge beneath it, so colder
+    than the cell above the kink (907.6 K), the gas-driven mode's threshold. The run at that threshold is empty, so the
+    mode's crest cap has no depth and its rate is zero; a mode with no rate fixes no run (the controller's ruling), so
+    the plan's threshold is NaN, today's liquid run, which is empty here (no cell is liquid). Without slurry spraying
+    nothing leaves however long the step -- by the plan's cascade, and by a cascade at the mode's own threshold at any
+    rate -- and the cells are untouched. With it, the slurry's mode reads the first flowing cell below the empty run, the
+    top itself, so its threshold is the top's temperature: it takes the top cell at its own rate, and beneath it the
+    bridge cells, all at least as warm, down to the slurry at 902 K, booked as the slurry's (phase 1); the books close.
+    No floating-point error or warning is raised."""
+    import warnings
+    from reentry_model import spray, surface_flow
+    from test_reentry_model_skin import strip_grid
+    col, _ = strip_grid(3, 2, h=20e-3)
+    tops = [907.5] + BRIDGE_TOP[:9]                        # the top 907.5 K, the bridge beneath from 907.95 K
+    flow = girin_flow(6, [surface_flow.CLOSURE_GIRIN] * 6, [1000.0] * 6, [50.0] * 6)
+    for slurry in (False, True):
+        sk = floor_skins(col, tops=tops, peak=0.32)
+        assert (np.argmax(sk.U[:, :, 0], axis=1) == 1).all()                     # a plug
+        with np.errstate(all="raise"), warnings.catch_warnings():
+            warnings.simplefilter("error")
+            plan = plan_on(sk, col, flow, slurry=slurry, dispersion="profile")
+        T_driven = plan.record.T_driven
+        assert plan.resolved.all() and (plan.result.branch == spray.BRANCH_THIN).all()
+        np.testing.assert_array_equal(T_driven, sk.T[:, 8])
+        assert (T_driven > sk.T[:, 0]).all() and not skin.mode_run(sk, T_driven).any()    # the top colder: no run
+        assert (plan.result.cap_depth == 0.0).all() and not plan.rate.any() and np.isnan(plan.T_run).all()
+        c = plan.release(sk)
+        before = [x.copy() for x in sk.state()]
+        M0, H0 = sk.m.sum(axis=1), sk.H.sum(axis=1)
+        if not slurry:
+            for cascade in (c, skin.Cascade(np.full(6, 1e6), np.full(6, 1e6), np.full(6, np.inf), T_run=T_driven)):
+                taken, part = skin.cascade_mass(sk, cascade.rate, cascade.rate_slurry, col.area, 10.0, False,
+                                                cascade.T_slurry, cascade.T_run)
+                assert not taken.any() and not part.any()
+                book = skin.release_top(sk, taken, False, cascade.T_run)
+                assert not book.mass.any() and all(np.array_equal(x, y) for x, y in zip(before, sk.state()))
+            continue
+        np.testing.assert_array_equal(plan.slurry["T"], sk.T[:, 0])               # the first flowing cell below the run
+        np.testing.assert_array_equal(c.T_slurry, sk.T[:, 0])
+        assert (c.rate_slurry > 0.0).all()
+        taken, part = skin.cascade_mass(sk, c.rate, c.rate_slurry, col.area, 1e-7, True, c.T_slurry, c.T_run)
+        assert np.array_equal(taken, part)
+        np.testing.assert_allclose(taken, c.rate_slurry * col.area * 1e-7, rtol=1e-12)
+        assert (taken < sk.m[:, 0]).all()                                         # a part of the top cell
+        long, _ = skin.cascade_mass(sk, c.rate, c.rate_slurry, col.area, 10.0, True, c.T_slurry, c.T_run)
+        np.testing.assert_allclose(long, sk.m[:, :10].sum(axis=1), rtol=1e-12)    # the bridge, then the colder slurry
+        book = skin.release_top(sk, taken, True, c.T_run)
+        np.testing.assert_allclose(book.by_phase.mass[1], taken, rtol=1e-14)
+        assert not book.by_phase.mass[0].any()
+        np.testing.assert_allclose(sk.m.sum(axis=1) + book.mass, M0, rtol=1e-14)
+        np.testing.assert_allclose(sk.H.sum(axis=1) + book.enthalpy, H0, rtol=1e-12)
+
+
+def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_path, monkeypatch):
+    """The profile path in the skin body (spec 6.1-6.8): Task 1c's spraying test -- the 4 mm test sphere heated at 3 MW/m2
+    from 890 K under the 100 mm flight's gas state at 93 s, two 0.25 s steps, one flow sub-step a heat sub-step -- with
+    the spray model on `profile`. The released metal leaves the body: the mass left and released is the starting mass
+    to round-off, the energy books close with the released enthalpy and the momentum books with the droplets' momentum.
+    The history's DISPERSION_COLUMNS come last in every row (an empty step's before the first: a share of NaN), every
+    record is `record_columns(36)` wide, in memory and in the coupled writer's file, which writes the profile run's names
+    even before any record exists, and the history's sprayed masses are the plan's records by mode. The two columns that
+    place the walls against the 906.4 K isotherm are the medians of the plan's record, and a fluid-like wall's
+    temperature is T_rigid, or, where every cell of the column is warmer and the front is its bottom, the bottom cell's.
+    A spray model on `profile` needs the flow on. Printed, as a measurement: the share of floor-like columns, the two
+    medians against the isotherm and the mass each mode sprayed."""
+    pytest.importorskip("cantera")
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import spray
+    from reentry_model import trajectory as tj
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    model = spray.SprayModel(mat.liquid, dispersion="profile")
+    with pytest.raises(ValueError, match="needs the flow on"):
+        make(coarse_sphere_mesh, spray=model)
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model,
+             windward_loads="normals")
+    # the earlier rule, as the flow was set up. Under `sphere` the second step's 0.99 mm move of rear corners (117 to 128
+    # degrees from the flow, none exposed) is refused, and so is the retry on the rebuilt mesh: the coarse mesh's thin margin at
+    # the rear, not the fitted push. The refused move is the same size in every variant and was already refused at 345fa6a,
+    # before the push followed the fitted meridian, whose rebuilt mesh happened to take the retry (2026-11-13, Task 3 report,
+    # "Mesh failure investigation")
+    seen, profile_modes = {}, skinbody.melt_profile.profile_modes
+
+    def keep(cols, windward, sigma):                     # the cells the plan read, which pass through unchanged
+        seen["cols"] = cols
+        return profile_modes(cols, windward, sigma)
+    monkeypatch.setattr(skinbody.melt_profile, "profile_modes", keep)
+    names = spray.record_columns(36)
+    assert b.record_names() == names and b.source_rows == []
+    history = tj.History({"time_s": np.zeros(1)}, np.zeros((1, 6)), None)
+    files = coupled.write_particles(str(tmp_path / "before"), b, history)
+    assert np.load(files["particles"]).files == names                    # no record yet, the profile run's names
+    M0, state = b.mass(), aero_state_at(93.0)
+    stats = [b.skin_stats()]
+    for k in range(2):
+        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), state=state)
+        stats.append(b.skin_stats())
+    D = skinbody.melt_profile.DISPERSION_COLUMNS
+    for s in stats:
+        assert tuple(s)[-len(D):] == D
+    assert np.isnan(stats[0]["floor_like_share"]) and stats[0]["fluid_like_columns"] == 0
+    p = b.spray_plan
+    assert b.released_mass > 0.0 and p.mass.sum() > 0.0
+    assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-13)
+    assert abs(b.energy_balance_residual()) < 1e-8 and stats[-1]["momentum_residual"] < 1e-12
+    assert len(b.source_rows) >= 1 and all(block.shape[1] == 36 for block in b.source_rows)
+    rows = spray.source_table(b.source_rows)
+    assert rows[:, names.index("dm_kg")].sum() == pytest.approx(b.released_mass, rel=1e-12)
+    on = p.resolved
+    branch = p.result.branch
+    s = stats[-1]
+    assert on.any()
+    assert s["floor_like_share"] == pytest.approx(np.mean(p.profile[on, profile_column("floor_like_wall")]))
+    assert s["sprayed_gradient_kg"] == pytest.approx(p.mass[on & (branch == spray.BRANCH_PROFILE)].sum(), rel=1e-14)
+    driven = on & np.isin(branch, (spray.BRANCH_THIN, spray.BRANCH_RAREFIED))
+    assert s["sprayed_gas_driven_kg"] == pytest.approx(p.mass[driven].sum(), rel=1e-14)
+    # the walls against the bridge's low end, 906.4 K (the final review's fix round, for the Task 9 report): the medians of
+    # the plan's record over the resolved columns, a column the isotherm does not cross left out; a fluid-like wall is the
+    # rigid front, read between the same cell centres, so the temperature there is T_rigid where the front lies inside the
+    # column, and the bottom cell's where every cell is warmer and `depth_above` puts the front at the column's bottom
+    rec, cols = p.record, seen["cols"]
+    med = lambda x: float(np.median(x[np.isfinite(x)])) if np.isfinite(x).any() else float("nan")
+    assert s["depth_to_bridge_low_median_mm"] == pytest.approx(med(rec.depth_to_bridge_low[on]) * 1e3, rel=1e-14,
+                                                               nan_ok=True)
+    assert s["T_at_wall_median_K"] == pytest.approx(med(rec.T_at_wall[on]), rel=1e-14, nan_ok=True)
+    count = (cols.dz > 0.0).sum(axis=1)
+    bottom = (rec.wall_depth == cols.dz.sum(axis=1)) & (cols.T[np.arange(len(count)), count - 1] > mat.T_rigid)
+    fluid = on & (rec.floor_like_wall == 0.0)
+    assert np.isfinite(rec.T_at_wall[on]).all() and (fluid & ~bottom).any()
+    np.testing.assert_allclose(rec.T_at_wall[fluid & ~bottom], mat.T_rigid, rtol=1e-9)
+    assert np.array_equal(rec.T_at_wall[fluid & bottom], cols.T[np.arange(len(count)), count - 1][fluid & bottom])
+    files = coupled.write_particles(str(tmp_path / "after"), b, history)
+    npz = np.load(files["particles"])
+    assert npz.files == names and all(np.array_equal(npz[k], rows[:, i], equal_nan=True) for i, k in enumerate(names))
+    print("\nprofile skin body at 0.5 s: {} resolved columns of {} wet windward, floor-like share {:.3f}, {} fluid-like; "
+          "wall depth median {:.4g} mm, 906.4 K isotherm depth median {:.4g} mm, temperature at the wall median {:.6g} K, "
+          "floor Re median {:.3g}, We_s median {:.3g}; sprayed {:.4g} kg by the gradient "
+          "mode, {:.4g} kg gas-driven, {:.4g} kg in all (liquid's modes {:.4g} kg, slurry's {:.4g} kg); branches {}".format(
+              int(on.sum()), int(((b.theta <= 0.5 * np.pi) & (p.flowing > 0.0)).sum()), s["floor_like_share"],
+              s["fluid_like_columns"], s["depth_to_wall_median_mm"], s["depth_to_bridge_low_median_mm"],
+              s["T_at_wall_median_K"], s["floor_re_median"], s["we_s_profile_median"],
+              s["sprayed_gradient_kg"], s["sprayed_gas_driven_kg"], b.released_mass, p.mass.sum(), p.mass_slurry.sum(),
+              {int(x): int((branch[p.mass > 0.0] == x).sum()) for x in np.unique(branch[p.mass > 0.0])}))
+
+
+def test_a_table_skin_body_has_no_dispersion_columns(coarse_sphere_mesh, tmp_path):
+    """Spec 6.8: a skin body spraying on `table` (the class's and the constructor's default) writes today's columns --
+    no DISPERSION_COLUMNS in its history row, the 27 SOURCE_COLUMNS as its record names and its spool's -- and so does a
+    skin body without a spray model; on `profile` the spool takes the 36 names."""
+    from reentry_model import spray
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    for model in (spray.SprayModel(mat.liquid), None):
+        b = make(coarse_sphere_mesh, flow=True, remove=False, spray=model, spool=str(tmp_path / "table"))
+        assert b.dispersion_stats() == {} and b.record_names() == spray.SOURCE_COLUMNS
+        assert not set(skinbody.melt_profile.DISPERSION_COLUMNS) & set(b.skin_stats())
+        # nor the two that place the walls against the 906.4 K isotherm (the final review's fix round): profile-only
+        assert not {"depth_to_bridge_low_median_mm", "T_at_wall_median_K"} & set(b.skin_stats())
+        assert b.source_rows.names == tuple(spray.SOURCE_COLUMNS)
+    b = make(coarse_sphere_mesh, flow=True, remove=False, spray=spray.SprayModel(mat.liquid, dispersion="profile"),
+             spool=str(tmp_path / "profile"))
+    assert b.source_rows.names == tuple(spray.record_columns(36))
+    D = skinbody.melt_profile.DISPERSION_COLUMNS
+    assert tuple(b.skin_stats())[-len(D):] == D and {"depth_to_bridge_low_median_mm", "T_at_wall_median_K"} <= set(D)
+
+
+# -- the windward loads from one sphere fitted to the exposed tops (fitted-sphere loads design, Asha 2026-11-13) -----------
+# The design: docs/superpowers/specs/2026-11-13-fitted-sphere-loads-design.md. Under `windward_loads="sphere"` (the library's
+# default) the candidates are the tops ahead of the plane through the mass centroid, a candidate whose upstream ray crosses the
+# tops is sheltered, the sphere is fitted to the rest (the exposed corners) and each exposed corner reads the angle of the ray
+# from the fitted centre through it; every other corner is leeward.
+RING_RAISE = 6e-3              # m: the raised ring of the shelter test (tests/test_reentry_model_shelter.py), 6 mm so that a crest
+                               # corner faces away from the flow on this 4 mm surface mesh
+# rad: the most an exposed corner's ray angle from the fitted centre differs from its own normal's angle on the untouched 4 mm
+# sphere. Measured 2026-11-13: 0.0517 rad (2.96 degrees), at one corner 87.6 degrees from the flow whose top normal is 4.7
+# degrees off the radial line (the coarse mesh at its equator); within 80 degrees of the flow at most 0.0105 rad (0.60 degrees)
+SPHERE_ANGLE_TOL = 0.06
+SPHERE_ANGLE_TOL_80 = 0.012
+
+
+def ray_angles(b, centre):
+    """The angle [rad, (n,)] between the flight direction and the unit ray from `centre` through each top corner."""
+    u = b.surface.points - centre
+    u = u / np.linalg.norm(u, axis=1)[:, None]
+    return np.arccos(np.clip(u @ b.v_hat, -1.0, 1.0))
+
+
+def ringed(b):
+    """The raised ring of the shelter test on the body's tops: the corners whose base normal is 45 to 52 degrees from the flight
+    direction moved out RING_RAISE along it, the tops refreshed (`with_tops`); returns the ring's mask."""
+    n = b.columns.normal
+    ang = np.degrees(np.arccos(np.clip(n @ b.v_hat, -1.0, 1.0)))
+    ring = (ang >= 45.0) & (ang <= 52.0)
+    pts = b.surface.points.copy()
+    pts[ring] += RING_RAISE * n[ring]
+    with_tops(b, pts)
+    return ring
+
+
+def test_an_untouched_sphere_fits_its_own_sphere_and_reads_its_normals_angles(coarse_sphere_mesh):
+    """The library's default is the sphere rule. On the untouched 4 mm sphere nothing is sheltered, the exposed corners (every
+    corner ahead of the centroid's plane) fit the 50 mm sphere about the origin -- the tops lie where the mesh's surface was,
+    the bases having moved in by the 0.8 mm skins -- and every exposed corner's ray angle is its own normal's to within the
+    mesh's facets (SPHERE_ANGLE_TOL, measured)."""
+    b = make(coarse_sphere_mesh)
+    sf = b.sphere_fit
+    assert b.windward_loads == "sphere" and not sf.concave and not sf.sheltered.any()
+    assert np.array_equal(sf.exposed, b._leeward()[1]) and sf.points == sf.exposed.sum() > 1000
+    assert abs(sf.fitted / 0.05 - 1) < 0.01 and np.linalg.norm(sf.centre) < 0.01 * 0.05
+    assert np.abs(b.load_angles()[sf.exposed] - b.theta[sf.exposed]).max() < SPHERE_ANGLE_TOL
+    near = sf.exposed & (b.theta < np.radians(80.0))
+    assert np.abs(b.load_angles()[near] - b.theta[near]).max() < SPHERE_ANGLE_TOL_80
+    np.testing.assert_array_equal(b.load_angles()[sf.exposed], ray_angles(b, sf.centre)[sf.exposed])
+    assert sf.used == sf.fitted == b.nose_radius() < sf.bound and sf.rms < 2e-6              # measured 0.56 um
+
+
+def test_moved_tops_move_the_sphere_s_centre_and_scaled_tops_scale_its_radius(coarse_sphere_mesh):
+    """The tops translated 5 mm along the flight direction move the fitted centre 5 mm with them and keep its radius; the tops
+    scaled 1.2 times about the origin (the sphere's original centre) scale its radius 1.2 times and keep its centre. The
+    history's `sphere_centre_mm` is the centre's position along the flight direction from the origin. Translated, the
+    corners just behind the old equator come ahead of the centroid's plane (which the tops do not move), and their rays up
+    the flow cross the sphere's own front: they are sheltered, and every one of them faces away from the flow."""
+    b = make(coarse_sphere_mesh)
+    pts, sf0 = b.surface.points, b.sphere_fit
+    c0, r0 = sf0.centre.copy(), sf0.fitted
+    sf = with_tops(b, pts + 5e-3 * b.v_hat).sphere_fit
+    assert not sf.concave and sf.sheltered.any() and (b.theta[sf.sheltered] > 0.5 * np.pi).all()
+    np.testing.assert_allclose(sf.centre - c0, 5e-3 * b.v_hat, rtol=0.0, atol=1e-6)
+    assert sf.fitted == pytest.approx(r0, rel=1e-3)
+    assert b.skin_stats()["sphere_centre_mm"] == pytest.approx(5.0 + c0 @ b.v_hat * 1e3, abs=1e-2)
+    sf = with_tops(b, 1.2 * pts).sphere_fit
+    assert not sf.concave and sf.fitted == pytest.approx(1.2 * r0, rel=1e-3)
+    np.testing.assert_allclose(sf.centre, 1.2 * c0, rtol=0.0, atol=1e-6)
+
+
+def test_a_sheltered_corner_is_leeward_and_a_crest_facing_away_reads_its_ray_angle(coarse_sphere_mesh):
+    """The raised ring of the shelter test (6 mm on the corners 45 to 52 degrees from the flow): the band behind it is sheltered
+    and reads the larger of its angle and 90 degrees plus a microradian, as the corners behind the centroid's plane do; a crest
+    corner of the ring whose own normal faces away from the flow is exposed, reads its ray angle from the fitted centre (less
+    than 90 degrees) and is windward (Asha, 2026-11-13: "Yes, heat them")."""
+    b = make(coarse_sphere_mesh)
+    ring = ringed(b)
+    sf, eff = b.sphere_fit, b.load_angles()
+    lee = np.maximum(b.theta, 0.5 * np.pi + 1e-6)
+    assert sf.sheltered.any() and not sf.concave and not (sf.sheltered & sf.exposed).any()
+    assert np.array_equal(sf.exposed | sf.sheltered, b._leeward()[1])
+    np.testing.assert_array_equal(eff[sf.sheltered], lee[sf.sheltered])
+    np.testing.assert_array_equal(eff[~b._leeward()[1]], lee[~b._leeward()[1]])
+    crest = ring & sf.exposed & (b.theta > 0.5 * np.pi)
+    assert crest.any()
+    np.testing.assert_array_equal(eff[crest], ray_angles(b, sf.centre)[crest])
+    assert (eff[crest] < 0.5 * np.pi).all() and b.windward_corners()[crest].all()
+    assert not b.windward_corners()[sf.sheltered].any()
+    np.testing.assert_array_equal(b.windward_corners(), sf.exposed & (eff <= 0.5 * np.pi))
+    assert b.skin_stats()["sheltered_corners"] == sf.sheltered.sum() > 0
+
+
+def test_the_radius_used_is_the_fit_capped_at_the_flat_face_bound(coarse_sphere_mesh):
+    """The whole front's tops on a sphere of twice the radius (100 mm) touching the nose: the fit is that sphere, flatter
+    than the bound (1.67 times the 50 mm windward transverse radius, 83.5 mm), so the radius the loads read is the bound
+    (Asha, 2026-11-13: keep the cap) while the angles are still the rays' from the fitted centre. `size_feedback`, read only
+    under `normals`, changes nothing. `rho_max` is 1.1, not 1.0: the tops at the equator stand up to 0.06 mm outside the
+    50 mm radius, so 1.0 leaves 41 of the front's corners where they were, and the fit then reads 60.0 mm with a misfit of
+    3.6 mm (measured 2026-11-13); at 1.1 every front corner moves and the fit is the 100 mm sphere to rounding. The heating
+    (through `CoupledRun.loads_at`) and the surface flow (through `flow_forcing`) are called with these angles and this
+    radius."""
+    from types import SimpleNamespace
+    b = make(coarse_sphere_mesh, flow=True)
+    pts, R2 = flatten_front(b, factor=2.0, rho_max=1.1)
+    with_tops(b, pts)
+    sf = b.sphere_fit
+    assert not sf.concave and sf.fitted == pytest.approx(R2, rel=1e-9) and sf.fitted > sf.bound
+    assert sf.bound == pytest.approx(1.67 * 0.05, rel=0.03)
+    assert b.nose_radius() == sf.used == sf.bound == b.nose_fit.used and b.nose_fit.fitted == sf.fitted
+    np.testing.assert_array_equal(b.load_angles()[sf.exposed], ray_angles(b, sf.centre)[sf.exposed])
+    s = b.skin_stats()
+    assert s["nose_radius_mm"] == sf.bound * 1e3 and s["fitted_nose_radius_mm"] == sf.fitted * 1e3
+    assert s["nose_bound_mm"] == sf.bound * 1e3 and s["nose_cap_points"] == sf.points and s["nose_cap_concave"] == 0.0
+    seen = {}
+    ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: "state"), body=b,
+                          heating=SimpleNamespace(evaluate=lambda a, theta, T, R, T_mean=None: seen.setdefault("heating", (theta, R))))
+    coupled.CoupledRun.loads_at(ran, 0.0, np.zeros(6))
+
+    def flow_evaluate(state, theta, R, rho_l, T):
+        seen["flow"] = (theta, R)
+        return SimpleNamespace(dp_ds=np.zeros(len(theta)), tau=np.zeros(len(theta)), deceleration=0.0)
+    b.surface_flow = SimpleNamespace(evaluate=flow_evaluate)
+    b.flow_forcing("state")
+    for theta, R in (seen["heating"], seen["flow"]):
+        assert R == sf.bound
+        np.testing.assert_array_equal(theta, b.load_angles())
+    b.size_feedback = "initial"
+    assert b.nose_radius() == sf.bound
+
+
+def test_a_flat_exposed_face_falls_back_to_normal_angles_at_the_bound(coarse_sphere_mesh):
+    """Every exposed top projected onto one plane across the flight direction (a pancake): no sphere describes it, so each
+    exposed corner reads its own normal's angle, the radius is the flat-face bound and the row marks the step in
+    `nose_cap_concave`, with no fitted radius, centre or misfit. A front dished toward the flow (its centre on the flow side)
+    falls back the same way; with no bound the radius is the mesh's."""
+    b = make(coarse_sphere_mesh)
+    ahead = b._leeward()[1]
+    X = b.surface.points - b.mesh.points.mean(axis=0)
+    ax = X @ b.v_hat
+    rho = np.sqrt(np.maximum((X * X).sum(axis=1) - ax ** 2, 0.0))
+    tops = b.surface.points.copy()
+    for shape in ("flat", "dished"):
+        pts = tops.copy()
+        target = 0.02 + (0.0 if shape == "flat" else rho[ahead] ** 2 / 0.1)
+        pts[ahead] += np.outer(target - ax[ahead], b.v_hat)
+        with_tops(b, pts)
+        sf = b.sphere_fit
+        assert np.array_equal(sf.exposed, ahead) and sf.points == ahead.sum()
+        assert sf.concave and np.isnan(sf.fitted) and np.isnan(sf.centre).all() and np.isnan(sf.rms)
+        np.testing.assert_array_equal(b.load_angles()[sf.exposed], b.theta[sf.exposed])
+        assert np.isfinite(sf.bound) and b.nose_radius() == sf.used == sf.bound
+        np.testing.assert_array_equal(b.windward_corners(), sf.exposed & (b.theta <= 0.5 * np.pi))
+        s = b.skin_stats()
+        assert s["nose_cap_concave"] == 1.0 and s["nose_radius_mm"] == sf.bound * 1e3
+        assert np.isnan(s["fitted_nose_radius_mm"]) and np.isnan(s["sphere_centre_mm"]) and np.isnan(s["sphere_fit_rms_mm"])
+    b._windward_bound = lambda ahead=None: float("nan")
+    b._sphere_raw = None
+    assert b.sphere_fit.concave and b.nose_radius() == 0.05
+
+
+def test_fewer_than_four_exposed_corners_are_no_sphere_and_read_their_normals_at_the_bound(coarse_sphere_mesh):
+    """Three candidates, the corners nearest the nose (the centroid test's mask set by hand): the fit needs at least 4 exposed
+    corners, so there is no valid sphere -- no fitted radius, centre or misfit, the row's `nose_cap_concave` set -- the three
+    read their own normals' angles, the radius is the flat-face bound over them, and every other corner is leeward. (Three
+    points always lie in one plane, so the coplanar test would refuse them too: this pins the outcome, not which test gave
+    it.) With no candidate at all there is no bound either, and the radius is the mesh's."""
+    b = make(coarse_sphere_mesh)
+    three = np.zeros(b.columns.n, dtype=bool)
+    three[np.argsort(b.theta)[:3]] = True
+    b._leeward_raw = (b.mass_centroid(), three)
+    b._sphere_raw = None
+    sf = b.sphere_fit
+    assert np.array_equal(sf.exposed, three) and not sf.sheltered.any() and sf.points == 3
+    assert sf.concave and np.isnan(sf.fitted) and np.isnan(sf.centre).all() and np.isnan(sf.rms)
+    assert sf.bound == b._windward_bound(three) > 0.0 and b.nose_radius() == sf.used == sf.bound
+    eff = b.load_angles()
+    np.testing.assert_array_equal(eff[three], b.theta[three])
+    np.testing.assert_array_equal(eff[~three], np.maximum(b.theta, 0.5 * np.pi + 1e-6)[~three])
+    np.testing.assert_array_equal(b.windward_corners(), three)
+    assert b.skin_stats()["nose_cap_concave"] == 1.0
+    b._leeward_raw = (b.mass_centroid(), np.zeros(b.columns.n, dtype=bool))
+    b._sphere_raw = None
+    sf = b.sphere_fit
+    assert sf.points == 0 and sf.concave and np.isnan(sf.bound) and b.nose_radius() == sf.used == 0.05
+    assert not b.windward_corners().any()
+
+
+def test_a_valid_sphere_with_no_bound_is_used_as_fitted(coarse_sphere_mesh):
+    """With no flat-face bound (`_windward_bound` nan, as where no candidate's base normal faces the flow) a valid sphere's
+    radius is used as fitted, uncapped: on the untouched sphere the 50 mm fit, its angles the rays' from its centre, and the
+    row's bound nan."""
+    b = make(coarse_sphere_mesh)
+    b._windward_bound = lambda ahead=None: float("nan")
+    b._sphere_raw = None
+    sf = b.sphere_fit
+    assert not sf.concave and np.isnan(sf.bound) and abs(sf.fitted / 0.05 - 1) < 0.01
+    assert b.nose_radius() == sf.used == sf.fitted
+    np.testing.assert_array_equal(b.load_angles()[sf.exposed], ray_angles(b, sf.centre)[sf.exposed])
+    s = b.skin_stats()
+    assert np.isnan(s["nose_bound_mm"]) and s["nose_radius_mm"] == s["fitted_nose_radius_mm"] == sf.fitted * 1e3
+    assert s["nose_cap_concave"] == 0.0
+
+
+def test_a_ringed_body_flies_a_macro_step_with_its_sheltered_corners_unloaded_and_its_books_closed(coarse_sphere_mesh,
+                                                                                                    monkeypatch):
+    """A body with sheltered corners advanced under the default rule (the final review of 2026-11-13, I1). The ring's columns
+    (base normals 45 to 52 degrees from the flow) take RING_RAISE more metal (`skins.fill`) and the top surface is refreshed
+    (`_refresh_geometry`), as the pool test does; then one 0.25 s macro step of the 4 mm test sphere from 890 K, the flow on
+    with one flow sub-step a heat sub-step and a spray model, under the 100 mm flight's gas state at 93 s. The heating comes
+    through `CoupledRun.loads_at`, so at the body's `load_angles()` and `nose_radius()`, as the free-molecular cosine
+    distribution at 1 MW/m2: a modest load, chosen to stay clear of the coarse mesh's thin margin at the rear (Task 3's mesh
+    failure investigation). The books close, as the other flow and spray tests check them; the corners sheltered at the step's
+    start take no heat flux in any part and no pressure gradient or gas shear in any part's flow; and a crest corner of the
+    ring whose top normal faces away from the flow (`theta`, the angle the earlier rule reads, above 90 degrees; the ring's
+    base normals face the flow) is exposed and heated. Measured 2026-11-13: 125 corners sheltered and 30 such crest corners,
+    heated at about 0.6 MW/m2; the books close to 2e-16 (mass), 4e-12 (energy) and 7e-17 (momentum). The ring's tops fall 1.3
+    to 3.0 mm over the step as the hand-down passes its rigid metal to the 3D model, so 18 corners are sheltered at its end."""
+    pytest.importorskip("cantera")
+    from types import SimpleNamespace
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import spray
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid))
+    assert b.windward_loads == "sphere"
+    ang = np.degrees(np.arccos(np.clip(b.columns.normal @ b.v_hat, -1.0, 1.0)))
+    ring = (ang >= 45.0) & (ang <= 52.0)
+    b.skins.fill(b.skins.column_mass() + np.where(ring, mat.rho * RING_RAISE * b.skins.area, 0.0), 890.0)
+    b._refresh_geometry()
+    b.energy0 = b.energy()                       # the ring was added after the body was built: its heat is the start's
+    sf = b.sphere_fit
+    sheltered = sf.sheltered.copy()
+    crest = ring & sf.exposed & (b.theta > 0.5 * np.pi)
+    assert sheltered.any() and crest.any() and not sf.concave
+    state = aero_state_at(93.0)
+    q0 = 1e6
+    seen = {}
+
+    def evaluate(a, theta, T, R, T_mean=None):
+        seen["heating"] = (np.array(theta), R)
+        return heating.HeatingResult(q0 * heating.cosine_shape(theta), q0, 0.0, 0.0, 0.0)
+    ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: state), body=b,
+                          heating=SimpleNamespace(evaluate=evaluate))
+    _, loads = coupled.CoupledRun.loads_at(ran, 0.25, np.zeros(6))
+    np.testing.assert_array_equal(seen["heating"][0], b.load_angles())
+    assert seen["heating"][1] == b.nose_radius() == sf.used
+    parts = []
+    advance = skin.advance
+    monkeypatch.setattr(skinbody.skin_mod, "advance",
+                        lambda sk, dt, *a, **k: (parts.append((np.array(a[0]), k["flow"])), advance(sk, dt, *a, **k))[1])
+    M0 = b.mass()
+    b.advance(0.25, 0.25, loads, state=state)
+    assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-13)
+    assert abs(b.energy_balance_residual()) < 1e-8 and b.skin_stats()["momentum_residual"] < 1e-12
+    assert len(parts) >= 2 and all(f is not None for _, f in parts)
+    for q, f in parts:
+        assert not q[sheltered].any() and (q[crest] > 0.0).all()
+        assert not f.dp_ds[sheltered].any() and not f.shear[sheltered].any()
+        assert f.dp_ds[sf.exposed].any() and f.shear[sf.exposed].any()      # the flow does push the exposed face
+
+
+# -- the sphere rule on the interim gas loads' provider (the merge of 2026-11-15; model_assumptions section 15.5) ---------------
+def sphere_angles_before_the_merge(b):
+    """The sphere rule's angles as the branch built them before the merge with the interim gas loads (e1a2823), which the
+    classic loads keep bit for bit: an exposed corner at its ray angle from the fitted centre (its own `theta` with no valid
+    sphere), every other corner at the larger of its `theta` and 90 degrees plus a microradian."""
+    sf = b.sphere_fit
+    lee = np.maximum(b.theta, 0.5 * np.pi + 1e-6)
+    if sf.concave:
+        return np.where(sf.exposed, b.theta, lee)
+    return np.where(sf.exposed, ray_angles(b, sf.centre), lee)
+
+
+def test_under_the_sphere_rule_on_the_provider_sheltered_corners_read_the_wake_and_corners_facing_away_their_angle(
+        coarse_sphere_mesh):
+    """Under `windward_loads` `sphere` on the provider's loads (`sheltered_angle` pi, `SHELTER_WAKE`, as `cli.build_thermal`
+    gives a run on the similarity loads): a corner the ray test shelters reads pi whichever way it faces; a corner behind the
+    centroid's plane reads its own `theta` where it faces away from the flow (the provider's lee loads, ruling R15) and pi
+    where it faces the flow; an exposed corner keeps its ray angle from the fitted centre, even past 90 degrees, and its own
+    `theta` where there is no valid sphere. On the classic loads (`SHELTER_CLASSIC`) every angle is the rule's before the
+    merge, bit for bit, and a body with no sheltered angle of its own (one saved before the interim gas loads) is classic.
+    Two shapes: the raised ring (its sheltered band faces the flow) with a corner facing the flow put behind the plane, and
+    the tops moved 5 mm forward (its sheltered corners, just behind the old equator, face away from the flow). The fit, the
+    exposed and sheltered corners and the windward ones are the same on either loads. A third body at a sheltered angle of
+    2.5 rad reads that angle wherever the provider's reads pi, and the provider's angles elsewhere, so the corners read the
+    body's `sheltered_angle`, not pi itself."""
+    for shape in ("ring", "forward"):
+        c = make(coarse_sphere_mesh)                                         # the classic loads: the class's angle
+        w = make(coarse_sphere_mesh, sheltered_angle=np.pi)                  # the provider's
+        x = make(coarse_sphere_mesh, sheltered_angle=2.5)                    # any other angle in (90, 180] degrees
+        assert c.sheltered_angle == skinbody.SHELTER_CLASSIC and w.sheltered_angle == skinbody.SHELTER_WAKE == np.pi
+        for b in (c, w, x):
+            if shape == "ring":
+                ringed(b)
+                k = put_behind(b)                                            # theta 0.5 rad, behind the plane
+            else:
+                with_tops(b, b.surface.points + 5e-3 * b.v_hat)
+        sf, ahead, eff = w.sphere_fit, w._leeward()[1], w.load_angles()
+        assert not sf.concave and sf.sheltered.any()
+        for name in ("exposed", "sheltered", "centre"):
+            np.testing.assert_array_equal(getattr(c.sphere_fit, name), getattr(sf, name))
+        np.testing.assert_array_equal(c.load_angles(), sphere_angles_before_the_merge(c))   # classic: as before the merge
+        np.testing.assert_array_equal(eff[sf.exposed], ray_angles(w, sf.centre)[sf.exposed])
+        assert (eff[sf.sheltered] == np.pi).all()                            # sheltered: the wake, whichever way it faces
+        away = ~ahead & (w.theta > 0.5 * np.pi)
+        facing = ~ahead & (w.theta <= 0.5 * np.pi)
+        assert away.sum() > 1000
+        np.testing.assert_array_equal(eff[away], w.theta[away])              # behind and facing away: the lee loads
+        assert (eff[facing] == np.pi).all()                                  # behind and facing the flow: the wake
+        np.testing.assert_array_equal(w.windward_corners(), c.windward_corners())
+        wake = sf.sheltered | facing
+        np.testing.assert_array_equal(x.load_angles(), np.where(wake, 2.5, eff))
+        if shape == "ring":
+            assert facing[k] and eff[k] == np.pi and c.load_angles()[k] == 0.5 * np.pi + 1e-6
+            band = sf.sheltered & (w.theta <= 0.5 * np.pi)
+            assert band.any() and (c.load_angles()[band] == 0.5 * np.pi + 1e-6).all()
+        else:
+            assert (w.theta[sf.sheltered] > 0.5 * np.pi).all()               # every sheltered corner faces away
+            np.testing.assert_array_equal(c.load_angles()[sf.sheltered], c.theta[sf.sheltered])
+    # an exposed corner whose ray angle passes 90 degrees keeps it on either loads: the untouched sphere's fit with its
+    # centre set 3 mm forward, so the exposed corners less than 3 mm ahead of the centroid's plane read past 90 degrees
+    c, w = make(coarse_sphere_mesh), make(coarse_sphere_mesh, sheltered_angle=np.pi)
+    for b in (c, w):
+        b._sphere_raw = dataclasses.replace(b.sphere_fit, centre=b.sphere_fit.centre + 3e-3 * b.v_hat)
+    ray = ray_angles(w, w.sphere_fit.centre)
+    past = w.sphere_fit.exposed & (ray > 0.5 * np.pi)
+    assert past.sum() >= 10
+    np.testing.assert_array_equal(w.load_angles()[past], ray[past])
+    np.testing.assert_array_equal(c.load_angles(), sphere_angles_before_the_merge(c))
+    assert not w.windward_corners()[past].any()
+    # no valid sphere: the exposed corners read their own theta on either loads
+    for b in (c, w):
+        b._sphere_raw = dataclasses.replace(b.sphere_fit, concave=True)
+    exposed = w.sphere_fit.exposed
+    np.testing.assert_array_equal(w.load_angles()[exposed], w.theta[exposed])
+    np.testing.assert_array_equal(c.load_angles(), sphere_angles_before_the_merge(c))
+    del vars(w)["sheltered_angle"]                                       # as a body saved before the interim gas loads
+    np.testing.assert_array_equal(w.load_angles(), sphere_angles_before_the_merge(w))
+
+
+def test_under_the_sphere_rule_the_provider_reads_the_sphere_rule_s_radius(coarse_sphere_mesh):
+    """Under `windward_loads` `sphere` on the provider's loads, the surface flow (`flow_forcing`) and the similarity heating
+    (`CoupledRun.loads_at`) both ask the provider for its solution at the sphere rule's radius (`sphere_fit.used`, which
+    `nose_radius()` returns), not the earlier rule's: on tops whose front within 0.6 of the radius from the axis lies on a
+    sphere of twice the radius, the earlier rule's 30-degree cap reads a flatter nose than the sphere fitted to every exposed
+    corner (the gas state of the 100 mm flight at 93 s, a body at 890 K)."""
+    pytest.importorskip("cantera")
+    from types import SimpleNamespace
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import surface_flow
+    from reentry_model.shared.gas_loads import GasLoads
+    radii = []
+
+    class Provider(GasLoads):
+        def meridian(self, state, radius, T_wall):
+            radii.append(radius)
+            return super().meridian(state, radius, T_wall)
+    provider = Provider()
+    state = aero_state_at(93.0)
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, sheltered_angle=np.pi,
+             surface_flow=surface_flow.SurfaceFlow(gas_loads=provider))
+    pts, _ = flatten_front(b, factor=2.0, rho_max=0.6)
+    with_tops(b, pts)
+    sf = b.sphere_fit
+    assert b.windward_loads == "sphere" and not sf.concave and b.nose_radius() == sf.used
+    b.windward_loads = "normals"                                         # the earlier rule's radius on the same tops
+    earlier = b.nose_radius()
+    b.windward_loads = "sphere"
+    assert abs(earlier - sf.used) > 5e-3
+    f = b.flow_forcing(state)
+    ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: state), body=b,
+                          heating=heating.SimilarityHeating(provider))
+    q = coupled.CoupledRun.loads_at(ran, 0.0, np.zeros(6))[1]
+    assert radii == [sf.used, sf.used]                                   # the surface flow's ask, then the heating's
+    assert q.q_stag > 0.0 and np.isfinite(f.dp_ds).all()
+
+
+def test_under_the_sphere_rule_on_the_provider_sheltered_corners_take_no_heat_or_shear_and_exposed_ones_past_90_the_lee_loads(
+        coarse_sphere_mesh):
+    """The sphere rule on the provider's loads through the routines a macro step calls (`flow_forcing` and
+    `CoupledRun.loads_at` with `SimilarityHeating`), as `test_under_the_provider_a_sheltered_corner_reads_the_wake_...`
+    checks the centroid test's corner under `normals`: on the raised ring (`ringed`) the corners the ray test shelters,
+    facing the flow or away from it, get no heating and no shear and the provider's pressure at pi, the rear of the
+    separated wake; the exposed corners whose ray angle from the fitted centre passes 90 degrees get the provider's lee
+    heating and shear at that angle and are not windward (the gas state of the 100 mm flight at 93 s, Kn_body 0.0027, a
+    body at 890 K). Measured 2026-11-15 on the 4 mm sphere: 105 sheltered corners (55 facing the flow, 50 facing away) and
+    38 exposed corners past 90 degrees, at most 91.9 degrees."""
+    pytest.importorskip("cantera")
+    from types import SimpleNamespace
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import surface_flow
+    from reentry_model.shared.gas_loads import GasLoads
+    state = aero_state_at(93.0)
+    provider = GasLoads()
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, sheltered_angle=np.pi,
+             surface_flow=surface_flow.SurfaceFlow(gas_loads=provider))
+    ringed(b)
+    sf, eff = b.sphere_fit, b.load_angles()
+    sheltered, past = sf.sheltered, sf.exposed & (eff > 0.5 * np.pi)
+    assert b.windward_loads == "sphere" and not sf.concave
+    assert (sheltered & (b.theta <= 0.5 * np.pi)).any() and (sheltered & (b.theta > 0.5 * np.pi)).any() and past.sum() > 10
+    f = b.flow_forcing(state)
+    ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: state), body=b,
+                          heating=heating.SimilarityHeating(provider))
+    q = coupled.CoupledRun.loads_at(ran, 0.0, np.zeros(6))[1].q_conv
+    L = provider.meridian(state, b.nose_radius(), float(b.surface_temperature()[np.argmin(eff)]))
+    assert (q[sheltered] == 0.0).all() and (f.tau[sheltered] == 0.0).all()
+    np.testing.assert_allclose(f.result.p_w[sheltered], L.at(np.pi, "p_w"), rtol=1e-12)
+    assert (q[past] > 0.0).all() and (f.tau[past] > 0.0).all() and not b.windward_corners()[past].any()
+    np.testing.assert_allclose(f.result.p_w[past], L.at(eff[past], "p_w"), rtol=1e-12)
+
+
+def test_the_history_has_the_sphere_columns_only_under_sphere(coarse_sphere_mesh):
+    """Under `sphere` the three SPHERE_COLUMNS follow the two leeward ones, and the nose columns carry the new fit; under
+    `normals` the nose and leeward columns are today's and there are no sphere columns."""
+    m = coarse_sphere_mesh
+    b = make(m)
+    s = b.skin_stats()
+    assert set(skinbody.SPHERE_COLUMNS) <= set(s)
+    keys = tuple(s)
+    i = keys.index("leeward_corners")
+    assert keys[i + 1:i + 4] == skinbody.SPHERE_COLUMNS == ("sheltered_corners", "sphere_centre_mm", "sphere_fit_rms_mm")
+    sf = b.sphere_fit
+    assert s["sheltered_corners"] == 0 and abs(s["sphere_centre_mm"]) < 0.05 and s["sphere_fit_rms_mm"] == sf.rms * 1e3
+    assert s["nose_cap_points"] == sf.exposed.sum() and s["nose_radius_mm"] == s["fitted_nose_radius_mm"] == sf.fitted * 1e3
+    n = make(m, windward_loads="normals")
+    assert not set(skinbody.SPHERE_COLUMNS) & set(n.skin_stats())
+    assert tuple(n.nose_stats()) == skinbody.NOSE_COLUMNS + skinbody.LEEWARD_COLUMNS
+    assert n.nose_stats()["nose_cap_points"] < 200                       # the 30-degree cap, about 140 corners
+
+
+def test_a_state_without_the_attribute_flies_normals(coarse_sphere_mesh):
+    """A body pickled before the sphere rule has no `windward_loads` and no `_sphere_raw` on the instance: the class's defaults
+    give it `normals` (today's angles, bit for bit) and a fit made at the first ask. An unknown rule is refused."""
+    b = make(coarse_sphere_mesh)
+    assert skinbody.SkinBody.windward_loads == "normals" and skinbody.WINDWARD_LOADS == ("sphere", "normals")
+    del b.__dict__["windward_loads"], b.__dict__["_sphere_raw"]
+    assert b.windward_loads == "normals" and b._sphere_raw is None
+    assert b.load_angles() is b.theta and b.nose_radius() == b._fit_nose()[0]
+    assert b.sphere_fit is b.sphere_fit and not b.sphere_fit.concave
+    with pytest.raises(ValueError, match="windward_loads"):
+        make(coarse_sphere_mesh, windward_loads="rays")
+
+
+# -- the push along the fitted sphere's meridian (the fitted-sphere loads design, Asha 2026-11-13, Task 3) -----------------
+MERIDIAN_GAP_BAND = 2.0          # degrees; measured 2026-11-13 on the coarse 4 mm sphere: the largest gap between the fitted
+MERIDIAN_GAP_EXPOSED = 2.0      # sphere's meridian and the base normals' is 1.86 deg over the exposed corners with theta from 5 to
+                                # 80 deg (928 of them), and also 1.86 deg over all 1121 exposed corners with theta over 5 deg
+
+
+def test_the_load_meridian_of_an_untouched_sphere_is_the_normals_meridian_and_none_under_normals(coarse_sphere_mesh):
+    """On the untouched 4 mm sphere the fitted sphere is the body's own, so `load_meridian` is `along_meridian` of the base
+    normals to within the facets: the base normals of the coarse mesh are measured off radial by up to a few degrees.
+    Measured 2026-11-13 (see the bounds below). Unit vectors in the tangent plane of every corner; None under `normals`."""
+    b = make(coarse_sphere_mesh)
+    mer = b.load_meridian()
+    n = b.columns.normal
+    assert mer.shape == (b.columns.n, 3)
+    np.testing.assert_allclose(np.linalg.norm(mer, axis=1), 1.0, atol=1e-12)
+    assert np.abs(np.einsum("ij,ij->i", mer, n)).max() < 1e-12
+    own = skinbody.skin_mod.along_meridian(n, b.v_hat, np.ones(len(n)))
+    gap = np.degrees(np.arccos(np.clip(np.einsum("ij,ij->i", mer, own), -1.0, 1.0)))
+    exposed = b.sphere_fit.exposed
+    band = exposed & (b.theta > np.radians(5.0)) & (b.theta < np.radians(80.0))
+    assert band.sum() > 500
+    assert gap[band].max() < MERIDIAN_GAP_BAND
+    assert gap[exposed & (b.theta > np.radians(5.0))].max() < MERIDIAN_GAP_EXPOSED
+    leeward = ~exposed
+    np.testing.assert_array_equal(mer[leeward], own[leeward])
+    assert make(coarse_sphere_mesh, windward_loads="normals").load_meridian() is None
+
+
+@pytest.mark.parametrize("direction", [(-1.0, 0.0, 0.0), (-0.8, 0.5, 0.3)])
+def test_the_load_meridian_points_away_from_the_moved_stagnation_point(coarse_sphere_mesh, direction):
+    """The tops translated 10 mm across the flight direction move the fitted sphere's centre with them, and the meridian of
+    every exposed corner is the projection onto its base's tangent plane of the direction away from the point where the
+    flight direction's ray through the moved centre meets the sphere: minus the tangential part of v about the ray, for
+    the flight direction -x and for an oblique one."""
+    b = make(coarse_sphere_mesh, v_hat=np.array(direction) / np.linalg.norm(direction))
+    v = b.v_hat
+    across = np.cross(v, [0.0, 0.0, 1.0])
+    across /= np.linalg.norm(across)
+    with_tops(b, b.surface.points + 10e-3 * across)
+    sf = b.sphere_fit
+    assert not sf.concave and np.linalg.norm(sf.centre - 10e-3 * across) < 1e-4
+    mer, n = b.load_meridian(), b.columns.normal
+    r = b.surface.points - sf.centre
+    r /= np.linalg.norm(r, axis=1)[:, None]
+    want = -(v[None, :] - (r @ v)[:, None] * r)
+    want -= np.einsum("ij,ij->i", want, n)[:, None] * n
+    want /= np.linalg.norm(want, axis=1)[:, None]
+    k = sf.exposed & (np.degrees(np.arccos(np.clip(r @ v, -1, 1))) > 3.0)
+    assert k.sum() > 500
+    np.testing.assert_allclose(mer[k], want[k], atol=1e-9)
+    # away from the moved stagnation point: the meridian has a positive component along the chord from the stagnation point
+    stag = sf.centre + sf.fitted * v                      # the windward point: the ray at angle 0 to the flight direction
+    assert np.einsum("ij,ij->i", mer[k], b.surface.points[k] - stag).min() > 0.0
+
+
+def test_the_flow_built_for_a_part_carries_the_load_meridian_and_the_shear_along_it(coarse_sphere_mesh, monkeypatch):
+    """Under `sphere` the part's `Flow` has `meridian` = `load_meridian()` and its shear is that meridian times the surface
+    flow's tau; under `normals` the `Flow` is the earlier one: no meridian, the shear laid along each base normal's own."""
+    seen = {}
+    for rule in ("sphere", "normals"):
+        b = make(coarse_sphere_mesh, T0=600.0, flow=True, remove=False, windward_loads=rule)
+        got = []
+        advance = skin.advance
+        monkeypatch.setattr(skinbody.skin_mod, "advance",
+                            lambda sk, dt, *a, _g=got, _a=advance, **k: (_g.append(k["flow"]), _a(sk, dt, *a, **k))[1])
+        f = newtonian(b)
+        mer, normal = b.load_meridian(), b.columns.normal.copy()
+        b.advance(0.5, 0.5, front_loads(b, 1e6), forcing=f)
+        seen[rule] = got[0]
+        if rule == "sphere":
+            np.testing.assert_array_equal(got[0].meridian, mer)
+            np.testing.assert_array_equal(got[0].shear, mer * f.tau[:, None])
+        else:
+            assert got[0].meridian is None
+            np.testing.assert_array_equal(got[0].shear, skin.along_meridian(normal, b.v_hat, f.tau))
+        monkeypatch.undo()
+

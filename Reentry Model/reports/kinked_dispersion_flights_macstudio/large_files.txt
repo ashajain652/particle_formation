@@ -1,0 +1,12 @@
+-rw-r--r--@ 1 ashajain  staff  6794 Nov 12 15:32 /Users/ashajain/kinked-dispersion-flights/flights/d050__kd__profile/particles.npz
+1ce3c44211b8cf19cb2f908b19222b0d78cfbb6ac130ffcda6ef1246b601c816  /Users/ashajain/kinked-dispersion-flights/flights/d050__kd__profile/particles.npz
+-rw-r--r--@ 1 ashajain  staff  5012 Nov 12 15:32 /Users/ashajain/kinked-dispersion-flights/flights/d050__kd__table/particles.npz
+c84037d07583c2111f2d5364330d1b4159d6c9ed8e51fddefe18e5b039e94d3a  /Users/ashajain/kinked-dispersion-flights/flights/d050__kd__table/particles.npz
+-rw-r--r--@ 1 ashajain  staff  795166 Nov 12 18:20 /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__profile/particles.npz
+b5fae727259760168aa6e255e53bd97b44274ceb8c516dbecbb4a24bbd27726c  /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__profile/particles.npz
+-rw-r--r--@ 1 ashajain  staff  5012 Nov 12 18:12 /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__table/particles.npz
+c84037d07583c2111f2d5364330d1b4159d6c9ed8e51fddefe18e5b039e94d3a  /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__table/particles.npz
+-rw-r--r--@ 1 ashajain  staff  1395401471 Nov 12 16:23 /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__profile.state.pkl
+4b190b8d25e9ae1dbeda71a940fd1cbaee9c1043479d3d45718abb75746081c2  /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__profile.state.pkl
+-rw-r--r--@ 1 ashajain  staff  1393507033 Nov 12 16:22 /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__table.state.pkl
+a77e140b858c22a3d57e942d2341852db8368ef4f65522e7cd1b98ddb77c8750  /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__table.state.pkl

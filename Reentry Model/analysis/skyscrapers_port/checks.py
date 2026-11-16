@@ -1,12 +1,15 @@
 """The checks run after each stage of the skyscrapers port.  Each prints a report and exits 0 only on a pass.
 
-    checks.py merge1 --ref <tree-ish>
+    checks.py merge1 --ref <tree-ish> [--base <ref>]
     checks.py rewrite <original repo> <rewritten repo>
-    checks.py outside <tree-ish> [--allow PATH]...
+    checks.py outside <tree-ish> [--allow PATH]... [--base <ref>]
     checks.py same-code <build-ref> <port tree-ish> <main-ref>
     checks.py history <ref>
 
 Git runs in the current working directory's repository, except ``rewrite``, which takes two repository paths.
+``--base`` is the state of main that ``merge1`` and ``outside`` compare against: ``MAIN0``, main when the port began, unless
+given, so the port's recorded commands reproduce; give a later main (for example ``--base HEAD`` inside a merge) to check
+a change made after it.
 """
 import argparse
 import difflib
@@ -66,9 +69,9 @@ def under(path, prefix):
     return path == prefix or path.startswith(prefix + "/")
 
 
-def check_merge1(ref):
+def check_merge1(ref, main_ref=MAIN0):
     tree = entries(ref)
-    base, main = entries(MERGE_BASE), entries(MAIN0)
+    base, main = entries(MERGE_BASE), entries(main_ref)
     out = git("diff", "--name-status", "-M", "-z", MERGE_BASE, PROTOTYPE_END).decode().split("\0")
     changes, i = [], 0                     # (status letter, old path, new path)
     while i < len(out) and out[i]:
@@ -148,8 +151,9 @@ def check_rewrite(orig_repo, new_repo):
     return report("rewrite", problems, [f"commits compared: {len(o_order)}"])
 
 
-def check_outside(ref, allow):
-    changed = git("diff-tree", "-r", "--name-only", "--no-renames", "-z", MAIN0, tree_id(ref)).decode().split("\0")
+def check_outside(ref, allow, main_ref=MAIN0):
+    changed = git("diff-tree", "-r", "--name-only", "--no-renames", "-z", tree_id(main_ref), tree_id(ref)).decode().split("\0")
+    name = "MAIN0" if main_ref == MAIN0 else main_ref
     problems = []
     checked = 0
     for p in filter(None, changed):
@@ -159,7 +163,7 @@ def check_outside(ref, allow):
             continue
         checked += 1
         if not any(under(p, a) for a in allow):
-            problems.append(f"changed from MAIN0 and not allowed: {p}")
+            problems.append(f"changed from {name} and not allowed: {p}")
     return report("outside", problems, [f"paths outside Reentry Model/ or under droplet_reentry/, wake_column/ that differ: {checked}"])
 
 
@@ -232,12 +236,14 @@ def main(argv):
     sub = ap.add_subparsers(dest="command", required=True)
     s = sub.add_parser("merge1")
     s.add_argument("--ref", required=True)
+    s.add_argument("--base", default=MAIN0, help="the state of main to compare against (default: MAIN0)")
     s = sub.add_parser("rewrite")
     s.add_argument("original")
     s.add_argument("rewritten")
     s = sub.add_parser("outside")
     s.add_argument("ref")
     s.add_argument("--allow", action="append", default=[])
+    s.add_argument("--base", default=MAIN0, help="the state of main to compare against (default: MAIN0)")
     s = sub.add_parser("same-code")
     s.add_argument("build_ref")
     s.add_argument("port_ref")
@@ -246,11 +252,11 @@ def main(argv):
     s.add_argument("ref")
     a = ap.parse_args(argv[1:])
     if a.command == "merge1":
-        return check_merge1(a.ref)
+        return check_merge1(a.ref, a.base)
     if a.command == "rewrite":
         return check_rewrite(a.original, a.rewritten)
     if a.command == "outside":
-        return check_outside(a.ref, a.allow)
+        return check_outside(a.ref, a.allow, a.base)
     if a.command == "same-code":
         return check_same_code(a.build_ref, a.port_ref, a.main_ref)
     return check_history(a.ref)

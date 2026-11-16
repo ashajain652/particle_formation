@@ -75,3 +75,51 @@ def test_transonic_crossing_converges(air):
         ps.append(s.p)
     ps = np.array(ps)
     assert np.all(np.diff(ps) >= -1e-6 * ps[1:])
+
+
+# Interim gas loads, Task 2: unreacted (chemically frozen) post-shock gas at the Holman-Boyd Kn 0.002 case.
+HB = (1.007e-4, 200.0, 7108.0)
+
+
+def test_unreacted_stagnation_at_holman_boyd_kn_0_002():
+    pytest.importorskip("cantera")
+    s = gas.UnreactedAir().stagnation(*HB)
+    assert s.T == pytest.approx(16411.0, rel=1e-3)
+    assert s.rho == pytest.approx(1.023e-3, rel=2e-3)
+    assert s.p == pytest.approx(4837.0, rel=2e-3)
+    assert s.mu == pytest.approx(3.28e-4, rel=5e-3)
+    assert s.X == pytest.approx({"N2": 0.79, "O2": 0.21}, rel=1e-6)
+
+
+def test_equilibrium_unchanged():
+    pytest.importorskip("cantera")
+    a = gas.EquilibriumAir()
+    s = a.stagnation(*HB)
+    assert s.T == pytest.approx(5989.0, rel=1e-3)
+    assert s.rho == pytest.approx(1.767e-3, rel=1e-3)
+    assert s.p == pytest.approx(4947.0, rel=1e-3)
+    assert a.t_equilibrate == gas.T_EQUILIBRATE
+    a.t_equilibrate = gas.T_EQUILIBRATE                      # explicitly at its default: identical state
+    assert a.stagnation(*HB) == s
+
+
+def test_unpickled_old_instance_uses_the_module_constant():
+    pytest.importorskip("cantera")
+    a = gas.EquilibriumAir()
+    a.__dict__.pop("_t_equilibrate", None)                   # an instance pickled before the attribute existed
+    assert a.t_equilibrate == gas.T_EQUILIBRATE
+
+
+def test_unreacted_expand_keeps_composition():
+    pytest.importorskip("cantera")
+    u = gas.UnreactedAir()
+    stag = u.stagnation(*HB)
+    e = u.expand(stag, 0.5 * stag.p)
+    assert e.X == pytest.approx({"N2": 0.79, "O2": 0.21}, rel=1e-6)
+    assert e.h < stag.h
+    # the wall at 3000 K, above the equilibrium air's T_EQUILIBRATE (1500 K), where equilibrium air dissociates (its O2
+    # falls to about 0.10 at this pressure): the unreacted air keeps the freestream composition there too
+    assert 3000.0 > gas.T_EQUILIBRATE
+    w = u.wall(3000.0, stag.p)
+    assert w.X == pytest.approx({"N2": 0.79, "O2": 0.21}, rel=1e-6)
+    assert gas.EquilibriumAir().wall(3000.0, stag.p).X["O2"] < 0.15

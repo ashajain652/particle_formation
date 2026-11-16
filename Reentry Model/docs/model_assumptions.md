@@ -45,6 +45,12 @@ Common assumptions
 - Freestream composition N₂:O₂ = 0.79:0.21 by mole at all altitudes; T∞ clamped to ≥ 200 K (NASA-9 polynomial floor).
 
 Physics mode (`--heating physics`, the model proper)
+- Since 2026-11-13 `--heating physics` on the default `--gas-loads similarity` is the similarity heating of section 14.4,
+  which takes its stagnation flux and its distribution from the interim gas loads and reaches round the shoulder onto
+  the lee until the boundary layer separates. The items below describe the classic physics heating, `PhysicsHeating`,
+  which `--gas-loads classic`, every state saved before that change, the Step 2 reference test's physics-mode test
+  (`tests/test_reentry_model_reference_thermal.py`, which builds it directly; since 2026-11-15 a second test there flies
+  the similarity heating, section 14.7) and the droplet stage use.
 - Continuum stagnation flux: Fay–Riddell (1958), equilibrium boundary layer, Pr = 0.71, Le = 1.4, Newtonian velocity
   gradient du_e/dx = (1/R) √(2 (p_s − p∞)/ρ_s); wall enthalpy at the patch temperature; the catalycity γ_cat scales the
   Lewis-number term (1 = fully catalytic, SESAM's assumption; 0 leaves the Le = 1 value — the frozen non-catalytic
@@ -62,13 +68,14 @@ Physics mode (`--heating physics`, the model proper)
 - Free-molecular stagnation flux: q_fm = A_cq ρ V (h_s − h_w) with A_cq = 0.8 (Matting 1971, Eq. 1).
 - Bridging: Matting (1971) Eq. 18, q = q_c P(n, [Γ(n+1) q_fm/q_c]^{1/n}) with P the regularised lower incomplete gamma
   function; n = 1 by default (q = q_c [1 − exp(−q_fm/q_c)]); SESAM's drag f(Kn) as an alternative.
-- Distribution over the sphere: (1 − w)·Lees (1956) laminar distribution with finite-Mach ε = 1/(γ Ma²), zero leeward,
+- Distribution over the sphere: (1 − w)·Lees (1956) laminar distribution with finite-Mach ε = 1/(γ Ma²), zero leeward
+  (on the classic loads only; the similarity heating of section 14 is not zero behind 90 degrees),
   + w·cos θ (free-molecular shape), with w = 1 − q_stag/q_c under Matting (f(Kn) under the SESAM table); each patch
   scaled by its own hot-wall factor relative to the stagnation patch.
 - **(verified)** Fay–Riddell at the 100 mm start (ρ 2.727e-5 kg/m³, 7.5 km/s): 2.22 MW/m² = 1.29 × Sutton–Graves —
   72 % of the stagnation enthalpy is dissociation at 1.5 kPa, and Sutton–Graves is a Le = 1 fit; the Lees distribution
-  integrates to 0.196 (Ma → ∞) / 0.209 (Ma 5) of the stagnation flux over the whole sphere; physics mode delivers
-  0.74–0.77 × SESAM's integrated heat.
+  integrates to 0.196 (Ma → ∞) / 0.209 (Ma 5) of the stagnation flux over the whole sphere; the classic physics heating
+  delivers 0.74–0.77 × SESAM's integrated heat (the similarity heating 0.86–0.88 ×, section 14.7).
 
 SESAM-equivalent mode (`--heating sesam`) — a verification device, not a physical model
 - SESAM's measured heat input applied **uniformly to every patch, front and back**:
@@ -138,9 +145,10 @@ SESAM-equivalent mode (`--heating sesam`) — a verification device, not a physi
   residual (2.6 % / 1.4 % point-wise when the formula is applied to SESAM's own state columns); the independent content
   of the verification is the temperature and the radiated power — i.e. the conduction, time stepping, material handling
   and coupling.
-- Physics mode is reported as a ratio to SESAM (0.744 / 0.770), not thresholded: SESAM assumes random tumbling and a
-  lumped body; the model assumes a fixed attitude and resolves a ~600 K stagnation-to-mean temperature difference at
-  peak heating.
+- Physics mode is reported as a ratio to SESAM, not thresholded: 0.744 / 0.770 on the classic heating, which the
+  reference test builds, and 0.862 / 0.882 on the interim gas loads, the run command's default since 2026-11-13
+  (section 14.7). SESAM assumes random tumbling and a lumped body; the model assumes a fixed attitude and resolves a
+  ~600 K stagnation-to-mean temperature difference at peak heating.
 
 ## 7. Simplifications to keep in mind (thesis)
 
@@ -178,7 +186,12 @@ over the whole area and nothing on the lee side, and the free-molecular cos θ d
 37–40 % above the windward-only laminar integral, so its sphere distribution carries leeward/base heating or a broader
 windward distribution than Lees'; the HTG SARA modelling report that would say which is not in hand (measured base
 heating on spheres is only a few percent of q_stag, which does not obviously close the gap). That distribution
-difference — not attitude — is the main reason the physics mode delivers ~0.74 × SESAM's integrated heat.
+difference — not attitude — is the main reason the classic physics heating delivers ~0.74 × SESAM's integrated heat.
+
+The interim similarity heating (section 14) reaches round the shoulder onto the lee until the boundary layer separates.
+On the 65 km element-model smoke flight (section 14.7) its surface-averaged flux was 0.2345 of the stagnation flux,
+against 0.1972 for the classic Lees distribution on the same flight: about half, 48 %, of the gap between the classic
+value and HTG's 0.27471 (measured once, in dense flow at Kn_body 0.005 with a wall at about 900 K).
 
 ## 9. Wake column (`reentry_model/wake_column/`)
 
@@ -766,3 +779,1187 @@ of the 50 mm sphere (1 055 790 cells here, 1 290 192 for the geometry), so the r
 **Not yet verified.** The solve with skins on its patches (stage 3), with a flow and advection (stage 4) and in a
 flight; the plates at 0.5 s steps (stage 3); fine-size convergence on a pool at 0.7, 0.5 and 0.35 mm (stage 4); the
 cost at 100 mm.
+
+## 12. The skins' spraying solved on their own speed profile (`--dispersion`)
+
+This section describes the profile path of the layered skins' spraying, built on 2026-11-12 from
+`superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md` (the design, with Asha's nine decisions) and its plan.
+Its physics lives in the shared package (`reentry_model/shared/`: the solver and the floor test in `dispersion`, the fit,
+the layer's properties, the release-run rule, the mode inputs and the history summary in `melt_profile`, the mode choice
+and the record layout in `spray`); the skins only read their cells into those arrays and take cells off the top.
+
+**The setting and its default.** `run --dispersion table|profile` chooses the theory a spraying skin run
+(`--surface-model skin --melt on --skin-flow on`) sprays by. The default is `profile` (Asha, 2026-11-11, decision 9).
+On it, each windward column whose top cell flows and moves has its cells' speeds fitted as a continuous line of straight
+segments (the speed profile), a wall is placed by the floor test below, Girin's gradient mode is solved on the profile
+above that wall, and the faster of that mode and Girin & Kopyt's gas-driven mode (with the film depth taken as the depth
+to the wall) releases the column's cells from the top down while they are at least as warm as the mode's threshold
+temperature, liquid and slurry together (the heat-limited release, decision 5). A wet windward column whose profile is
+not resolved (its top cell does not flow, does not move, or has the rigid front at or above its centre) falls back to
+Girin's theory. `--dispersion table` switches back to Girin's theory as it stood before, with his
+theoretical layer depth and surface speed. The element model has no resolved profile and is always on `table`. Both
+shear modes act only where Girin's continuum closure (or the slip band's balance, with `--slip-band on`) gives a layer
+depth, as before (decision 6). `--dispersion` given to any other kind of run is refused with exit code 2, and a state
+saved before the option existed resumes on `table`.
+
+**Verified (tests in `tests/test_reentry_model_dispersion.py`).** The broken-line solver, the inviscid model of a profile
+made of straight segments with a free surface on top and a wall below, is our own derivation (the side session's, not
+published). It is checked against Girin's printed equation and against Ghosh et al. (2017): on Girin's profile (one
+linear layer over stagnant liquid) it reproduces the roots of Girin's Eq. 1 cubic to 1e-10 at four pairs of wavenumber and
+Weber number, and its fastest wave at a surface Weber number of 10 000 matches the cached table of the `table` path
+within the table's grid spacing (`test_girin_profile_gives_the_roots_of_his_cubic`,
+`test_girin_profile_fastest_wave_matches_the_cached_table`); it reproduces the side session's closed form for a slurry
+over a wall to 1e-10 (`test_slurry_over_a_wall_gives_the_closed_form_roots`); and it reproduces Ghosh's limits, a peak
+growth rate of 0.229 at a slope ratio of 1.5 and the stability of a single straight film on a wall and of a more viscous
+fluid on top (`test_ghosh_limits`).
+
+**The threshold.** Solved exactly, Girin's Eq. 1 becomes unstable above a surface Weber number of 3.00, not the 3.08 Girin
+printed (`test_girin_threshold_is_three`: stable at 3.00, unstable at 3.01). On the profile path no critical Weber number
+is applied to the gradient mode solved on a column's profile (branch 5): whether it grows is the solver's own answer, and
+it sprays only where its growth rate exceeds the viscous damping of its own wave (twice the layer's Couette viscosity
+times the wavenumber squared) and one whole wavelength fits in the column's region (the contiguous windward columns
+whose layer above the wall is at least `spray.B_MIN` deep), so the threshold there is the solver's 3.00 on Girin's
+profile. `--we-critical` (default 3.08) applies on `table`, and on a `profile` run only to the columns whose profile is
+not resolved (the wet windward columns whose top cell does not flow, does not move, or has the rigid front at or above
+its centre): they keep Girin's theory, their thick branch gated by it as before. A resolved column never falls back to
+Girin's theory. One without a finite layer depth (delta_m, Girin's conjugate layer depth), or whose layer above the wall
+is shallower than `spray.B_MIN` (1 µm), takes no shear mode at all, neither the gradient mode, the gas-driven mode nor
+any of Girin's branches (decision 6; `spray.py` removes every resolved column from those branches and gives the two
+modes only to the resolved columns with a finite delta_m and a wall at least `B_MIN` deep, which
+`test_no_delta_m_no_shear_mode_on_resolved_columns` pins). Only the Rayleigh–Taylor mode, which has no Weber-number
+gate, can still take such a column.
+
+**Assumed.**
+
+- *The floor test is a scaling argument* (the design's section 3), assumed until stage 6, the viscous (Orr-Sommerfeld)
+  check that is to calibrate it. A breakpoint of the fit where the shear rate below is at most `KINK_DROP` = 0.2 times the
+  shear rate above (a five-fold drop) is a kink. Kinks are tested from the top down, and the first whose floor Reynolds
+  number, Re_f = (the speed jump from the surface to the kink) times (the kink's depth) over (1.225 times the kinematic
+  viscosity of the cell just below the kink), is below `FLOOR_RE` = 1.0 becomes the wall: the material below it is taken to
+  act as a no-slip floor on the wave's time scale, because its viscous diffusion outruns the wave's advection. The test
+  assumes a Newtonian slurry; a shear-thinning or yielding slurry would make a weaker floor. Without such a kink the wall
+  is the rigid front.
+- *The kink rests on the bridge's 906.4 K end point.* In the thick windward columns of the 50 mm flight the steep top
+  layer is not liquid: it is the rheology's bridge, the 906.4 to 908 K band in which the viscosity is interpolated, without
+  data, from Li et al.'s slurry law down to the liquid's. On the d050 state at 178.5 s (one state), the first kink lies at a
+  median 0.936 times the depth of the 906.4 K isotherm on the 28 columns of the committed fixture that have one, and 0.992
+  times it on the 558 of the 622 thick columns that have one; the wall lies at a median 1.004 times that depth on the
+  fixture (30 columns, 28 of them floor-like) and 1.03 times it on the thick set (609 columns). So where the kink and the
+  wall sit, and every input to the floor test, follow the bridge's unmeasured end point. *These measurements, and the
+  flights in this section, were made under the bridge law.* Since the near-liquidus viscosity was merged into main on
+  2026-11-13 (section 13), the default is the composite law, under which the viscosity does not change across 906.4-908 K
+  and instead jumps by about 24 times at 10 % solid (906.36 K, 0.04 K below 906.4 K); where the kink and the wall lie
+  under it has not been measured. The records carry the
+  kink's depth and temperature, and the history, per macro step over the resolved columns, the median depth of the
+  906.4 K isotherm (`depth_to_bridge_low_median_mm`, NaN on a column the isotherm does not cross, which the median leaves
+  out) and the median temperature at the wall's depth (`T_at_wall_median_K`), both read between cell centres as the
+  rigid front is, so that this stays visible in every flight. The two medians can be over different columns, so they
+  compare the walls with the isotherm in aggregate, not column by column: on the fixture's 36 columns (measured once)
+  the isotherm's median depth is 0.0558 mm over the 30 columns it crosses and the wall's 0.0668 mm over all 36, while
+  the median of the per-column ratio is the 1.004 above; the median temperature at the wall is 905.96 K, and the four
+  fluid-like walls sit at the rigid front's own temperature, 895.10 K, as they must.
+- *The constants are assumed* until stage 6: `KINK_DROP` = 0.2, `FLOOR_RE` = 1.0, `FIT_TOL` = 0.03 (every fitted cell
+  within 3 % of the top cell's speed of the fit) and `N_MAX` = 6 breakpoints at most. Unchanged from `table`: the droplet
+  radius over the wavelength `K_R` = 0.17, the release period over the growth time `K_T` = 1.1 and the surface tension of
+  0.80 N/m (the liquid's and the exposed slurry's).
+- The solver is inviscid and neglects the gas density and any surface tension at the kinks. The d050 thick columns' top
+  layer has a Reynolds number of order 1, where an inviscid solver is least trustworthy; stage 6 is the check.
+
+**Records and history.** On `profile` the droplet records gain nine columns after the 27 of `table` (`spray.PROFILE_COLUMNS`:
+the depth to the wall, whether it is a floor, the floor Reynolds number, the first kink's depth and temperature, the
+gradient mode's release depth and growth rate, and Girin's theoretical layer depth and surface speed beside them), and
+the history gains nine per macro step (`melt_profile.DISPERSION_COLUMNS`: the share of resolved columns that are
+floor-like, the count that are fluid-like, the medians of the depth to the wall, of the depth of the 906.4 K isotherm
+and of the temperature at the wall, of the floor Reynolds number and of the recorded Weber number, and the mass sprayed
+by the gradient and the gas-driven modes). On `table` neither is written.
+Every spraying skin run's JSON records the setting (`settings.skin.dispersion`; a resume's, `settings.dispersion`).
+
+**What `table` keeps (verified).** On 2026-11-12 the three cases of `analysis/skyscrapers_port/same_results.py` were run
+with this change and compared with the same cases run before the option existed (the branch's baseline): a 0.125 s
+spraying skin flight run with `--dispersion table`, the same flight on the element model, and the 22.6 s resume of the
+saved 100 mm flight state (`d100__physics__skin.state.pkl`, saved before the option existed, so it resumes on `table`).
+Of the 22 files compared on each side, the only differences were the new `dispersion` key, recorded as `table`, in the
+skin flight's JSON (`settings.skin.dispersion`) and in the resume's (`settings.dispersion`). Every history column, every
+droplet record and the whole of the element model's output were identical to the last bit (the comparison leaves out
+only the wall-clock columns `wall_*` and `runtime_s`). `--dispersion table` is therefore Girin's theory exactly as it
+was. The comparison was repeated the same day after the final review's fix round (the record columns renamed, the two
+history columns that place the walls against the 906.4 K isotherm added, and the gas-driven threshold's guard at the top
+cell), with the same result: the same 22 files, differing only in those two keys.
+
+**Cost (measured once, 2026-11-12).** The spray plan is evaluated once per macro step, at its start.
+`analysis/kinked_dispersion/plan_cost.py` repeated it five times on each setting on the saved 50 mm flight state
+`d050__handdown-off.state.pkl` (178.5 s, 2367 columns, 909 of them resolved on `profile`, 752 of those floor-like): it took
+a median 0.025 s on `table` and 0.815 s on `profile`, so the profile path adds about 0.79 s to a macro step. That flight's
+macro steps from 177.5 to 179.5 s (four steps of 0.5 s) took a median 3480 s of wall time in the skins, the 3D solve and
+the mesh's moves and rebuilds, so the profile path adds about 0.023 % of a macro step, far inside the design's budget of
+5 % (about 174 s). The measurement used the state's own last surface-flow evaluation, which was saved before the slip
+band's fields existed, so no column had a layer depth and neither path released anything in it; the fit, the floor test
+and the solver, which are the profile path's added work, ran on every resolved column all the same. The cost of finding
+the release run in every flow sub-step (the cascade's threshold rule) is not in this figure; the comparison flights'
+wall times will show it.
+
+**Observed, one state, not yet judged.** On the 100 mm test sphere at 65 km (one 0.25 s macro step, measured 2026-11-12 in
+Task 7) the profile path released 11.0 g against the table's 1.54 g, about 7.2 times as much, almost all by the gas-driven
+mode on floor-like columns (497 columns, against 1 by the gradient mode, of 919 resolved columns, 78.6 % of them
+floor-like). The reviewer found this to be the design's physics, not a defect: the gas-driven mode has no Weber-number
+threshold, and the heat-limited release takes every cell that warms to the mode's threshold temperature during the step.
+The comparison flights of stage 5 measure it on the d050 state.
+
+## 13. Near-liquidus viscosity of the slurry (shared physics, `reentry_model/shared/rheology.py`)
+
+Added on 2026-11-12 on the branch `near-liquidus-viscosity` (design: `superpowers/specs/2026-11-12-near-liquidus-viscosity-design.md`;
+shared-context fact 196). This section describes the viscosity of the slurry (the mixture of liquid and solid grains
+between the liquid and the rigid front at half solid) that the layered skins' flow and the exposed slurry's spraying
+mode use. It is shared physics: the level-set architecture will call the same law through `rheology.law_viscosity`
+(Asha, 2026-11-12). Almost all of this section is **assumed**, not measured on 7075 at the conditions of a re-entry; the
+status of each choice is in the table below, and what is assumed and uncertain is in 13.3. The jump in the law at 10 %
+solid is **unresolved** (13.2).
+
+### 13.1 The two laws and the choice between them
+
+`--rheology composite|bridge` chooses the law for a melting skin run. `composite`, new on this date, is the
+default, of the run command and, since the branch was merged into main on 2026-11-13, of `SkinSettings` in the library
+(Asha: "Default should be this new law, not the old one"). `bridge` is the law used until then: Li et al.'s (2014) averaged fit,
+eta = [0.871 - 0.00849 gamma^0.74924] exp(3.7311 f_s) Pa s (gamma the shear rate in 1/s, held at most 367 1/s, f_s the
+solid fraction), joined to the liquid's 1.3 mPa s by a log-linear "bridge" in temperature between 906.4 K and the 908 K
+liquidus, which had no data behind it. A state saved before the option existed flew the bridge law and keeps it on
+resume (`SkinSettings.__setstate__` gives such a state `"bridge"`, not the class default); a resume with no `--rheology`
+keeps the saved flight's law, and one given changes it and is recorded. The existing tests whose values were set on the
+bridge law name it. The run's JSON records `skin.rheology` and
+`skin.internal_solid_fraction`, and a melting skin run under `--rheology bridge` is named with the suffix
+`_rheology-bridge`; the composite default is unmarked. The option is accepted and ignored with `--surface-model elements`
+or without `--melt on`. `--slurry-spray` keeps its default, off, and the exposed slurry mode's closure is unchanged (both
+Asha, 2026-11-12); the Girin session's new spraying law will set the default spraying pattern.
+
+### 13.2 The composite law, region by region
+
+The composite law depends on the solid fraction f_s of the cell (from its temperature through the material's Scheil
+curve) and on the liquid's viscosity mu_l (1.3 mPa s, from the material file). It does not depend on the shear rate and
+keeps no history, so the skins' momentum step, whose shear-rate fixed point re-evaluates the viscosity at each pass's
+rates, finishes at its first pass, and the exposed slurry mode's recorded rate is the layer's own, not clipped at 367 1/s.
+
+| Region of f_s | Law | Status |
+|---|---|---|
+| 0 | eta = mu_l | the material file's value, unchanged |
+| above 0 and below 0.1 | eta = mu_l [1 + S / (1/phi - 1/phi_m)], phi = f_s / f_i, S = 3, phi_m = 0.55, f_i = 0.5 | **assumed** for 7075; the form is measured on silicon carbide in liquid aluminium; f_i is assumed |
+| 0.1 up to just below 0.5 | eta = 0.04346 exp(3.23 f_s) Pa s, at every shear rate | Li et al.'s fit at 489.88 1/s, fitted to 7075 data; applying it at every rate is **assumed** |
+| 0.5 and above | infinite (rigid) | unchanged |
+
+Below 10 % solid the law is the Mori-Ototake suspension law (Moon's form, S = 3 for spheres) applied to the grains'
+envelope fraction phi, the solid fraction divided by the internal solid fraction f_i. Each grain is enclosed in an
+envelope through its tips; f_i is the share of that envelope that is solid, and the liquid inside it moves with the
+grain. With f_i = 1 (compact grains) the law is Moon's on the true solid fraction. f_i must exceed 0.1 / 0.55, about 0.18
+(a smaller value is rejected with a ValueError), so that phi stays below the packing limit phi_m below 10 % solid.
+`INTERNAL_SOLID_FRACTION` = 0.5 is a constant in the code marked as assumed; there is no command-line option for it, by
+Asha's decision. Li et al.'s fit gives 46.2 times the liquid's viscosity at 10 % solid and 168 times at 50 % solid.
+
+**The jump at 10 % solid is unresolved.** At f_s = 0.1 the law jumps from the suspension value to Li et al.'s: from 1.94
+to 46.2 times the liquid with f_i = 0.5 (a factor of 24), from 1.37 to 46.2 with f_i = 1 (a factor of 34) and from 5.40
+to 46.2 with f_i = 0.25 (a factor of 8.6). No data say how the two join: Li et al.'s 7075 at 10 % solid is about a
+hundred times Hirai et al.'s aluminium-copper at the same fraction, and the literature reviews attribute that to
+different grain structures. The jump is left as it is. On the model's Scheil curve it sits at 906.36 K, 0.04 K below the
+lower end of the bridge law's bridge region (906.4 K, where the curve stands at 9.75 % solid). Li et al.'s own 10 % solid is at
+903.45 K by their calorimetry; the law places their data by solid fraction, not temperature, which is the builder's call.
+Reference values (viscosity over mu_l, f_i = 0.5): 1.062 at f_s = 0.01, 1.265 at 0.038, 1.431 at 0.057, 1.906 at 0.0975,
+46.18 at 0.1, 88.10 at 0.3 and 168.0 at 0.4999; the tests match the design's table to a relative 1e-3.
+
+### 13.3 What is assumed, and what is uncertain (design section 3.7, in full)
+
+"Abstract level" means the literature review read only the abstract or a search snippet of the source, as the reviews
+state for most semi-solid sources.
+
+**At 10 % solid and above.**
+
+1. *Assumed: the structure in flight is Li et al.'s most broken-down one.* This rests on measured breakdown and rebuild
+   times in other alloys: A357 fell to 6 Pa s in about 4 ms at 800 1/s (Yurko and Flemings, cited in Kirkwood and Ward
+   2004), and A356's fitted rebuild rate is 0.00191 1/s, about 500 s (Florides et al. 2024). Both are extrapolated to
+   7075 and to the gas's shear rates. Metal that has never been sheared (remelting from below, or a re-frozen deposit)
+   would be stiffer, and the law does not represent it.
+2. *Assumed: no rate dependence at a fixed structure.* Structural models are Newtonian at a fixed structure (Kirkwood
+   and Ward 2004, citing Chen and Fan). Rate-jump tests show the stress rising in proportion to the rate or faster
+   (Atkinson and Favier 2016, abstract level; Koke and Modigell 2003).
+3. *Upper bound above 489.88 1/s.* In steady tin-lead data the viscosity was still falling at 2000 1/s (Turng and Wang,
+   in Fan 2002, Fig. 4). A 7075 layer sheared faster than 490 1/s may break down further than this law allows.
+4. *Li et al.'s lowest values are uncertain.* At 10 % solid and 490 1/s their plotted points scatter from 0.05 to 0.2
+   Pa s, and their rig was not calibrated with a known liquid.
+5. *Different processing.* Li et al.'s slurry was solidified while stirred; the sphere remelts wrought metal.
+
+**Below 10 % solid (no aluminium measurement exists).**
+
+1. *Nothing has been measured.* No rheological measurement of any aluminium alloy between the liquid and 10 % solid was
+   found. The nearest are fitted curves, and analogue systems.
+2. *The internal solid fraction is unmeasured for 7075.* 0.5 is the solidification models' default. The only measured
+   values, 0.1 to 0.55, are for a transparent analogue, succinonitrile-acetone (Badillo, Ceynar and Beckermann). The
+   review infers about 1 for remelting wrought grains and 0.2 to 0.3 for re-frozen deposit.
+3. *No rate dependence is assumed.* Hirai et al.'s aluminium-10 % copper fits are strongly rate dependent for branched
+   crystals: 5.1 times the liquid at 75 1/s against 1.22 times at 200 1/s, at 5 % solid. These are values inferred from
+   fitted curves, not data points. At the gas's rates, of order 10^3 1/s and above, the sheared values are the relevant
+   ones.
+4. *Coherency may come earlier in coarse deposits.* Coherency, where grains first form a connected network, ranges from
+   below 10 % solid in poorly grain-refined aluminium alloys to above 50 % in fine-grained ones (Arnberg, Chai and
+   Backerud 1993; Chai et al. 1995). For 7075 it was measured at 55 to 85 % by a thermal method that reads high (Ahmad,
+   Naher and Brabazon 2013). A coarse re-frozen deposit could be coherent below 10 % solid, which this law cannot
+   represent.
+5. *The jump at 10 % solid is unresolved* (13.2).
+6. *The layer's position is uncertain by more than its width.* Measured 7075 liquidus temperatures span 903 to 913 K,
+   about six times the 1.6 K the model's Scheil curve gives the 0-10 % solid layer.
+7. *The liquid itself is uncertain.* Its viscosity is known to 14 % for pure aluminium (Assael et al. 2006), alloying
+   moves it by up to 25 % (Wang and Overfelt 2002), and no 7xxx liquid has been measured.
+8. *S = 3 comes from rigid particles.* It was measured on silicon carbide in liquid aluminium. Moon's ratios are taken
+   against his rig's 0.020 Pa s "liquid", 15-16 times the true value, so they hold only if that error is proportional.
+9. *The law is a steady-state law.* The stress just after a sudden jump in rate rises as the rate to the power 2.07
+   (Koke and Modigell 2003, Fig. 18), which is not included.
+
+Also not represented: a never-sheared, structured deposit, which would hold until it yields at kilopascals (design
+section 10), and the exposed slurry mode's closure, which gives its whole flowing depth the viscosity of the top
+slurry cell (13.5).
+
+### 13.4 Sources and statuses
+
+| Choice | Source | Status |
+|---|---|---|
+| Li et al.'s fit at 489.88 1/s for 10-50 % solid (A = 0.04346 Pa s, B = 3.23) | Li et al. 2014, China Foundry 11, 79-84: Table 3 (pp. 82-83); method pp. 79-81; Fig. 11 for the structures | fitted to 7075 data at 10, 20, 30, 40 and 50 % solid; read in full |
+| The structure in flight is the most broken-down | Breakdown: Yurko and Flemings (A357), via Kirkwood and Ward 2004; Liu et al. 2003 (Sn-15Pb). Rebuild: Florides et al. 2024 (A356) | assumed for 7075; measured on other alloys, abstract level except Kirkwood and Ward |
+| No rate dependence at fixed structure | Kirkwood and Ward 2004; Atkinson and Favier 2016; Koke and Modigell 2003 | assumed; abstract level except Koke and Modigell |
+| No history, no falling branch | Divoux et al. 2016; Yerushalmi, Katz and Shinnar 1970 (via Divoux); Coussot et al. 2002; Moller, Mewis and Bonn 2006; Li et al.'s method (one slurry per rate) | review consensus in soft matter; no semi-solid metal measurement of a falling within-structure curve found |
+| Suspension law below 10 % solid (Mori-Ototake, S = 3, phi_m = 0.55) | Moon 1990 (MIT thesis), pp. 101-102, Eq. 51, Fig. 5.14; Moon, Cornie and Flemings 1991, Mater. Sci. Eng. A144, 253-265 | measured on SiC in liquid aluminium; read in full |
+| Analogues behave as dilute suspensions | Ishibashi and Sato (basalt to 31 % crystals); AZ91D Couette (J. Wuhan Univ. Tech. 2015); ice slurries (Int. J. Air-Cond. Refrig. 2023) | measured on analogue systems, abstract level |
+| Envelope fraction phi = f_s / f_i | Beckermann and Wang 1997 (JOM); Wu and Ludwig 2009 (Acta Mater. 57, 5621-5631) | the solidification models' construction |
+| f_i = 0.5 | Zheng et al. 2018 (Leoben); measured 0.1-0.55 in succinonitrile-acetone (Badillo, Ceynar and Beckermann) | assumed for 7075 (Asha's decision); the tests bracket it with 1 and 0.25 |
+| The nearest aluminium values below 10 % (comparison, not used) | Hirai et al. 1993, ISIJ Int. 33 (Al-10Cu: 1.08, 1.22, 1.49 times the liquid at 2, 5, 10 % solid and 200 1/s; 2.5, 5.1, 10.3 times at 75 1/s) | inferred from fitted curves |
+| Coherency (the limit of the suspension picture) | Arnberg, Chai and Backerud 1993; Chai et al. 1995, MMTA 26, 965-970; Malekan and Shabestari 2009 (A319, 16-21 %); Ahmad, Naher and Brabazon 2013 (7075, 55-85 %, thermal) | measured; abstract level |
+| The liquid, 1.3 mPa s (unchanged) | Assael et al. 2006, J. Phys. Chem. Ref. Data 35, 285-300, Eq. 19: 1.42 mPa s at 908 K, 14 % | pure aluminium, extrapolated 25 K; read in full |
+| Rigid at half solid (unchanged) | layered-skin design section 6.4 | as before |
+| Li et al.'s data placed by solid fraction | Li et al. 2014, Table 2 (pp. 80-81) | builder's call |
+
+### 13.5 What was measured with it, on one saved state
+
+The bridge law is unchanged to the last bit. The regression is in fact 196: on the short melting smoke flight (65 km,
+0.125 s), the old code (commit f1ab736) and the new code with `--rheology bridge` wrote identical CSV files, with and
+without `--slurry-spray on`, and differed only in the two new JSON keys. The unit tier passed (875 passed, 1 skipped,
+3930 s on four processes).
+
+The composite law was probed on the saved 50 mm flight `d050__handdown-off` at 178.5 s (77.12 km, 7276 m/s), by
+`analysis/near_liquidus_probe.py`: the skins' flow alone for 0.1 s with the heat, the three-dimensional conduction and
+the trajectory held off, nothing released, on gas loads recomputed with the current surface-flow code at the saved
+step's aero state, with the state's windward columns (886 of 2367, within 60 degrees of the flight direction). It was
+run once per case on one state, so these are one measurement each, not a sweep. In that state no cell is at or above
+the 908 K liquidus.
+
+- *Viscosity of the top cells.* On the same cells, the median top cell is 1.26 times the liquid's viscosity under the
+  composite law (internal fraction 0.5) and 6.68 times under the bridge law; the third cell 1.46 against 21.5. With the
+  internal fraction at 1 and 0.25 the top cell is 1.12 and 1.61 times the liquid.
+- *Surface speed.* On column 1445 (16.1 degrees from the stagnation point, 0.833 mm of flowing metal, gas shear 86.2 Pa)
+  run to a steady state, the top cell moves at 3.26 m/s under the composite law against 0.213 m/s under the bridge law
+  (3.95 and 2.14 m/s at internal fractions 1 and 0.25), and the flow per unit width of the surface rose from 1.3e-5 to
+  2.9e-4 square metres per second (22 times). The stress each cell carries, 86 to 92 Pa, is set by the gas shear and the
+  push on the metal above, not by the law. Under the composite law 58 of the column's 62 cells between 10 and 50 % solid
+  shear faster than 489.88 1/s, where Li et al.'s fit is an upper bound on the viscosity (13.3, above-10 % item 3), so
+  the composite speeds below the jump are lower bounds.
+- *Runoff with the heat off.* The composite law runs the layer below 10 % solid off the windward face within about 0.04
+  to 0.06 s: the number of the 886 windward columns whose top cell is under 10 % solid fell from 850 at the start to 767,
+  236, 29 and 9 at 0.02, 0.04, 0.06 and 0.1 s (the bridge law kept 817 to 850 throughout), and the median flowing depth
+  fell from 0.833 mm to 0.216 mm at 0.1 s (0.679 mm under the bridge law). The skins behind the equator (90 to 180
+  degrees) gained 6.82 g under the composite law and 2.16 g under the bridge law. This describes a face stripped of its
+  warm layer with no heating to replace it; it is not what a flight would show, and the layer is 59 micrometres and 1.6
+  K thick on the model's Scheil curve (13.3, below-10 % item 6). The internal fraction changes the pace only: the
+  flowing depths for the three internal fractions agree within 0.0028 mm throughout. How much the absolute runoff
+  behind the equator depends on the recomputed gas loads was not separated.
+- *Spraying modes, without releasing metal.* The liquid's mode never sprays, because no cell is liquid. The exposed
+  slurry's mode under the saved flight's release rules (gates "before", slip band off) is on the thin branch on every
+  windward column, decided by the viscous-damping gate, and sprays on 722 columns under the bridge law and 850 under
+  the composite law at any internal fraction, at about 170 kg/(m^2 s), a rate that contains no viscosity. Under the
+  rules of the recent d050 work (gates 2026-11-10, slip band on) the critical Weber number (3.08) decides, its value in
+  the slip band does not depend on the viscosity, and 73 to 77 columns spray under every law; these columns sit near the
+  threshold, so their count depends on the recomputed gas loads. The composite law sets how much they release (0.212
+  kg/s over the windward face against 0.099 under the bridge law) and the droplets' median radius (143 against 787
+  micrometres). At 0.1 s, with the warm layer gone, the composite slurry mode is stopped by viscous damping on 877 of
+  the 886 columns and by the Weber number on the other 9 under the recent rules.
+- *The closure artefact (design section 2).* `slurry_modes` gives the whole flowing depth the viscosity of the top
+  slurry cell, here about 1.3 times the liquid's while the cells from 10 % solid down are 46 to 168 times. Under the
+  saved rules, on column 1445 under the composite law, the mode's surface speed is 50.5 m/s against the momentum step's
+  3.26 m/s (15 times), and its release 162 against 43.4 kg/(m^2 s) for the same mode with its layer ended at 10 % solid
+  (3.7 times; that variant's speed, 3.32 m/s, is within 2 % of the momentum step's). Over the windward face the total
+  is 0.506 against 0.091 kg/s (5.5 times). The 3.7 and 5.5 times ratios come from the thin branch's supply term (the
+  layer depth) and the viscous-damping gate, not from the whole-layer viscosity alone. Under the recent rules the total
+  is 0.212 against 0.086 kg/s (about 2.5 times, which is not small); the variant sprays on more columns (158 against
+  77), because its shallower layer moves some columns to the thin branch, but at a much lower median rate (50 against 456
+  kg/(m^2 s)).
+- *Cost.* Run one after another on a laptop with other sessions running, 0.1 s of flow took 32 flow sub-steps at 0.90 s
+  each (28.9 s) under the bridge law and 40 at 0.62 s each (24.8 s) under the composite law, because the momentum step's
+  shear-rate fixed point ends after one pass.
+
+Fact 196 and the probe report (`output/near_liquidus_viscosity/probe.md`, git-ignored) hold the rest. The probe held the
+heat off, so whether a heated flight keeps a near-liquid layer on the windward face under the composite law is not
+known; that is level 5 of the design (resumed flights on the Mac Studio), which Asha has deferred until more changes from
+other agents land on main (2026-11-12).
+
+## 14. Gas loads (interim, 2026-11-13)
+
+Built on 2026-11-13 and 2026-11-14 on the branch `interim-gas-loads` (design: Part A of
+`superpowers/specs/2026-11-12-shoulder-melt-loss-design.md`, sections A1 to A7; plan:
+`superpowers/plans/2026-11-13-interim-gas-loads.md`; the reference calculations, the digitized DSMC and the comparison
+plots: `analysis/gas_loads/` and its README). This section describes the wall pressure, wall shear and convective
+heating that a `--thermal fem` flight now reads round the whole sphere, from the stagnation point (0 degrees) to the base
+(180 degrees). Before it, the model's continuum wall shear was about five to six times below DSMC in dense flow, and
+behind 90 degrees the pressure was the freestream pressure and the shear and heating were zero (design section 1); the
+earlier loads remain selectable as `--gas-loads classic` (14.5). The loads are an interim, reasonable approximation:
+Asha intends to replace the analytical aerothermodynamics with a coupled CFD solution later, so they are served by one
+replaceable provider, `reentry_model/shared/gas_loads.py` (`GasLoads`, design A5), that both architectures can use. Items
+marked **(verified)** name the test or measurement behind them; **(assumed)** marks a modelling choice with no
+measurement behind it; Asha's decisions are dated as in the design.
+
+### 14.1 The provider and the pressure
+
+- One provider per flight. `GasLoads.meridian(state, radius, T_wall)` returns pressure, pressure gradient along the
+  surface, shear and similarity heat flux on bins every 2 degrees from 0 to 180 degrees; the surface flow and the heating
+  both call it at the same freestream (density, temperature, speed) and nose radius, and a cache of the last 8 keys
+  (those three, the nose radius and the stagnation-patch wall temperature) lets calls at one key share one solve. On the
+  skins the two calls of a step are at the same stagnation-patch wall temperature and share one solve. On the element
+  model they are not: the heating is evaluated with the wall temperatures from before the step's thermal solve, and the
+  surface flow after it, in the melt step (`skyscrapers/body.py`), so the two calls differ in wall temperature and each
+  solves, two solves a step (on the 65 km melting element flight at 0.025 s, 893.0 K for the heating against 894.92 K
+  for the flow; measured once, 2026-11-14, by the Task 2 review's scratch script). **(verified)** On the 65 km skins smoke flight
+  (14.7), before the solve cadence of the next item was added, the provider solved 10 meridians for 9 macro steps and
+  the history's first row, one per freestream state: in every step the heating's call solved and the surface flow's
+  call found the result in the cache (counted by wrapping `GasLoads._solve` in a scratch script, 2026-11-14). A patch's
+  loads are the provider's bins interpolated linearly at its angle.
+- How often the boundary layer is solved (Asha's decision 2 of 2026-11-14: "the aerodynamics should only be calculated
+  every 0.5 macrostep, not at every sub-step"; plan `superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence.md`,
+  Task 2). The run command builds the provider with a hold of one `--dt` of flight time (0.5 s by default;
+  `GasLoads(hold_s=--dt)`, recorded in the run's JSON as `settings.gas_loads_hold_s`). Every aerodynamic state now
+  carries its flight time (`AeroState.t`, the time at the end of the step the loads are for). A solution is held from
+  the flight time of its solve, and every later call less than one `--dt` after that time returns it, whatever that
+  call's freestream, nose radius and wall temperature; the first call at or after the end of the window solves again
+  (or finds its key in the cache) and starts a new window. Calls at the held flight time itself are not served from the
+  hold (the window opens strictly after the held time; ruling P10, recorded in `docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md`): they go to the key cache as without a hold, so calls at one flight time at different
+  keys solve separately, and the last of them is the one held. The window ends a millionth of `--dt` early (`HOLD_TOL`),
+  so that steps of exactly `--dt`, whose summed flight times can fall short of a multiple of `--dt` by round-off, still
+  solve at every step.
+  - Which flights it changes. A flight whose step is `--dt` throughout (every flight that does not melt, and a melting
+    flight before its continuum switch) solves at every step, at the same keys as before, and gives the rows it gave
+    before, on both surface models. After the continuum switch the step is `--dt-continuum` (0.0125 s by default), and
+    the 40 such steps in each 0.5 s share the solution of the window's first step instead of solving at each. At that
+    first step the calls go to the key cache as before: on the skins the heating's call solves and the surface flow's,
+    at the same key, finds that solution; on the element model the heating and the surface flow each solve, and the
+    flow's solution, at the wall temperature after the step's thermal solve, is the one held for the rest of the window.
+    The element model's second evaluation of the loads, for the record, at the end of a step in which elements died, is
+    at that step's flight time. At a window's first step that is the held time, so it goes to the key cache and solves
+    as before, and its solution is then the one held; at any later step of the window it is strictly later than the held
+    time and is served the held solution, with no solve. **(verified)** On the 65 km melting element flight of the restart tests with the continuum switch off
+    (`--dt-continuum off`, two 25 ms steps to 0.05 s), the provider solved the same five keys in the same order with and
+    without the hold (the history's first row, then the heating and the flow at each step) and the three rows were
+    identical (measured once, 2026-11-14, with the review's scratch script extended to count the solves). Before the window was made to serve only calls strictly later than the held time (ruling
+    P10, see above) the flow's two calls on that flight received the heating's solutions instead of solving their own. One shorter
+    step is served from the window of the step before it: a last step cut short by the ground or by `--t-max`. On a
+    non-melting element flight from 77.5 km whose last step was cut to 0.2 s by `--t-max 1.2`, the last row's stagnation
+    heat flux was 1.8868 MW/m^2 on the held solution against 1.8860 MW/m^2 when that step solved (0.05 % higher), and its
+    stagnation temperature 0.03 K lower; every earlier row was identical (measured once, 2026-11-14, with a scratch
+    script). On a melting flight the hold can change the spraying by
+    much more than it changes the loads: on the 65 km melting skins' test flight of the restart tests (hand-down on,
+    parts counted by the moves, to 0.2125 s, a 25 ms first step and 12.5 ms ones after it, so a hold of 25 ms), the
+    stagnation heat flux on the held solutions differed from the solved one by at most 0.23 % and the convective power
+    by at most 0.09 %, yet the metal released by 0.2125 s was 11.1 mg against 7.95 mg, and none was released after
+    0.1875 s against 0.80 mg in 2 droplet records (measured once, 2026-11-14, with the hold removed in a scratch script
+    for the comparison).
+  - What is held and what is not. While a solution is held, the heating still puts the current density and speed into
+    the free-molecular flux and each patch's current wall temperature into its hot-wall factor. The held quantities are
+    the similarity stagnation flux and its shape round the body; the total enthalpy of the gas and the enthalpy of gas
+    at the stagnation patch's wall temperature, which those two factors also use; and the pressure, its gradient along
+    the surface and the shear that the surface flow reads. The surface flow's own windward edge state (its wall
+    Knudsen number, slip factor and closure on the windward side) is still computed at every step.
+  - What it costs in accuracy. On the Step 2 flights to the ground (the 100 mm and 50 mm non-melting element flights on
+    the interim loads, 14.7, which solved at every 0.5 s step), the stagnation heat flux changed between consecutive
+    0.5 s steps by at most 7.0 % on the 100 mm flight and 6.6 % on the 50 mm flight while it was above a tenth of its
+    peak (the peaks are 3.69 MW/m^2 at 92 s and 4.24 MW/m^2 at 221 s), with medians of 0.5 % and 1.5 %. The change is
+    measured relative to the earlier row's flux, over the 318 and 283 steps whose earlier flux is above a tenth of the
+    peak (measured once from each flight's history, 2026-11-14). The largest changes are at the end of the heating
+    pulse, where the flux falls as the sphere slows (from 158.5 s to 159 s, and from 272.5 s to 273 s). A held solution
+    therefore differs from the flux at the step it serves by at most about that much at the end of a window, and by
+    less earlier in it. These figures come from non-melting flights; on a melting flight the wall stays nearer 900 K,
+    which changes the level of the flux but, it is assumed, not how fast the freestream changes over 0.5 s.
+  - Saving and resuming. A saved state keeps the held solution and its flight time (the key cache and the Cantera
+    objects are still dropped), so a flight saved inside a window resumes on the solution the unbroken flight holds;
+    `resume` has no option for the hold, which is the saved `--dt`. A state saved before the hold existed has no hold
+    and resumes solving at every new key, as it flew. A resume on the similarity loads records the loaded provider's
+    hold as `settings.gas_loads_hold_s`, as `run` does: null for a provider saved before the hold, and null for a
+    flight whose objects hold no provider (SESAM's heating on the element model that does not melt, whose `run` records
+    its `--dt` because it builds a provider that nothing reads).
+  - **(verified)** `tests/test_reentry_model_gas_loads.py` (`test_hold_returns_the_held_solution_within_the_window`,
+    `test_a_call_at_the_held_time_goes_to_the_key_cache_and_replaces_the_held_solution`,
+    `test_no_hold_without_time_or_hold`, `test_pickle_keeps_the_held_solution`,
+    `test_state_pickled_before_the_hold_solves_every_key`);
+    `tests/test_reentry_model_restart.py::test_a_skin_flight_solves_one_meridian_per_dt_shared_by_the_heating_and_the_surface_flow`
+    (the melting skins' test flight at `--dt 0.025` to 0.0625 s: five rows and three solves, at 0, 0.025 and 0.05 s,
+    where it solved five times before the hold, one a row) and
+    `test_a_flight_resumed_inside_a_hold_window_matches_the_unbroken_flight` (saved at 0.025 s, the resumed step to
+    0.0375 s solves nothing and the resumed rows are the unbroken flight's to the last bit) and
+    `test_a_state_whose_provider_has_no_hold_resumes_solving_every_step_and_records_none` (Review Focus 4 on the resume
+    command);
+    `tests/test_reentry_model_cli.py::test_build_thermal_gives_the_surface_flow_and_the_heating_one_provider_and_classic_builds_what_it_built`
+    (the hold is `--dt`, recorded; none on `classic`).
+- Pressure (Asha, 2026-11-12, design A4, the join at the shoulder). Up to 90 degrees the model's own windward law,
+  `surface_flow.wall_pressure` (modified Newtonian to the sonic point, Prandtl-Meyer beyond, with the effective
+  gamma_pm 1.15), evaluated on the unreacted stagnation pressure (14.2; design A4b). Past 90 degrees the same
+  Prandtl-Meyer expansion continues without the freestream floor and without the 110-degree cap, until it falls to
+  Daniels and Schwartzentruber's (2026) lee pressure, at the first bin above 90 degrees where it is at or below theirs;
+  from there to the base the pressure is theirs. The meeting angle is found every step. **(verified)** The joined
+  pressure reproduces the reference calculation's (`analysis/gas_loads/reference/similarity_lee.py`) to 1e-9 ahead of
+  the meeting angle and to 1e-5 beyond it, where the reference was written from 6-figure coefficients (ruling R5;
+  `tests/test_reentry_model_gas_loads.py::test_joined_pressure_reproduces_reference`). At Holman and Boyd's conditions
+  (A1) it meets at 150 degrees for their Kn 0.002, 0.01 and 0.05 cases and at 158 degrees for Kn 0.25 on the default
+  2-degree bins (157 degrees on 1-degree bins), measured by `analysis/gas_loads/plots/model_vs_dsmc.py`. Before Cantera
+  expands the gas to it, the joined pressure is clamped at `gas_loads.P_FLOOR`, 1e-20 times the freestream pressure, so
+  a non-positive value (possible only from Daniels and Schwartzentruber's lee pressure) never reaches Cantera; their
+  lowest lee pressure in a scan from 1e-12 to 1.26 kg/m3 is 7.4e-15 times the freestream pressure, so the clamp changes
+  no result (`tests/test_reentry_model_gas_loads.py::test_a_non_positive_joined_pressure_is_floored_before_cantera`).
+- **Pressure below Mach 5 (Asha, 2026-11-14, decision 1; replaces the known limitation recorded by the final review
+  of the same day).** The joined law above has a step at 90 degrees below about Mach 3.4: up to 90 degrees the windward
+  law never lets the pressure fall below the freestream pressure, while past 90 degrees the Prandtl-Meyer expansion
+  restarts from the same reservoir without that floor, and at low Mach number the two disagree where they meet. The
+  provider now chooses the law by the perfect-gas freestream Mach number M that Daniels and Schwartzentruber's
+  `condition` returns (`mach_inf`). At and below M = 3.5 the pressure is Daniels and Schwartzentruber's own, p_inf +
+  c_p q_inf (p_inf the freestream pressure, q_inf the freestream dynamic pressure, c_p their pressure coefficient),
+  rescaled so that at the stagnation point it equals the unreacted stagnation pressure: p_inf + c_p q_inf (p_stag -
+  p_inf) / (c_p(0) q_inf) (`gas_loads.anchored_ds_pressure`). The rescaling keeps the stagnation pressure the
+  same quantity at every Mach number, the unreacted one the edge enthalpy and the joined law are built from. At
+  supersonic states their c_p at the stagnation point differs from the frozen-gas value by 0.3 to 2 %. Below about Mach
+  0.5 the difference is dominated by the model's own composition offset, set out in the known limitation below. Between M = 3.5 and 5 the anchored pressure and
+  the joined pressure are blended with a weight on the anchored law that falls linearly in M from 1 to 0
+  (`gas_loads.ds_pressure_weight`); at and above M = 5 the joined law is used unchanged. The weight is stored on the
+  loads as `ds_pressure_weight`, and the meeting angle is not a number when it is 1. **(assumed)** The blend edges 3.5
+  and 5 and the linear shape are choices, not fitted values; 3.5 is just above the Mach 3.39 below which the step
+  appears. **(verified)** Pressure and shear at 30 km (density 0.0184 kg/m3, 226.5 K, nose radius 50 mm, wall 900 K, 2-degree
+  bins), before and after, from a scratch script run on this commit, 2026-11-14:
+  - Pressure over the freestream pressure at 80 to 94 degrees. At Mach 2 the old law gave 1.000 up to 90 degrees and
+    then 0.778 and 0.729 at 92 and 94 degrees; the new law gives 0.901, 0.835, 0.777 and 0.729 at 88, 90,
+    92 and 94 degrees, falling smoothly. At Mach 3 the old law gave 1.000 at 90 degrees and then 0.874 and 0.781; the
+    new law gives 1.122, 0.987, 0.874 and 0.781 at 88, 90, 92 and 94 degrees.
+  - Wall shear in pascals at 80, 84, 86, 88, 90, 92 and 94 degrees. Mach 2, old: 9.48, 9.22, 9.09, 8.95, 56.54, 61.57,
+    35.35; new: 49.96, 47.33, 45.64, 43.64, 41.32, 38.62, 35.48. Mach 3, old: 65.11, 60.63, 41.44, 11.60, 47.65, 62.18,
+    54.31; new: 82.20, 77.19, 73.99, 70.23, 65.82, 60.62, 54.45. The fourfold rise at 90 degrees at Mach 2 and the dip
+    to 11.6 pascals at 88 degrees at Mach 3 are gone; the new shear changes by about 3.2 to 6.2 pascals per 2-degree bin.
+  - Stagnation-point similarity heat flux, the old and new values in kilowatts per square metre: Mach 4 (weight 0.67)
+    3.643 to 3.539, minus 2.9 %; Mach 4.25 (weight 0.5) 25.77 to 25.24, minus 2.0 %; Mach 6 unchanged at 322.1. At
+    Mach 2 and 3 the 900 K wall is hotter than the gas, so the flux is a loss (negative): minus 53.37 to minus 50.69
+    (a 5.0 % smaller magnitude) and minus 47.42 to minus 45.01 (5.1 %). The separation angle is unchanged at 106 degrees
+    at Mach 2, 3 and 4, 108 at 4.25 and 148 at Mach 6. All of this is one state at one altitude and one wall
+    temperature; other states were not measured. Pinned by `tests/test_reentry_model_gas_loads.py` (weight edges,
+    anchoring, no step at 90 degrees at Mach 2 and 3, the blend, continuity at both blend edges, and finite loads at
+    Mach 0.5 and 0.8).
+  - What is known of the low-Mach validation. Daniels and Schwartzentruber's abstract reports their continuum model
+    compared with CFD of air at subsonic, supersonic and hypersonic conditions, and the research note
+    (`research_notes/Film separation at a convex shoulder/hypersonic_shoulder_gas_flow.md`) records their shear
+    comparisons at Mach 0.37, 2, 3, 4, 7 and 10. The Mach numbers of their pressure comparisons have not been read from
+    the paper, so the pressure at low Mach number rests on their model being validated at the conditions of the shear
+    comparisons, **(assumed)**.
+  - **Known limitation: a composition offset below about Mach 0.5 (final review, 2026-11-15).** The provider's
+    stagnation pressure comes from Cantera's air, N2:0.79 and O2:0.21 without argon, whose freestream pressure at the
+    same density and temperature is 0.396 % above the atmosphere's pressure that the provider uses as p_inf (ratio
+    1.00396 at 0.5, 2, 10 and 30 km of the US76 table). At hypersonic speeds that offset is nothing against the
+    dynamic pressure, but the dynamic pressure is only 0.7 M squared times the freestream pressure (2.3 % of it at Mach
+    0.18), so at low speed the offset is a large share of p_stag - p_inf, and the anchoring scales the whole of Daniels
+    and Schwartzentruber's distribution, lee included, by it. **(verified)** Measured on `GasLoads.meridian` at US76
+    states (nose radius 50 mm, wall 900 K), the pressure difference from freestream is 1.173 times theirs at Mach 0.18
+    (0.5 km), 1.061 at Mach 0.3 (2 km), 1.021 at Mach 0.5 (10 km) and 1.002 at Mach 3 (30 km), the same factor at 0, 90
+    and 180 degrees. The film's pressure gradient and the lee suction carry the same factor. The offset predates this
+    branch (the joined law's windward amplitude carries it too). No result measured so far is affected: the Step 2
+    flights receive no heat below Mach 6.2 and have no surface flow, and the melting flights so far stop near Mach 3.5.
+    The two Step 2 flights land at Mach 0.24 and 0.17, so every flight to the ground ends in this regime. Removing the
+    offset is an open decision (14.9). Anchoring is still the right structure: without it the offset would appear as a
+    pressure drop between the stagnation bin and the 4-degree bin and inflate the nose velocity gradient far more.
+- The film feels this pressure as a gradient on both sides: the gradient along the surface is taken on the provider's
+  bins, so the fall past the shoulder now pushes the film rearward, where before the drop to freestream at the equator
+  never acted on it.
+- **(assumed)** Daniels and Schwartzentruber's lee pressure is known to mispredict the lee (design A4, Asha's decision
+  taken with that known): their pressure stays near 0.6 to 0.7 times freestream (0.35 at Kn 0.25) to the base, where
+  DSMC recovers to 1.9 to 5.9 times freestream in dense flow (recirculation) and falls to 0.01 to 0.0001 times
+  freestream in thin flow. Measured on the model's own loads by `model_vs_dsmc.py`: at Holman and Boyd's Kn 0.002 the
+  model's pressure is 1.61 times DSMC at 90 degrees and 2.26 times at 120, then 0.20 times at 150 degrees and 0.12 at
+  the base; at Kn 0.05 and 0.25 it is 4.6 and 12.5 times DSMC at 120 degrees and 15 and 154 times at 150.
+- Daniels and Schwartzentruber are implemented as in the reference (`shared/daniels_schwartzentruber.py`, from
+  `analysis/gas_loads/reference/ds_model.py`): their Appendix A, perfect gas with gamma 1.4, viscosity exponent 0.75,
+  Prandtl number 0.72, Sutherland viscosity at the freestream temperature, their Knudsen number (A 1), a fully diffuse
+  wall, the separation angle capped at 180 degrees, and the composite rarefied formula (A 26)-(A 27) at every Knudsen
+  number. **(verified)** against the reference module to 1e-12 and its CSV to 1e-5
+  (`tests/test_reentry_model_daniels_schwartzentruber.py`).
+
+### 14.2 The similarity solution: shear and heating to separation
+
+- Gas (Asha, 2026-11-12, design A3). The edge state for the shear and the heating is the unreacted (chemically
+  frozen) post-shock gas, `gas.UnreactedAir`: the model's Cantera construction (`airNASA9.yaml`) with equilibration
+  switched off, so N2 and O2 keep their freestream mole fractions 0.79 and 0.21 through the normal shock, the
+  compression to rest, the expansion to the wall pressure and at the wall, while vibration stays in equilibrium with
+  temperature. Evidence (design A3): with unreacted gas the similarity shear on Holman and Boyd's own pressure is within
+  about 10 % of DSMC from nose to shoulder at Kn 0.002, while equilibrium gas is 25 to 35 % low. The unreacted nose
+  pressure is about 2 % below the equilibrium one (4837 against 4947 Pa at Kn 0.002, design A4b). The wall Knudsen
+  number and Girin's closure stay on the equilibrium state (14.3). **(assumed)** that frozen chemistry is the better
+  edge state across the flight; the post-shock chemistry criterion is deferred with item A-5 (14.9).
+- Equations (Lees 1956 local similarity in Lees-Dorodnitsyn variables with a wall-based xi; design A3 and A4, in
+  `shared/similarity.py`):
+  (C f'')' + f f'' + beta (T/T_e - f'^2) = 0 and (C g'/Pr)' + f g' + (u_e^2/H_e) [(1 - 1/Pr) C f' f'']' = 0, with f the
+  stream function (f' = u/u_e), g = H/H_e the total enthalpy over its edge value, h = H_e g - u_e^2 f'^2/2 the static
+  enthalpy, T = T(h), C = (rho mu)/(rho_w mu_w) the Chapman-Rubesin ratio, Pr = 0.71, boundary conditions f(0) = f'(0)
+  = 0, f'(infinity) = 1, g(0) = h_w/H_e, g(infinity) = 1; xi = integral of rho_w mu_w u_e r^2 ds along the meridian
+  (r the distance from the axis, s the arc length), beta = (2 xi/u_e) du_e/dxi, and the wall values
+  tau_w = rho_w mu_w u_e^2 r f''(0)/sqrt(2 xi) and q_w = rho_w mu_w u_e r H_e g'(0)/(Pr sqrt(2 xi)); at the stagnation
+  point beta = 1/2. The wall gas is ideal at the wall pressure and temperature (rho_w = p_w/(287.05 T_w)). One solution
+  gives both the shear and the heating, so they share one separation angle (design A4b).
+- Properties. Real frozen-air enthalpy (Cantera NASA-9 at fixed composition) and viscosity (the model's Blottner fits
+  with Wilke mixing) as cubic splines from 150 to 20 000 K every 50 K; piecewise-linear tables stop the collocation
+  solver converging (design A4). The temperature lookup clips at the table's ends, so a march whose edge total enthalpy
+  is above the table's top (32.2 MJ/kg, the frozen-air enthalpy at 20 000 K; reached from a 200 K freestream at about
+  8.05 km/s, above the flights' 7.5 km/s start) raises `SimilarityError` naming both enthalpies before any solve, and
+  the flight fails that step (ruling R6) instead of flying on clipped properties
+  (`tests/test_reentry_model_similarity.py`, `tests/test_reentry_model_gas_loads.py`).
+- Solution method (the builder's choice of design A4b: solved, not tabulated). Every macro step the boundary-value
+  problem is solved at every 2-degree bin from 0 to 178 degrees by `scipy.integrate.solve_bvp` (eta from 0 to 12,
+  tolerance 1e-4, at most 20 000 mesh nodes; the largest converged solve over the four Holman-Boyd marches needs 1866,
+  ruling R7), warm-started from the previous bin; the first solve of every march starts from a hot wall and steps the
+  wall temperature down in 12 geometric steps from 0.8 T_e to T_w, so a march does not depend on earlier ones.
+- **(assumed)** The whole meridian is solved for an isothermal wall at the stagnation patch's temperature. The heating
+  then scales each patch by its own hot-wall factor (14.4); the shear has no such correction.
+- Separation. The first bin where f''(0) is at most 0.005, or where the solver does not converge, is the separation
+  angle; from it to the base the shear and the heating are zero. In practice this is at the first bins where the lee
+  pressure rises again, possibly one bin later (ruling R12: at Kn 0.01 the first adverse-pressure bin sits at a solver
+  bifurcation where the reference failed and the provider converges; the loads there are about 0.1 % of the nose's).
+  Measured by `model_vs_dsmc.py` on 2-degree bins: 152 degrees at Holman and Boyd's Kn 0.002, 0.01 and 0.05, and
+  160 degrees at Kn 0.25, against 151 and 158 degrees in the reference's 1-degree march; DSMC dense-flow shear dies out
+  at about the same angles (design A4). Local similarity is stretched near 150 degrees, where beta reaches about 80,
+  though the shear there is small (design A4). DSMC's dense-flow heating behind separation, 0.3 to 1.3 % of the nose
+  value from the recirculating flow, is left out **(assumed zero)**.
+- **(verified)** The solver reproduces the Falkner-Skan wall gradients 0.9277, 0.4696 and 1.2326 and the reference's
+  cold-wall stagnation result (f''(0) 0.5024, g'(0) 0.3313 at a 1500 K wall under the Kn 0.002 unreacted stagnation
+  state) (`tests/test_reentry_model_similarity.py`); the provider reproduces the reference calculation's shear and heat
+  flux (`similarity_heat.csv`) at Holman and Boyd's Kn 0.002 on 1-degree bins to 1e-6 ahead of the meeting angle and
+  1e-5 beyond it, with zero loads wherever the reference is blank (separated), and its default 2-degree bins stay within
+  3 % of the 1-degree bins from 0 to 140 degrees and within 2 degrees in separation angle
+  (`tests/test_reentry_model_gas_loads.py`).
+
+### 14.3 The shear switch at Kn_body 0.05, and the surface flow
+
+- Switch (Asha, 2026-11-12, design A3). Below a body Knudsen number of 0.05 the shear is the similarity solution's;
+  at and above it, Daniels and Schwartzentruber's (their slip and rarefaction factors apply, and the model adds neither
+  its slip factor nor its blend). The Knudsen number is the model's own Kn_body (hard-sphere mean free path,
+  d = 3.65e-10 m, over the diameter), about 1.32 times Holman and Boyd's labels, so their "Kn 0.05" case (Kn_body 0.067)
+  falls on Daniels and Schwartzentruber's side (design A4b). Known limit (design A3): at exactly Kn 0.05 the similarity
+  shear was the closer of the two at the shoulder, so the best crossover lies between 0.05 and 0.25. The switch and
+  Daniels and Schwartzentruber's formulas use different diameters. Their pressure and shear are evaluated on twice the
+  current nose radius that the body passes the provider (`radius`; for the skins under `--size-feedback current`, their
+  default, the radius of the sphere fitted to the column tops). The switch reads the trajectory's Kn_body, which is on
+  the fixed initial diameter for the skins and the non-melting body, and on the remaining mass's equivalent diameter
+  only for the melting element model with `--size-feedback current`. The two diameters part once the nose changes
+  shape.
+- In the free-molecular branch of the surface flow (Kn_body at least 10, or a freestream Mach number at most 1) the
+  provider's shear is taken on both sides with no slip factor or blend. Above Kn_body 10 it is Daniels and
+  Schwartzentruber's, already rarefied. At Mach 1 or below it is the continuum similarity shear; there Kn_body is at
+  most 1.1e-5 (100 mm) and 4.6e-5 (50 mm) and the wall Knudsen number at most 2.1e-4 and 8.1e-4 on the two Step 2
+  flights to the ground (14.7; their histories' subsonic rows, at the hottest surface temperature and the freestream
+  pressure; the lee's pressure, 0.83 to 0.90 of the freestream's at Mach 0.83 and 0.67 with the scratch scripts of
+  14.1, raises the lee's value by up to a fifth), so the missing slip factor would change the shear by about 0.1 % at
+  most (`tests/test_reentry_model_surface_flow.py::test_free_molecular_and_degenerate`).
+- Below the switch the similarity shear still goes through the model's existing slip factor 1/(1 + C Kn_local)
+  (C = (2 - sigma_v)/sigma_v, Kn_local the wall Knudsen number on the nose radius) and, on
+  the merged branch (Kn_body 0.01 to 0.05), the SESAM-table blend toward free-molecular shear, which is not replaced
+  below 0.05 (design A4b, a non-goal). With the provider the windward wall Knudsen number, slip factor, slip-corrected
+  edge speed, closure (Girin or Couette) and flags stay as they were, from the equilibrium wall pressure (ruling R10: a
+  2 % pressure change could otherwise flip closures at the 0.01 threshold); only the lee's wall Knudsen number and slip
+  factor come from the provider's lee pressure. On the lee the shear is the slip-corrected continuum shear even where
+  the wall Knudsen number passes 0.1, because the free-molecular switch at that threshold, and the free-molecular shear
+  itself, are the windward side's (ruling R9: the literal rule zeroed the lee shear abruptly); on the merged branch the
+  lee's blended shear is (1 - f) times the slip-corrected shear, the free-molecular shear being zero in the lee's
+  shadow. **(assumed)** that this keeps the lee shear reasonable in thin shock-layer flow; ruling R9 records that it
+  may be somewhat high there. **(verified)** patch by patch against that formula on the merged branch at Kn_body 0.0298,
+  the 100 mm flight's start
+  (`tests/test_reentry_model_surface_flow.py::test_provider_on_the_merged_branch_below_the_switch_blends_the_slip_corrected_similarity_shear`).
+- The jump at the switch is measured, not smoothed (design A4b). `model_vs_dsmc.py` evaluates `SurfaceFlow` on a
+  provider at Holman and Boyd's freestream (200 K, 7108 m/s, 0.3048 m sphere, 1500 K wall) with the density set so that
+  Kn_body is 0.0495 and then 0.0505: the shear just above the switch over the shear just below it is 0.752 at
+  30 degrees (38.6 Pa below, 29.0 Pa above), 0.812 at 60 degrees (39.6 and 32.1 Pa) and 1.781 at 90 degrees (11.4 and
+  20.4 Pa). The 2 % density step alone, with one shear source on both sides, changes the shear by 0.2 to 1.6 %, so
+  nearly all of each ratio is the switch. A flight crosses Kn_body 0.05 once on the way down, from Daniels and
+  Schwartzentruber's shear to the similarity shear: its shear then rises by about a third at 30 degrees (1/0.752) and
+  a quarter at 60 degrees, and falls by about 44 % at 90 degrees (measured once, at this freestream).
+
+### 14.4 Heating
+
+- `heating.SimilarityHeating` (Asha, 2026-11-12, design A4, heating on both sides) replaces Fay-Riddell's stagnation
+  flux and Lees' distribution: the continuum flux q_c = q_sim(0) is the similarity solution's stagnation flux, and the
+  heating is q = q_stag [(1 - w) q_sim(theta)/q_sim(0) + w max(cos theta, 0)] (H_e - h_w(T_patch))/(H_e - h_w(T_stag)),
+  with q_stag Matting's bridge (n = 1) of q_c and the free-molecular flux q_fm = 0.8 rho V (H_e - h_w), w = 1 -
+  q_stag/q_c the free-molecular weight, H_e the unreacted gas's total enthalpy and h_w the frozen-air enthalpy at the wall
+  (`GasLoads.wall_enthalpy`, the same spline the solution uses, ruling R11). Behind separation the continuum part is
+  zero. **(verified)** It reproduces the reference's bridged heating (`similarity_heat.csv`, which applied the same
+  Matting bridge), follows the provider round the shoulder to separation, applies the hot-wall factor patch by patch, and
+  tends to Matting's free-molecular limit (`tests/test_reentry_model_heating.py`, the `test_similarity_heating_*`
+  tests).
+- Its stagnation flux equals the earlier Fay-Riddell value in all four of Holman and Boyd's cases (design A4), so the
+  nose heating is twice DSMC at Kn 0.002 (A-5, 14.9). Measured on the model by `model_vs_dsmc.py`: the nose heating is
+  2.03, 0.99, 0.79 and 0.78 times DSMC at their Kn 0.002, 0.01, 0.05 and 0.25.
+- `--stagnation` and `--catalycity` are not read by it: a run on it records their default values in its JSON with
+  `"heating_unused": ["stagnation", "catalycity"]` (ruling R16), and either option given other than at its default
+  (`fay-riddell`, 1) is refused (exit 2, naming `--gas-loads classic`), so that an option is never silently ignored
+  (ruling R20). `--bridging-heat sesam-table` is refused in the same way, because the similarity heating bridges by
+  Matting's law only (ruling R16) (`tests/test_reentry_model_cli.py`).
+- The droplet stage keeps `PhysicsHeating` unchanged (design A4b); its reproduction test still matches to 1e-9.
+- **The solve is skipped when no part of the wall can be heated** (Task 3 of the 2026-11-14 plan). The total enthalpy of
+  the gas reaching the body, the freestream enthalpy plus half the speed squared, does not change across the shock, so the
+  trajectory alone fixes it (`GasLoads.total_enthalpy`, which makes the same call `_solve` makes for H_e, with no
+  boundary-layer solve). The enthalpy of gas at the stagnation wall's temperature is a table lookup (`wall_enthalpy`). At
+  the stagnation point the edge speed is zero, so a wall at or above the total enthalpy receives no heat; elsewhere the
+  gas recovers less than the total enthalpy (the recovery factor is about the square root of the Prandtl number), so it
+  receives none either. The model already returned zero heating, a blend weight of 1.0 and a continuum flux q_c that no
+  caller records, in exactly this case (H_e - h_w at most zero), after paying for the solve; the skip makes the same
+  decision before the solve, from the same two numbers, so no recorded value changes. A skipped step returns q_c as not
+  a number, which only the unrecorded field shows. It neglects, as the model already does, the convective cooling of a
+  wall hotter than the gas. Inside a hold window (14.1) the held solution is used and the check is not made. "No recorded value changes" is exact for each
+  call, not for every flight: a skipped call makes no solve and so holds nothing. Where nothing else reads the provider
+  during continuum steps (an explicit `--dt-continuum` with `--removal instant`, on either surface model; never a
+  default configuration), the steps that a solved call would have served a held zero-heating solution for the rest of
+  its 0.5 s window are checked at every step instead, so heating resumes at the first step at which the wall can be
+  heated, up to one `--dt` earlier (more accurate, not less).
+  **(verified)** `test_similarity_heating_skips_the_solve_when_the_wall_is_hotter_than_the_total_enthalpy`,
+  `test_skip_matches_the_solved_result` (one state each side of H_e = h_w, equal to the same call with the skip disabled),
+  `test_skip_when_the_wall_enthalpy_equals_the_total_enthalpy` and `test_skip_is_not_taken_inside_a_hold_window`.
+
+### 14.5 Sheltered corners, `--gas-loads classic`, saving and resuming
+
+- Sheltered corners (Asha, 2026-11-12, decision 2a of design A6; rulings R14 and R15). Under the skins' mass-centroid
+  leeward test (`--leeward-test centroid`, the default), a corner whose normal faces the flow (angle at most 90 degrees)
+  but which lies behind the plane through the mass centroid is treated as lying in the separated wake: on the interim
+  loads it reads the loads at 180 degrees (Daniels and Schwartzentruber's base pressure, zero heating, and zero shear
+  below the switch or Daniels and Schwartzentruber's base shear, almost zero, above it), where before it was read just
+  past 90 degrees (90 degrees plus a microradian), which would now carry shoulder-level loads. Corners whose normals
+  face away from the flow keep their true angle and get the lee loads up to separation. On the coarse test sphere 3 of
+  2254 corners are sheltered (ruling R15). The `facing` test gives every corner its true angle. **(assumed)**; Asha's
+  follow-up: revisit this rule when the fitted-sphere loading bug is taken up again. This bullet describes the skins'
+  earlier rule, `--windward-loads normals`; under `--windward-loads sphere`, the default since the merge with the
+  fitted-sphere loads on 2026-11-15, the sheltered corners are those the ray test shelters, and section 15 (15.5) says
+  which corners are sheltered there and what each reads on these loads.
+- `--gas-loads similarity|classic` (`run`, with `--thermal fem`). `similarity` is the default for every thermal run of
+  both bodies: the skins' and the element model's surface flow and, with `--heating physics`, the heating; the
+  non-melting element run's heating too (ruling R16). `classic` builds the objects as they were (`PhysicsHeating`, a
+  `SurfaceFlow` without a provider, sheltered corners at 90 degrees plus a microradian) and adds `_loads-classic` to the
+  run name. Every `--thermal fem` run records `settings.gas_loads`; the option is accepted and ignored without
+  `--thermal fem`. **(verified)** `--gas-loads classic` reproduces main at 4e857e1 bit for bit:
+  `analysis/skyscrapers_port/same_results.py` ran the cases `step1`, `skins`, `element` and `nomelt` from a checkout of
+  4e857e1 and from this branch with `--gas-loads classic` (2026-11-14); every CSV, every droplet file and every JSON
+  value were identical except the new key `settings.gas_loads` in the three thermal runs (the expected difference, as
+  `dispersion` was for `--dispersion table`) and the absolute path of the space-weather file `settings.fap_day` in the
+  Step 1 run, which names each checkout's own copy of the same file (same SHA-256). With those two keys set equal, the
+  comparison reports the 21 files identical. The comparison was repeated on 2026-11-15, on the code with the pressure
+  below Mach 5, the hold and the solve skip (14.1, 14.4). It was run against main's outputs of 2026-11-14 and against a
+  second run of main's four cases from a fresh export of 4e857e1 at the same path. The export was needed because the
+  first checkout had been deleted, and the comparison could not then check the mesh and material files that main's
+  JSONs name (it reported them missing). Both comparisons reported only the same two keys.
+- `resume` takes no `--gas-loads`: a saved flight resumes on the loads its saved objects hold, and a state saved before
+  this change resumes on the classic loads. The label the resume prints and records is the saved arguments'
+  `gas_loads`, and only for a state whose arguments have none (one saved before the option) is it read from the objects
+  (`cli.gas_loads_of_run`), so a similarity run whose objects hold no provider (SESAM's heating on the non-melting
+  element model) keeps its `similarity` label (`tests/test_reentry_model_restart.py`).
+- Tests that pin the classic loads: the Step 2 reference test (`tests/test_reentry_model_reference_thermal.py`) and
+  the coupled and melting test modules build `PhysicsHeating` and their bodies directly, not through the run command, so
+  they test the classic heating. Since 2026-11-15 the Step 2 reference test also flies the default loads, in
+  `test_similarity_mode_is_reported`, which builds `SimilarityHeating(GasLoads(hold_s=dt))` as the run command does and
+  records its heat ratio to SESAM (14.7). Two mechanism tests that do go through the run command (the 71 km
+  continuum-step latch and the 65 km droplet-spool failure) name `--gas-loads classic`, because their flights were
+  built to trigger those mechanisms on the old loads (ruling R17; 14.7).
+
+### 14.6 Known accuracy against Holman and Boyd's DSMC
+
+Asha's acceptance (design A6, option 1a) is agreement with the reference calculation, not a tolerance against DSMC; the
+accuracy below is recorded, not tested. The figure
+`superpowers/specs/figures/2026-11-12-shoulder-melt-loss/model_vs_dsmc.png` is drawn by
+`analysis/gas_loads/plots/model_vs_dsmc.py` from the model itself (a `GasLoads` on default 2-degree bins read by
+`SurfaceFlow` and `SimilarityHeating` as a flight builds them, uniform 1500 K wall), against Holman and Boyd's
+DSMC and the reference calculation, at their four conditions (0.3048 m sphere, Mach 25, 7108 m/s, 200 K, freestream
+Kn 0.002, 0.01, 0.05 and 0.25, which are Kn_body 0.0026, 0.013, 0.067 and 0.33). Run once, 2026-11-14.
+
+- The model reproduces the reference calculation (the model's 2-degree bins against the reference's 1-degree bins,
+  compared at every degree): the pressure within 0.7 % and the heating within 0.5 %, except at the bin that straddles
+  the meeting angle at Kn 0.25 (2.3 % at 157 degrees); Daniels and Schwartzentruber's shear within 0.1 % at Kn 0.05 and
+  within 2.4 % at Kn 0.25 (the largest just past 90 degrees, where their shear has a kink) from 0 to 140 degrees; and the
+  continuum similarity shear within 1 to 3 % on the windward side after the slip factor and blend (the reference line is
+  the shear before them), falling to 0.97 of it at 140 degrees at Kn 0.002 and 0.87 at Kn 0.01, where the lee's slip
+  factor and the blend's (1 - f) act. Within a few degrees of separation, and near the base where Daniels and
+  Schwartzentruber's shear is almost zero, the interpolation between 2-degree bins differs from the reference by more in
+  relative terms (up to 34 % at 149 degrees at Kn 0.01) on shears that are about 0.1 % of their peak.
+- Shear against DSMC, on the model's own loads: at Kn 0.002, 0.78 to 0.84 times DSMC from 5 to 30 degrees, 0.97 to 1.12
+  from 45 to 75, 1.34 at 90 and 1.5 to 1.9 from 100 to 120 degrees (1.85 at 120); at Kn 0.01, 0.60 to 0.66 from 5 to 30
+  degrees, 0.79 to 0.92 from 45 to 75, 1.13 at 90 and 1.3 to 2.0 from 100 to 120 (the rarefaction Holman and Boyd
+  describe); at Kn 0.05 (Daniels and Schwartzentruber's), 0.70 to 0.76 from 5 to 30 degrees, 2.0 at 90 and 3.4 to 14
+  from 100 to 120; at Kn 0.25, 1.02 to 1.25 from 5 to 75 degrees, 0.95 at 90 and 1.7 to 12 from 100 to 120, where DSMC
+  shear vanishes by about 125 degrees. Design A6 recorded 0.73 to 0.79 from 5 to 30 degrees at Kn 0.002 from the
+  reference's shear-only form (design A3); the model uses the total-enthalpy form, whose shear differs from it by 6
+  to 9 % (design A4b).
+- Heating against DSMC: in dense flow the ratio of the model's heating to DSMC's changes round the body rather than
+  holding at its nose value. At Kn 0.002 it is 2.03 at the nose (A-5), 2.38 at 90 degrees, 2.26 at 120 and 1.50 at 135;
+  at Kn 0.01 it is 0.99 at the nose, 1.25 at 90, 1.37 at 120 and 1.19 at 135 (the heating at 90 degrees is 10.6 % and
+  10.3 % of the nose value, against DSMC's 9.1 % and 8.2 %); in thin flow the heating behind the shoulder is far above
+  DSMC's, which falls toward a near-vacuum wake: 2.9, 5.8 and 9.8 times DSMC at 120, 135 and 150 degrees at Kn 0.05, and
+  5.8, 25 and 108 times at Kn 0.25, where the model's heating is at most 1.4 % of its nose value.
+
+### 14.7 What the new loads change in a flight (measured)
+
+Each item below was measured once, on the flights named; none is a sweep.
+
+- The 65 km smoke flights (100 mm sphere, 7.24 km/s, US76, 893 K start, 0.125 s, 4 mm surface mesh; the `skins` and
+  `element` cases of `same_results.py`), on 2026-11-14 with a scratch wrapper that records each step's loads:
+  - Stagnation heating 4.45 to 4.47 MW/m^2 on the interim loads against 4.53 to 4.57 MW/m^2 on the classic loads, about
+    2 % lower (the similarity stagnation flux on unreacted gas against Fay-Riddell on equilibrium gas).
+  - The convective heat over the whole surface is 16 % higher (32.9 kW against 28.3 kW at the start of the element
+    flight), because heat now reaches round the shoulder: the surface-averaged flux is 0.2345 of the stagnation flux
+    against 0.1972 on the classic loads (the classic figure is Lees' 0.196, section 8), and 6.2 % of the convective heat
+    lands behind 90 degrees on the element model (4.8 to 7.1 % on the skins as their surface changes), against none.
+  - Wall shear: the peak is 334 Pa at 46 degrees against 77.8 Pa at 49 degrees (4.3 times); at the shoulder (patches
+    from 88 to 92 degrees) 130 Pa against 21 Pa (6.1 times); on the lee 95 Pa at 100 degrees, 44 Pa at 120 and 4.8 Pa
+    at 150, against zero. The pressure gradient at the shoulder is -30 kPa/m against -16 kPa/m.
+  - On the skins, the metal released by 0.125 s fell from 1.33 g to 0.024 g, and the deepest liquid on the surface at
+    0.125 s from 0.081 mm to zero; the element flight releases nothing on either loads. These skin figures were measured
+    on main, under the earlier windward rule, now `--windward-loads normals`; on the sphere rule, the skins' default since
+    the merge of 2026-11-15, the same flight released 0.0326 g against 0.0228 g under `normals` on the merged tree (15.5,
+    one run each).
+- The two mechanism tests' flights (ruling R17, measured on 2026-11-14 on each test's own flight):
+  - 71 km, 893 K melting skins, one 0.1 s step: the nose holds no liquid at 0.1 s on the interim loads (0.030 mm on the
+    classic loads), so the continuum step's "melting" latch is not reached; the stagnation flux is 2.893 against
+    2.943 MW/m^2 (1.7 % lower) and the total convective power 21.33 against 18.38 kW (16 % higher).
+  - 65 km test flight to 0.0875 s: the first release comes at 0.0875 s instead of 0.05 s, and by 0.0875 s 1.5 mg has
+    been released in 2 records against 0.81 g in 606; the peak liquid depth is 0.066 to 0.070 mm against 0.141 mm.
+  - These are physics effects of the new loads, not failures. The likely reasons (inferred, not separated) are less heat
+    at the nose, more round the shoulder, and a four to six times larger shear, which together leave less liquid on
+    the windward face early in a flight.
+- The Step 2 flights to the ground (the two no-melt US76 SESAM references, element model, 0.5 s macro step) on the
+  default loads, each flown once on each of two paths:
+  - Through the run command, with `analysis/reentry_model_thermal_verification.py --modes physics` (which runs the
+    command and so its default loads), on 2026-11-14 with other runs on the machine. This was before the pressure
+    below Mach 5 (14.1), the hold of one `--dt` (14.1) and the solve skip (14.4).
+  - Through the Step 2 reference test, which since 2026-11-15 also flies the run command's default heating
+    (`tests/test_reentry_model_reference_thermal.py::test_similarity_mode_is_reported`). The test builds
+    `SimilarityHeating(GasLoads(hold_s=dt))` and the body directly on the same mesh. It was run on 2026-11-15 on the code
+    with all three changes. Its one-minute load average, read four times during the run, was between 2.6 and 11.3.
+  - The integrated heat to the ground is 0.8623 times SESAM's for the 100 mm sphere from 77.5 km and 0.8815 times for
+    the 50 mm sphere from 115 km, on both paths. The exact values are 0.8623036 and 0.8815099 through the command and
+    0.8623030 and 0.8815105 through the test. The two paths' heat totals differ by 2.2 J of 3.2 MJ and by 0.43 J of
+    0.64 MJ, about 7 parts in 10 million, in opposite directions; the cause of so small a difference was not separated.
+    On the classic heating the ratios are 0.7437 and 0.7702 (the reference tier, 2026-11-14), so the default loads
+    deliver 16 % and 14 % more heat, as on the 65 km smoke flight. All four ratios lie inside the reported band of 0.4
+    to 1.1 (`PHYSICS_RATIO` in the verification script, and the test's own band). The remaining gap to SESAM is about the
+    ratio of the surface-averaged fluxes, 0.2345/0.27471 = 0.85 (inferred from the 65 km smoke flight's average against
+    the ATDB factor, section 8).
+  - Why the pressure below Mach 5 does not change these flights. Their heating ends while they are still hypersonic. In
+    the command's histories every row has zero convective power from 168.0 s on the 100 mm flight (Mach 6.24) and from
+    283.0 s on the 50 mm flight (Mach 6.22), because the wall then holds more enthalpy than the arriving gas (14.8).
+    They first fall below Mach 5, where the blend to Daniels and Schwartzentruber's pressure begins, at 174.5 s and
+    289.5 s, and below Mach 3.5 at 184.0 s and 299.5 s. The new pressure, and the step at 90 degrees that it removed,
+    therefore act only on a wall that receives no heat. The element model that does not melt has no surface flow, so the
+    loads reach it only through the heating, and neither change can alter these flights' heat. This is inferred from the
+    2026-11-14 histories and agrees with the unchanged ratios. A melting flight feels the new pressure through its
+    surface flow. It also feels it through its heating while its wall, near 900 K, can still be heated (14.8).
+  - The peak stagnation temperature (also the hottest surface point) is 2433.09 K at 118.5 s and 2625.69 K at 238.5 s.
+    The peak energy-equivalent mean temperature is 1880.61 K at 145.5 s and 2295.32 K at 247 s. Each figure is the same
+    on both paths to within 0.0003 K, and each time is the same. On the classic heating the peak stagnation
+    temperatures are 2319 K at 118 s and 2494 K at 239 s, and the peak mean temperatures 1717 K at 149.5 s and 2151 K
+    at 250 s (the reference tier, 2026-11-14, which reproduced the README's ratios and temperatures). The times are each run JSON's
+    `results.time_of_peak_surface_T_s` and `time_of_peak_mean_T_s`. The verification script's `summary.md` prints the
+    peak times with no decimal place (format `{:.0f}`, which rounds a half to the even neighbour), as 118 s and 238 s.
+    The peak convective power is 17 % higher than on the classic heating on both flights (27.7 against 23.7 kW, and
+    7.89 against 6.74 kW).
+  - Both flights reached the ground on both paths. The energy books closed to 4.6e-9 and 1.1e-8 of the absorbed heat
+    (`energy_balance_residual`). The command's flights solved at every step, and none of their stagnation-point
+    solves failed down to the subsonic end of the flight (60 m/s at 0.5 km); a failure would have ended the flight.
+    The test's flights make no solve from 168 s and 283 s on, where the skip begins. This is inferred from the
+    command's histories, whose temperatures the test's flights reproduce; the test does not save its history. Both
+    paths took 733 and 1118 macro steps. The flights took 1068 s
+    and 1684 s through the command on 2026-11-14, and 409.5 s and 466.8 s through the test on 2026-11-15 (14.8).
+
+### 14.8 Cost
+
+- One meridian solve took 2.2 to 2.9 s at Holman and Boyd's Kn 0.01 and 0.25 states on a loaded machine (ruling R8;
+  the test bound is 5 s), and 0.44 to 1.03 s at the 65 km smoke flight's state (Kn_body 0.005) with up to two other
+  flights running (2026-11-14). The Kn 0.01 solve of the cost test
+  (`tests/test_reentry_model_gas_loads.py::test_meridian_cost_near_separation_failure`) took 5.63 s, over its bound,
+  at a load average of 40 to 160 (2026-11-14). It took 0.68 s when run alone at a load average of about 4
+  (2026-11-15, once), and the test passed in that day's unit tier. The solve's cost therefore depends mostly on the load
+  on the machine.
+- Per macro step, the interim loads add about one second: on the 65 km smoke flights, run in pairs at the same time,
+  the skins took 4.98 s per macro step against 3.92 s on the classic loads and the element model 1.22 s against 0.29 s
+  (the run's own elapsed time over its 9 or 10 macro steps, which include one extra solve for the history's first row).
+  That is 27 % more per step on the skins and 4.2 times on the element model, whose step is cheap. The share on a long
+  skin flight's 0.5 s macro step was not measured.
+- Solves per 0.5 s of flight after the continuum switch (14.1, the solve cadence). A melting flight then steps at
+  `--dt-continuum`, 0.0125 s by default, 40 steps in each 0.5 s `--dt`. Before the hold each of those steps solved the
+  boundary layer once on the skins (the heating and the surface flow call at one key) and twice on the element model
+  (they call at different wall temperatures, 14.1): 40 or 80 solves per 0.5 s of flight. With the hold it is one solve
+  per 0.5 s on the skins and two on the element model, all at the first step of each window. At 0.44 to 2.9 s a solve
+  (the first item), the 39 solves saved in each 0.5 s of flight after the switch on the skins are about 17 to 113 s of
+  solving, and the 78 saved on the element model about 34 to 226 s. A flight whose step is `--dt` throughout solves as
+  often as before. The wall time of a long melting flight on the hold has not been measured.
+- Steps with no solve at all (14.4, the skip). On the Step 2 flights, which do not melt, the wall warms until it holds
+  more enthalpy than the arriving gas, and from then on the heating is zero and no solve is made. Counted in the
+  histories of the run command's flights of 2026-11-14 (14.7) as the rows whose stagnation flux `q_stag_Wm2` is 0 and
+  whose heating blend `heating_blend_f` is 1.0: 398 of the 734 rows of the 100 mm flight, from flight time 168 s on,
+  and 553 of the 1119 rows of the 50 mm flight, from 283 s on (each flight's first row included). That is about 54 %
+  and 49 % of the steps. The skip starts when the stagnation-point wall temperature (`T_stagnation_K` in the history) is 1878.1 K on the 100 mm flight, at 168 s,
+  and 1960.6 K on the 50 mm flight, at 283 s; the stagnation wall peaks at 2433.1 K and 2625.7 K. The walls are that hot
+  only because the reference flights do not melt; a melting wall stays near 900 K, so the skip starts much later there (only below about 1.2 km/s, where half the speed squared falls to
+  the enthalpy of gas at that wall temperature). The time saved on a melting flight was not measured, and the skip saves less there than on the Step 2 flights: on the
+  skins the surface flow reads the provider at the same key as the heating, so when the heating skips, the flow makes the
+  very solve the heating would have made and the skip saves none; on the element model it saves one of the two solves at a
+  window's start; only the element model that does not melt, whose loads only the heating reads, saves every solve. Nor
+  is the loads solved "at most once per `--dt`" on the element model: its heating and surface flow solve separately, twice
+  per `--dt` (14.1).
+- The elapsed time is the JSON's `results.runtime_s`, which `CoupledRun.run` (`skyscrapers/coupled.py`) times from the
+  start of the flight to its results. It therefore leaves out the mesh (gmsh or the mesh cache), the construction of the
+  body and the heating, and the writing of the CSV, JSON and droplet files afterwards, and it includes the history's
+  first row, every macro step with its in-memory copy of the step's state, any frames, and the end state's save.
+- On the Step 2 flights to the ground (element model, no melting, 14.7), each measured once:
+  - Before the skip. Through the run command on 2026-11-14, the interim loads took 1068 s (100 mm, 733 macro steps)
+    and 1684 s (50 mm, 1118). The classic heating took 57 s and 21 s in the reference tier the same afternoon. That is
+    about 1.4 to 1.5 s more per macro step, which made such a flight 19 and 80 times slower. The interim flights ran
+    beside the unit tier and the classic ones on a quieter machine, so these factors are approximate.
+  - With the hold and the skip. Through the Step 2 reference test on 2026-11-15, with one-minute load averages of 2.6
+    to 11.3, the same flights took 409.5 s and 466.8 s. That is 0.48 s and 0.40 s more per macro step than the classic
+    heating, and 7.1 and 23 times its time; the two tests together took 878.5 s. The skip removes the solve from 398
+    of the 734 rows and 553 of the 1119 (the item above); the hold removes none on these flights, which step at `--dt`
+    throughout. Had each remaining solve taken as long as on 2026-11-14, the skip alone would have brought the flights
+    to about 520 s and 860 s. The measured times are lower still, which is put down to the quieter machine (inferred;
+    the skip's share and the load's were not separated).
+
+### 14.9 Deferred and open
+
+- A-5, the nose heating (deferred, not part of this build): both the similarity and the earlier Fay-Riddell nose heating
+  are twice DSMC at Holman and Boyd's Kn 0.002 (measured 2.03 times on the model, 14.4 and 14.6). The likely cause is
+  chemistry and wall catalysis: energy held in dissociated atoms reaches the wall only if they recombine there, and
+  DSMC walls are usually non-catalytic. To be settled with the post-shock chemistry criterion (equilibrium against
+  unreacted).
+- The blend of the pressure laws between Mach 3.5 and 5 (14.1, Asha's decision 1 of 2026-11-14) is a choice, not a
+  fitted law: it removes the step at 90 degrees below about Mach 3.4, but nothing compares it with measurement between
+  Mach 3.5 and 5, and the stagnation heat flux moves by about 2 to 3 % across that range (14.1). The Step 2 trajectories
+  cross Mach 5 to 3.5 in about 9 to 10 s (9.5 and 10.0 s in the model's histories, 9.0 s in the SESAM references; the 100 mm sphere is below Mach 4 from 181.55 s and the 50 mm sphere from
+  296.55 s), so the blend acts for a short part of a flight and the Daniels and Schwartzentruber pressure acts for the
+  rest of it below Mach 3.5.
+- The low-Mach pressure carries a composition offset (final review, 2026-11-15; 14.1). Below about Mach 0.5 the
+  pressure difference from freestream is 1.173 times Daniels and Schwartzentruber's at Mach 0.18, 1.061 at Mach 0.3 and
+  1.021 at Mach 0.5 (1.002 at Mach 3), because the provider's stagnation pressure comes from Cantera's air without argon,
+  whose freestream pressure is 0.396 % above the atmosphere's pressure that the provider uses as p_inf. The offset
+  predates this branch and no result measured so far is affected: the Step 2 flights receive no heat below Mach 6.2 and
+  have no surface flow, and the melting flights so far stop near Mach 3.5. Removing it is an open decision for Asha: the
+  clean fix, one freestream pressure for the provider consistent with its Cantera air, would also move results at and
+  above Mach 5 by about 1e-5 relative, which the bit-identity constraint of this branch forbids, so it belongs on a
+  later branch.
+- The lee pressure (14.1) and the zero heating behind separation (14.2) are known to differ from DSMC; the coupled CFD
+  solution is meant to replace them behind the same provider (design A5).
+- The sheltered-corner rule is to be revisited with the fitted-sphere loading bug (14.5).
+- Part B of the design (shoulder melt loss, metal leaving the surface at the shoulder) is a separate, open design and is
+  not built.
+
+## 15. The skins' windward loads: the fitted sphere and the shelter test
+
+Added on 2026-11-13 on the branch `fitted-sphere-loads` (design: `superpowers/specs/2026-11-13-fitted-sphere-loads-design.md`,
+approved by Asha the same day), and merged with the interim gas loads (section 14) on 2026-11-15, after they had landed on
+main. This section describes how the layered skins read the loads of the gas on their windward corners: the heating,
+the surface flow that pushes the melt, the spray plan (Girin's shear modes and the Rayleigh-Taylor mode) and the wet
+statistics. A top corner is the top of one column of a skin. Where this section says **(verified)** it names the pytest test
+or the report that supports the entry; where it says **(assumed)** nothing in the repository measures it. Every number is
+from the task reports kept with the build (`.superpowers/sdd/2026-11-13-fitted-sphere-loads/`, git-ignored), from the
+analysis script `analysis/fitted_sphere_check.py` or from the design. The element model is not changed (15.6). The interim
+gas loads are section 14; which corners they read in the separated wake under this rule is in 15.5.
+
+### 15.1 The rule
+
+Before this change each corner read the angle of its own surface normal from the flight direction, and a sphere was fitted
+only to the corners within 30 degrees of the flow, contributing its radius alone. On a deformed body that let local features
+of the shape set their own loads. The rule now is (Asha, 2026-11-13):
+
+1. **Candidates.** The top corners ahead of the plane through the body's mass centroid, at right angles to the flight
+   direction.
+2. **Shelter.** Each candidate casts one ray from a twentieth of its cell outward along its normal (the cell size is the
+   square root of the corner's area), upstream along the direction of motion. If the ray crosses any triangle of the top
+   surface, the corner is sheltered; its own triangles count too. A corner whose normal faces away is still exposed if its
+   ray crosses nothing, as at the top of a crest (Asha: "Yes, heat them").
+3. **The sphere.** The sphere's centre and radius are fitted by unweighted least squares to the exposed corners.
+4. **The radius cap (Asha: keep it).** The radius the loads read is the smaller of the fitted radius and the flat-face bound,
+   1.67 times the windward transverse radius (`NOSE_CAP_FACTOR` in `skyscrapers/body.py`, unchanged). Angles are still measured
+   from the fitted centre.
+5. **The angle.** An exposed corner's load angle is the angle between the flight direction and the ray from the fitted
+   centre through the corner; past 90 degrees it is leeward through the angle itself.
+6. **Leeward corners.** On the classic loads (`--gas-loads classic`) sheltered corners and corners behind the plane take
+   no heating, no shear and no spraying, as corners behind the plane did before. On the interim gas loads' provider
+   (section 14; the default since the merge of 2026-11-15, 15.5) a corner the ray test shelters, and a corner behind the
+   plane whose own normal faces the flow, reads 180 degrees, the separated wake: the base pressure and its gradient, no
+   heating, and no shear below the shear switch at Kn_body 0.05 (almost none above it, 14.5). A corner behind the plane
+   whose normal faces away takes the provider's lee loads at its own angle, as an exposed corner past 90 degrees does at
+   its ray angle. On either loads no corner past 90 degrees sprays.
+7. **Who reads it.** Every consumer reads it through `load_angles` and `nose_radius`, whose interfaces are unchanged.
+
+The shelter ray is cast against the tops, the interpolated surface through the corners, and not against the fitted sphere
+(Asha, 2026-11-13); the design's reason is that the sphere runs through the middle of the corners, so a test against it
+would shelter most of the face. The direction of the push (15.3) is
+the builder's call, not Asha's. The ray offset of a twentieth of a cell is the level-set design's offset (section 20.8
+there), taken over.
+
+**(verified)** On an untouched coarse sphere (4 mm surface elements, 1,125 candidates) no candidate is sheltered, the fit is
+50.05 mm against the mesh radius of 50 mm (within 0.1 %), the fitted centre is within 0.02 micrometres of the origin, and
+each exposed corner's ray angle is within 0.0517 radians (2.96 degrees) of its normal's angle. The largest gap sits at one
+corner 87.6 degrees from the flow, where the coarse mesh's facets tilt the normal; within 80 degrees of the flow the largest
+gap is 0.0105 radians (0.60 degrees). The tests are
+`test_an_untouched_sphere_fits_its_own_sphere_and_reads_its_normals_angles` and
+`test_moved_tops_move_the_sphere_s_centre_and_scaled_tops_scale_its_radius` in `tests/test_reentry_model_skinbody.py`, each
+measured once. On a sphere with a raised ring of columns (6 mm high, 104 corners), 105 corners are sheltered and 1,020
+exposed, and the 24 crest corners whose own normals face away (90.3 to 97.3 degrees from the flow) read ray angles of 50.6 to
+53.3 degrees and are heated (`test_a_sheltered_corner_is_leeward_and_a_crest_facing_away_reads_its_ray_angle`;
+`tests/test_reentry_model_shelter.py` tests the shelter test alone). **(assumed)** that a crest top which nothing shelters
+should be heated by the angle of its ray from the fitted centre is Asha's decision; no measurement or CFD result in the
+repository supports it.
+
+### 15.2 The shelter test, its cost and its straight-line shadow
+
+The test runs on a grid laid on the plane across the flight direction, so each ray tests only the triangles in its own cell
+(`skyscrapers/shelter.py`, `upstream_hits`); `upstream_hits_plain` is the search over every triangle, kept as the reference.
+**(verified)** The two return the same answer on the ringed and on a jittered test body (`tests/test_reentry_model_shelter.py`).
+On the saved 100 mm body (9,417 corners, 4,737 candidates) the grid took 0.018 s against 1.226 s for the plain search
+(best of three), and on the saved 50 mm body (2,367 corners, 1,255 candidates) 0.004 s against 0.084 s
+(`analysis/fitted_sphere_check.py`, Task 5). The design's target was under 0.25 s on the 100 mm body, which was the builder's
+call. The test runs lazily, once per surface refresh.
+
+A body need not be deformed for `sheltered_corners` to be non-zero. Where the plane through the mass centroid lies behind
+the tops' widest section (their equator), the candidates include corners on the rear half, whose normals face away from
+the flow, and their rays up the flow cross the body's own front, so they are sheltered: the body shelters its own rear
+corners. **(verified)** With the tops of the undeformed test sphere moved 5 mm forward along the flight direction (the
+centroid's plane does not move with them), 5 corners are sheltered and every one of them faces away from the flow
+(`test_moved_tops_move_the_sphere_s_centre_and_scaled_tops_scale_its_radius`; Task 2 report). On the classic loads such
+corners are leeward under the earlier rule too, since their normals face away, so on a convex body this changes the count,
+not the loads those corners take. On the interim gas loads' provider, the default since the merge of 2026-11-15, it changes
+their loads. The earlier rule (`normals`) reads each at its own normal's angle, just past 90 degrees, where the provider
+gives lee heating and shear; the sphere rule reads it at 180 degrees, in the separated wake, with no heating and no shear
+below the shear switch (15.1 item 6, 15.5). **(verified, one run)** On the same moved tops the 5 sheltered corners face
+95.2 to 95.8 degrees from the flow; on the provider `normals` reads them at those angles and `sphere` at 180 degrees (a
+check script of the merge's review, 2026-11-15, re-run by the merge's implementer; the forward-moved shape of
+`test_under_the_sphere_rule_on_the_provider_sheltered_corners_read_the_wake_and_corners_facing_away_their_angle` asserts
+the 180 degrees). So on the default loads a body whose centroid's plane lies behind its widest section has a band just
+behind the widest section, between it and the plane, that takes no lee heating or shear, while the corners behind the
+plane keep theirs; the band's width moves with the centroid. **(inferred, not measured)** From the counts in 15.4, 167 of
+the 100 mm body's 568 sheltered corners and 199 of the 50 mm body's 233 face away from the flow (568 minus the 401 that
+were windward under `normals`, and 233 minus 34; a sheltered corner lies ahead of the plane, so one that was not windward
+under `normals` faces away). Whether they are the body's own rear corners or the back slopes of crests was not measured.
+**(assumed)** That the body's own rear corners, and not only the back slopes behind raised features, belong in the wake on
+the provider is the merge's ruling, taken on Asha's behalf (15.5); she has not confirmed this case.
+
+**(assumed)** The shadow is a straight line: a ray up the flow that meets metal shelters the corner, and the corner then takes
+the leeward loads. This is a Newtonian shadow. It leaves out the heating from gas that reattaches behind a step or a rim, so
+a corner just behind a raised feature may be heated less here than it would be by reattached gas. Nothing in the repository
+measures how large that difference is.
+
+**(assumed)** The back slope beside a heated crest is under-resolved. A crest top that nothing shelters is heated, while the
+corners on its back slope are sheltered and take no heating, so the loads change sharply over a few corners; the surface
+mesh is too coarse to resolve that step, and how the melt behaves across it was not measured.
+
+### 15.3 The direction of the push (the builder's call)
+
+Under the sphere rule, the pressure gradient and the shear on the melt point along the fitted sphere's own meridian, away
+from its stagnation point, laid onto each base's tangent plane (`SkinBody.load_meridian`, used by `push` in `skyscrapers/skin.py` and by the
+shear in `_advance_part`); `normals` keeps the meridian of each base normal. **(verified)** On the coarse 4 mm sphere the
+largest angle between the two directions is 1.86 degrees over the exposed corners more than 5 degrees from the nose, measured
+once (`test_the_load_meridian_of_an_untouched_sphere_is_the_normals_meridian_and_none_under_normals` and
+`test_the_load_meridian_points_away_from_the_moved_stagnation_point` in `tests/test_reentry_model_skinbody.py`); an undeformed sphere has its fitted centre at the origin, so it does not show
+the case where the two differ most. **(assumed)** The fitted meridian is taken to be the better direction on a deformed
+face; the choice is the builder's, and it is not Asha's decision.
+
+The push keeps its full magnitude along that direction. The fitted sphere's unit meridian is projected onto the base's
+tangent plane and made a unit vector again: the design lays the direction "onto each base's tangent plane" (its item 8,
+the builder's call) and its plan (`superpowers/plans/2026-11-13-fitted-sphere-loads.md`) has it "projected onto the base's
+tangent plane and normalised", as `along_meridian` already treats a base normal tilted from the radial line under
+`normals`. Where a base is tilted against the fitted sphere the projection is shorter than the unit meridian, and
+renormalising restores the full push along it; where the projection is short the direction is set by little and is
+ill-conditioned. **(verified)** On the saved bodies (`analysis/fitted_sphere_check.py`, one run each) the projection keeps
+at least 0.945 of the unit meridian's length over the 4,169 exposed corners of the 100 mm body, and at least 0.663 over the
+1,022 of the 50 mm body (the next shortest 0.690 and 0.712); none falls below 0.5 on either, and every exposed corner of
+both has a ray angle below 90 degrees, so the push acts on all of them. The tilt is therefore small on the 100 mm body and
+moderate at worst on the 50 mm body, where two corners keep less than 0.7 of the length. **(assumed, not
+measured)** A steep rim, whose base faces nearly along the fitted meridian, would shorten the projection toward zero and
+make the push's direction there ill-conditioned while its magnitude stays full; no such body has been measured.
+
+### 15.4 What was measured on the saved bodies
+
+The analysis script `analysis/fitted_sphere_check.py` reads the two saved states, which lie outside the repository (1.3 GB and
+0.26 GB), and reproduces the investigation. The saved bodies are the 100 mm sphere at 32.5 s and the 50 mm sphere at 178.5 s
+of the comparison flights of 2026-11-09 (the times are as the design records them). Each was measured once.
+
+Every number in this subsection -- the radii, the heating and pressure-gradient ratios and the resumed flights of
+2026-11-14 -- was measured on the classic loads (the loads of `--gas-loads classic`, section 14.5), before this branch
+was merged with the interim gas loads on 2026-11-15. The radii and the corner counts are geometry and do not depend on the
+loads; the ratios use the classic stagnation heating's scaling with the radius, and the resumed flights flew the classic
+heating and surface flow. The sphere rule's effect on the provider's loads, the default since the merge, is not measured.
+
+| | 100 mm body | 50 mm body |
+|---|---|---|
+| Corners on the top surface | 9,417 | 2,367 |
+| Candidates (ahead of the plane) | 4,737 | 1,255 |
+| Sheltered | 568 | 233 |
+| Exposed | 4,169 | 1,022 |
+| Fitted radius | 50.89 mm | 49.03 mm |
+| Flat-face bound | 83.80 mm | 58.11 mm |
+| Radius the loads read | 50.89 mm | 49.03 mm |
+| Fitted centre, along the flight direction from the mesh's coordinate origin | -1.57 mm | -31.59 mm |
+| Root-mean-square misfit of the exposed corners | 2.579 mm | 0.736 mm |
+| Earlier rule (`normals`): its 30-degree cap's fitted radius | 104.28 mm (1,590 corners) | 54.81 mm (773 corners) |
+| Earlier rule (`normals`): radius the loads would read | 83.80 mm (the cap fit, capped at the bound) | 54.81 mm |
+| Corners windward under `normals` and sheltered under `sphere` | 401 | 34 |
+| Corners leeward under `normals` and exposed under `sphere` | 158 | 66 |
+
+Neither fit reaches the bound, so on both bodies the radius the loads read is the fitted one; the cap does not limit the
+heating here. The centre is measured along the flight direction from the mesh's coordinate origin, as `skinbody.py` does,
+which is not the body's first centre once the metal has moved. **(assumed)** The 31.59 mm of the 50 mm body is read as how
+far its front has receded from the first shape; Task 5 measured only the centre's position. A misfit of 2.579 mm on the
+100 mm body, against 0.736 mm on the 50 mm body, means its exposed corners lie further from one sphere. **(assumed)** A rim
+and a flattened face are taken to cause this; it was not tested. The heat input of each
+body under the new rule against the old one, and the direction gaps on these bodies, were measured in the investigation
+(`output/shape_feedback/report.md` of the main checkout, git-ignored) and are not repeated here, because the task reports
+of this build do not carry them.
+
+**(verified)** The last four rows compare the earlier rule on the same bodies (`analysis/fitted_sphere_check.py`, extended in
+the final review's fix wave, one run each). The script sets `windward_loads` to `normals` with the `--size-feedback` and
+`--leeward-test` that a `run --windward-loads normals` takes by default (`current` and `centroid`, resolved through the
+command line's own parser and helpers), so the earlier rule's radius is that of its 30-degree cap fit, capped at the same
+flat-face bound. On the 100 mm body it would read 83.80 mm, its cap fit of 104.28 mm being flatter than the bound, against
+the sphere rule's 50.89 mm; on the 50 mm body 54.81 mm against 49.03 mm. The stagnation heating scales as one over the
+square root of the nose radius and the scale of the pressure gradient that pushes the melt as one over the radius, so on
+the 100 mm body the sphere rule's stagnation heating is 1.2832 times the earlier rule's (28 % more) and its pressure-gradient
+scale 1.6467 times (65 % more); on the 50 mm body 1.0573 times (6 % more) and 1.1179 times (12 % more). These compare the
+two rules on one saved shape each, not on a flight: how the difference would grow or shrink once the shape answered to it
+is not known.
+
+The two rules also load different corners. A corner windward under `normals` (its own normal at most 90 degrees from the
+flow and ahead of the centroid's plane: its `windward_corners()`) that is sheltered under `sphere` loses its heating, shear
+and spraying: 401 on the 100 mm body and 34 on the 50 mm body. A corner leeward under `normals` that is exposed under
+`sphere` is one whose own normal faces away from the flow, such as a crest top; on both bodies every one of them has a ray
+angle of at most 90 degrees from the fitted centre, so it is newly heated: 158 and 66. Whether these moved loads, with the
+sharp step in heating where exposed corners meet sheltered ones (15.2), make refused mesh moves more likely on a deformed
+body was then measured on short resumed flights.
+
+**(verified, one run of each rule on each body)** On 2026-11-14 both saved bodies were resumed under each rule, the earlier
+rule at today's `run` defaults (`--size-feedback current --leeward-test centroid`); the report is
+`output/shape_feedback/resume_check/report.md` of the main checkout (git-ignored). The 50 mm body flew four macro steps of
+0.5 s, from 178.5 s to 180.5 s. Each rule had two refused mesh moves, each cured by one rebuild, and no move was refused
+after a rebuild; the first refusal came at the same instant (178.75 s) under both rules, so it belongs to the shape and the
+mesh at that moment, not to the rule, and the worst radius ratio of a kept move was 0.052 under both. Its sheltered corners
+fell from 116 to 4 over the four steps. The 100 mm body flew 80 macro steps of 0.0125 s, from 32.5 s to 33.5 s, with no
+refused move and no rebuild under either rule; the smallest radius ratio of each step's last move fell steadily from 0.118
+to 0.085 under `sphere` and to 0.089 under `normals`, so the new rule brought the mesh a little closer to the 0.05 limit
+(a decline of 0.033 against 0.029 over the second), and its sheltered corners rose from 568 to 700. Every flight exited 0
+at its end time. Over these spans the new rule did not make refused moves more frequent; on the 100 mm body it would bring
+the next rebuild somewhat earlier. **(verified, same runs)** The new rule melts both bodies faster. The metal drawn from the
+3D model into the skins was 12.9 g against 8.9 g on the 50 mm body (45 % more) and 5.8 g against 3.3 g on the 100 mm body
+(74 % more), while on the 100 mm body the whole-body convective heating was only about 5 % higher (16.0 against 15.2 kW,
+averaged over the second) and the stagnation heating 25 % higher (2.62 against 2.10 MW/m^2, from the radii 50.9 and
+83.8 mm). **(assumed)** The heat concentrated at the smaller nose radius is taken to be why the melting rises far more than
+the total heating; this was not tested. No metal was released as droplets in any of these flights, so how the spray
+responds to the rule is not measured.
+
+### 15.5 The interface, and what it was checked against
+
+The following are the builder's calls (the design marks them "my call"); Asha decided the rule, not these.
+
+- `run` and `resume` take `--windward-loads sphere|normals`, `sphere` by default for skin runs. `normals` is the earlier
+  rule exactly, and its runs are named with `_windward-normals`. Under `sphere`, `--leeward-test` and `--size-feedback` are
+  refused (exit 2), because the rule fixes both. A state saved before the option resumes on `normals`, and
+  `resume --windward-loads` switches it. A run's JSON records the rule as `settings.skin.windward_loads` and a resume's as
+  `settings.windward_loads`. The library's `SkinBody` constructor also defaults to `sphere`.
+- Under `sphere` the history's nose columns (`nose_radius_mm`, `fitted_nose_radius_mm`, `nose_bound_mm`, `nose_cap_points`,
+  `nose_cap_concave`) carry the new fit, and three columns follow the leeward ones: `sheltered_corners`, `sphere_centre_mm`
+  and `sphere_fit_rms_mm`. Each skin frame gains `load_angle_deg` and, under `sphere`, `sheltered`, so the shelter test can be
+  inspected in ParaView.
+- Where there is no valid sphere (fewer than 4 exposed corners, a radius that is not finite and positive, corners coplanar to
+  rounding, or a centre on the flow side of the corners' mean point), each exposed corner reads its own normal's angle and the
+  radius is the flat-face bound (the mesh radius where there is no bound); `nose_cap_concave` marks it. A flat or dished
+  front is then heated as a flat face. Under `sphere` such a step records nan as the fitted radius
+  (`fitted_nose_radius_mm`), the sphere's centre and its misfit, so a dished front's own radius is not in the history, where
+  the earlier rule recorded the concave cap's fit. **(verified)** on hand-shaped tops, not on a real flight:
+  `test_a_flat_exposed_face_falls_back_to_normal_angles_at_the_bound` (a flat and a dished front, and no bound),
+  `test_fewer_than_four_exposed_corners_are_no_sphere_and_read_their_normals_at_the_bound` and
+  `test_a_valid_sphere_with_no_bound_is_used_as_fitted`, whose fit is used uncapped.
+- On the interim gas loads' provider (`--gas-loads similarity`, the default; section 14), as built at the merge of
+  2026-11-15 (a ruling of the merge, taken on Asha's behalf and following ruling R15 of the interim gas loads): an exposed corner
+  keeps the angle of its ray from the fitted centre even past 90 degrees (its own normal's angle where there is no valid
+  sphere), so a ray angle past 90 degrees takes the provider's lee loads; a corner the ray test shelters reads 180 degrees
+  (pi, `skinbody.SHELTER_WAKE`, the rear of the separated wake: the base pressure, no heating and almost no shear)
+  whichever way its normal faces; and a corner behind the centroid's plane reads its own normal's angle where that is past
+  90 degrees (it faces away from the flow, and takes the provider's lee loads, as under R15) and 180 degrees where it faces
+  the flow. On the classic loads the rule is as in 15.1, every sheltered or behind-the-plane corner at the larger of its
+  own angle and 90 degrees plus a microradian, bit for bit as before the merge. Under `normals` the corners follow
+  section 14.5 exactly. **(verified)** on hand-shaped tops, not on a flight:
+  `test_under_the_sphere_rule_on_the_provider_sheltered_corners_read_the_wake_and_corners_facing_away_their_angle` and
+  `test_under_the_sphere_rule_the_provider_reads_the_sphere_rule_s_radius` in `tests/test_reentry_model_skinbody.py`.
+  **(assumed)** that a sheltered corner whose normal faces away from the flow lies in the separated wake, rather than
+  taking the lee loads at its own angle, is that ruling's choice; nothing in the repository measures it.
+
+**(verified)** `normals` is today's rule: `analysis/skyscrapers_port/same_results.py`, run on this branch with
+`--windward-loads normals` against main at 4e857e1, differs in exactly one place for the skins case, the new key
+`settings.skin.windward_loads` in the run's JSON, and the same holds for a resume of 0.25 s from main's saved state (0.125 s
+of flight added, 19 macro steps; the runbook's 22.6 s was not run), whose one difference is the new key
+`settings.windward_loads` in the resume's JSON. The element and non-melting cases show no difference. **(verified)** On the
+smoke flight of `Reentry Model/CLAUDE.md` (the `skins` case, nine macro steps, one run each) both rules exited 0. The sphere
+rule drew 0.01417 kg of metal from the 3D model into the skins (the `drawn` mass the run prints, `drawn_mass_kg`: the rigid
+metal that a column below its minimum takes from the 3D model) and sprayed 0.001359 kg; `normals` drew 0.01462 kg and
+sprayed 0.001329 kg. A run seeds numpy's generator at its start (`cmd_run` in `cli.py`; pyamg's draws are the only random
+ones), so two runs of one build agree bit for bit and these differences are not noise: against `normals`, the skins under
+`sphere` drew 3.1 % less metal and sprayed 2.3 % more on that one short flight, which is the rule's effect there. The two
+cost the same within one run's wall-time noise (32.1 s and 32.8 s). That flight is far too short and too early to say how
+the rule changes a real flight; it says only that the rule runs. Those numbers are on the classic loads, before the merge.
+
+**(verified, one run of each)** After the merge with the interim gas loads (2026-11-15) the comparison was repeated
+against main at 70deee0, on the similarity loads that both sides fly by default: the merged tree under
+`--windward-loads normals` differs from main in exactly one place on the skins case, the key `settings.skin.windward_loads`,
+the element, non-melting and non-melting element cases are identical, and a resume of main's saved skins state from
+0.125 s to 0.25 s differs only in `settings.windward_loads`. The smoke flight on the merged tree, now on the similarity
+loads, exited 0 at its end time under both rules. The sphere rule drew 0.02548 kg of metal into the skins and sprayed
+3.264e-05 kg (2,679 droplets); `normals` drew 0.02578 kg and sprayed 2.279e-05 kg (1,610 droplets), so on that one short
+flight the sphere rule drew 1.2 % less metal and sprayed 43 % more, the sprayed masses being only a few hundredths of a gram.
+The ray test sheltered no corner at any step; the corners behind the centroid's plane that face the flow, which the
+provider reads at 180 degrees, numbered none from the first step to 0.075 s and then 40, 52, 47 and 39 under `sphere`
+(29, 52, 51 and 40 under `normals`). The wall times were 127.6 s and 124.8 s, measured with the unit tier running beside
+them, so they say only that the two rules cost about the same. Both rules spray 40 to 60 times less than the same flight
+on the classic loads above (1.359 and 1.329 g), which is a difference between the two loads (section 14.7), not between the
+rules.
+
+The resume test of `tests/test_reentry_model_restart.py`
+(`test_resume_windward_loads_keeps_the_saved_rule_switches_it_and_reads_an_old_state_as_normals`) and three tests in
+`tests/test_reentry_model_cli.py` check the interface:
+`test_the_windward_loads_are_sphere_by_default_reach_the_body_and_mark_only_normals_in_the_name` (the default, the body's
+rule and the run name), `test_the_windward_loads_option_is_refused_where_it_cannot_apply` (the refusals) and
+`test_a_skin_run_records_its_windward_loads_and_the_sphere_columns` (the JSON and the history's columns).
+**(verified, on the classic loads)** A body with sheltered corners flies under the default rule:
+`test_a_ringed_body_flies_a_macro_step_with_its_sheltered_corners_unloaded_and_its_books_closed` in
+`tests/test_reentry_model_skinbody.py` advances the ringed test sphere one macro step on the classic loads (a surface flow
+with no provider and a cosine heating, as before the merge) with the flow and a spray model on, at
+a modest heating chosen to stay clear of the coarse mesh's rear margin (15.7). Its mass, energy and momentum books close,
+the corners sheltered at the step's start take no heat flux, pressure gradient or gas shear in any part of the step, and the
+ring's crest corners whose own normals face away from the flow are heated (the counts are in the final fix wave's report,
+`final-fix-report.md` with the task reports; one run). On the provider a sheltered corner takes the base pressure's
+gradient at 180 degrees, so the "no pressure gradient" part of that result is the classic loads' only.
+**(verified, one run, on the provider)**
+`test_under_the_sphere_rule_on_the_provider_sheltered_corners_take_no_heat_or_shear_and_exposed_ones_past_90_the_lee_loads`
+evaluates the ringed sphere's surface flow and similarity heating once on a provider, through `flow_forcing` and
+`CoupledRun.loads_at`: its 105 ray-sheltered corners (55 facing the flow, 50 facing away) take no heat flux and no shear
+and the provider's base pressure, and its 38 exposed corners past 90 degrees by their ray angle (at most 91.9 degrees)
+take the provider's lee heating and shear and are not windward. It does not advance the body.
+
+### 15.6 The element model is unchanged
+
+The element model (`--surface-model elements`) keeps its own 30-degree cap fit and its own windward test. It refuses
+`--windward-loads` (exit 2), as it refuses `--geometry-stop`. **(verified)** The element and non-melting cases of
+`same_results.py` are identical between main at 4e857e1 and this branch, apart from the one JSON key in the skins case
+described above, and again between main at 70deee0 and the tree merged with the interim gas loads (15.5).
+
+### 15.7 What to watch in real flights
+
+**(assumed)** The mesh-quality margin at the rear of a coarse body is thin, and it predates this change. Task 3 found that the
+test `test_a_profile_skin_body_sprays_and_keeps_its_books` (a 4 mm sphere at 3 MW/m^2, 890 K, spray profile) raised a
+moving-mesh error under the sphere rule with the new push direction. The failing corners were on the rear half, none
+exposed, and their push direction was unchanged (0.00 degrees gap). The corner move that breaks the mesh, about 0.99 mm of
+base melt-back on 4 mm elements, is the same size in every variant, including the one already at the old push direction
+(commit 345fa6a), where the smallest radius ratio of the touched elements was 0.0439 against the 0.05 limit and the move was
+refused, and the retry on the rebuilt mesh passed at 0.1451. Under `normals` the same move has a ratio of 0.0667. The test is
+pinned to `normals` for that reason. This was one coarse mesh, one gas state, two steps and one run per variant. A real
+spraying flight on the sphere default should be watched for refused rear moves; the short resumed flights of 15.4 are the
+only deformed-body flights on it so far, and none of them sprayed.

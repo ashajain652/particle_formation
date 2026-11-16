@@ -8,7 +8,10 @@ Mass is constant in Step 2; the loop already carries the body's mass and the mes
 `body` must be a ThermalBody: CoupledRun uses `theta`, `surface`, `radiated_power()`, `surface_stats()`,
 `nose_radius()` and `integrated_heat`, beyond what the `Body` protocol declares. `ConstantBody` is for `Simulator.run()` only."""
 import os
+import signal
+import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -66,7 +69,10 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     "b_over_delta_m_median", "sheared_depth_over_delta_m_median",
                     "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg",
                     # the windward loads' nose radius (sub-plan 22 Task 5g, Asha 2026-11-10): the radius of the surface at the end of the step, which the next step's loads read, the
-                    # sphere fitted to the tops' cap, the reported bound, the corners fitted and 1 where the cap was concave
+                    # sphere fitted to the tops' cap, the reported bound, the corners fitted and 1 where the cap was concave --
+                    # under --windward-loads normals the 30-degree cap's fit; under `sphere` (the fitted-sphere loads, Asha
+                    # 2026-11-13) the sphere fitted to the exposed corners, the exposed corners counted and 1 where there was no
+                    # valid sphere, and skinbody.SPHERE_COLUMNS follow the two leeward columns below
                     "nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave",
                     # the leeward test (sub-plan 22 Task 5j, Asha 2026-11-10): the mass centroid's position along the flight
                     # direction relative to the 3D mesh's mean point [mm, positive forward], and the corners that face the flow
@@ -76,6 +82,20 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
 # a resume that gives or drops a limit adds them to its saved row or takes them from it (cli.cmd_resume)
 END_SNAP = 1e-6                   # of the macro step: a step that would end this close short of t_max ends at it (below)
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+
+
+class FlightStopped(BaseException):
+    """A flight stopped by the signal `signum`: the command line's SIGTERM handler raises it during `CoupledRun.run`, so that
+    `kill` stops a flight as Control-C does, saving its last completed macro step (Task 4 of the geometry stop, Asha
+    2026-11-12). A BaseException, as KeyboardInterrupt is, so that no `except Exception` on the way (a save's, a fallback's,
+    a wrapper that turns errors into its own) takes the stop for an error and flies on."""
+
+    def __init__(self, signum):
+        self.signum = int(signum)
+        super().__init__("stopped by signal {} ({})".format(self.signum, signal.Signals(self.signum).name))
+
+
+STOPS = (KeyboardInterrupt, FlightStopped)       # a stop by hand: Control-C, or a signal the command line turns into one
 
 
 @dataclass
@@ -99,6 +119,8 @@ class CoupledSettings:
                                       # step ending at or after it, to save_path (`restart.save`; sub-plan 22 Task 5a)
     save_path: str = None
     save_meta: dict = None            # kept with the state: what made the run (the command line's arguments and name)
+    end_path: str = None              # where the run saves its whole state when the flight ends, whatever the end (the state's
+                                      # "end" is `sim.end_reason`); None: no end state
 
     def __post_init__(self):
         if self.dt_continuum is not None and not 0.0 < self.dt_continuum <= self.dt:
@@ -108,6 +130,8 @@ class CoupledSettings:
 
 
 class CoupledRun:
+    geometry_stopped = None            # (test, time s, value) where a skin flight ended at a geometry breach; old states have none
+
     def __init__(self, sim, body, heating_model, settings=None):
         """`body` must be a ThermalBody (uses `theta`, `surface`, `radiated_power()`, `surface_stats()` and
         `integrated_heat`, beyond the `Body` protocol); `ConstantBody` is for `Simulator.run()` only."""
@@ -117,6 +141,7 @@ class CoupledRun:
             raise ValueError("frames_every > 0 needs an output_dir")
         self.switched_at = self.switch_trigger = None              # the continuum switch: (t, Kn, altitude km), and why
         self.state_saved_at = self.state_save_error = None        # the save's flight time [s], or why it failed (Task 5a)
+        self.end_saved_at = self.end_save_error = None            # the same for the state saved at the flight's end
 
     def loads_at(self, t, y):
         a = self.sim.aero_state(t, y[:3], y[3:])
@@ -151,7 +176,11 @@ class CoupledRun:
     def run(self, resume=None):
         """Fly to the end, from the start or, with `resume` -- a state this run saved (`settings.save_at`), read back by
         `restart.load` (sub-plan 22 Task 5a) -- from the end of the saved macro step: the history then starts with that
-        step's row, and the continuum switch, the frames' clock and the step count are the saved run's."""
+        step's row, and the continuum switch, the frames' clock and the step count are the saved run's.
+
+        With `settings.end_path` (Task 4 of the geometry stop, Asha 2026-11-12) the run keeps a copy of its state at the
+        end of the last completed step, and a step that raises, or a stop by hand (Control-C, or the command line's
+        SIGTERM), ends the flight there instead of escaping: see `_failed`. Without it an error escapes as before."""
         started = time.perf_counter()
         sim, body, s = self.sim, self.body, self.settings
         if resume is None:
@@ -171,23 +200,49 @@ class CoupledRun:
                 # and a direct resume both pass, and the saved row gets the column too
                 body.jump_faults_bottom_cell = body.jump_faults
                 rows[0].setdefault("jump_faults_bottom_cell", rows[0].get("jump_faults", body.jump_faults))
-        while sim.end_reason is None:
-            dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
-            a, loads = self.loads_at(sim.t, sim.y)
-            body.advance(sim.t, dt, loads, state=a)
-            step += 1
-            self._switch(sim.t, a)
-            if len(loads.q_conv) != body.surface.n_patches:       # elements died this step: loads on the new surface for the record
+        # the copy of the last completed step (Task 4): a local, never an attribute of the run, so that no state pickled
+        # after it (the next copy, the state at save_at, the end state) carries it and grows with every step. The first
+        # copy that cannot be made is recorded (its message and flight time, a resumed run's record cleared here)
+        self.copy_error = None
+        last = self._copy(step, rows) if s.end_path is not None else None
+        try:
+            while sim.end_reason is None:
+                dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
                 a, loads = self.loads_at(sim.t, sim.y)
-            rows.append(self.row(sim.t, sim.y, a, loads))
-            states.append(sim.y.copy())
-            self._frame(step, sim.t, loads)
-            if (self.melting or self.skins) and body.demised():
-                sim.end_reason = "demise"
-            if (s.save_at is not None and sim.end_reason is None and self.state_saved_at is None
-                    and self.state_save_error is None and sim.t >= s.save_at - END_SNAP * s.dt):
-                self._save(step, rows[-1])
+                body.advance(sim.t, dt, loads, state=a)
+                step += 1
+                self._switch(sim.t, a)
+                if len(loads.q_conv) != body.surface.n_patches:       # elements died this step: loads on the new surface for the record
+                    a, loads = self.loads_at(sim.t, sim.y)
+                rows.append(self.row(sim.t, sim.y, a, loads))
+                states.append(sim.y.copy())
+                self._frame(step, sim.t, loads)
+                if (self.melting or self.skins) and body.demised():
+                    sim.end_reason = "demise"
+                if self.skins and sim.end_reason is None and body.geometry_stop:     # any other end on this step wins (open item 4)
+                    breach = body.geometry_breach()
+                    if breach is not None:
+                        sim.end_reason = "geometry"
+                        self.geometry_stopped = (breach[0], float(sim.t), float(breach[1]))
+                if (s.save_at is not None and sim.end_reason is None and self.state_saved_at is None
+                        and self.state_save_error is None and sim.t >= s.save_at - END_SNAP * s.dt):
+                    self._save(step, rows[-1])
+                if s.end_path is not None and sim.end_reason is None:     # the step is complete and the flight goes on
+                    last = self._copy(step, rows, last)
+        except (Exception,) + STOPS as exc:
+            if last is None:
+                raise
+            return self._failed(exc, last, rows, states, started)
         self._collection()
+        if s.end_path is not None:
+            self.end_saved_at = self.end_save_error = None
+            self._save(step, rows[-1], path=s.end_path, end=sim.end_reason)
+        return self._history(rows, states, started)
+
+    def _history(self, rows, states, started):
+        """The flight's history from its rows and trajectory states, with its results: what `run` returns (Task 4: the end
+        of `run`, which a flight that failed also calls on the run of its last completed step)."""
+        sim, s = self.sim, self.settings
         columns = {k: np.array([r[k] for r in rows], dtype=float) for k in rows[0]}
         history = tj.History(columns, np.array(states), sim.end_reason)
         history.results = sim.results(history, sim.nfev, time.perf_counter() - started)
@@ -204,20 +259,95 @@ class CoupledRun:
                 history.results["dt_switch_trigger"] = self.switch_trigger
         if s.save_at is not None:
             history.results.update({"state_saved_at_s": self.state_saved_at, "state_save_error": self.state_save_error})
+        if s.end_path is not None:
+            history.results.update({"end_state_saved_at_s": self.end_saved_at, "end_state_error": self.end_save_error})
+            error, at = self.copy_error or (None, None)             # the first copy of a step that could not be made
+            history.results.update({"copy_error": error, "copy_error_time_s": at})
         return history
 
-    def _save(self, step, row):
-        """Save the whole run once, at the end of macro step `step`, whose history row is `row` (sub-plan 22 Task 5a):
-        the run, the step, its row and flight time, numpy's global random state and `settings.save_meta`, by
-        `restart.save`, which alters nothing the run holds. A save that fails is recorded and the flight goes on: its
-        state is worth less than the flight."""
+    def _save(self, step, row, path=None, end=None):
+        """Save the whole run at the end of macro step `step`, whose history row is `row` (sub-plan 22 Task 5a): the run,
+        the step, its row and flight time, numpy's global random state, `settings.save_meta` and `end`, why the flight
+        ended (None for a state saved on its way), by `restart.save` to `path` (default `settings.save_path`), which
+        alters nothing the run holds. A save that fails is recorded (as the end state's, when `path` is given) and the
+        flight goes on: its state is worth less than the flight."""
         s = self.settings
+        ending = path is not None
         try:
-            restart.save(s.save_path, {"format": restart.FORMAT, "run": self, "step": step, "row": row,
-                                       "time_s": float(self.sim.t), "rng": np.random.get_state(), "meta": s.save_meta})
-            self.state_saved_at = float(self.sim.t)
+            restart.save(path if ending else s.save_path, self._state(step, row, end))
+            if ending:
+                self.end_saved_at = float(self.sim.t)
+            else:
+                self.state_saved_at = float(self.sim.t)
         except Exception as exc:
-            self.state_save_error = "{}: {}".format(type(exc).__name__, exc)
+            message = "{}: {}".format(type(exc).__name__, exc)
+            if ending:
+                self.end_save_error = message
+            else:
+                self.state_save_error = message
+
+    def _state(self, step, row, end=None):
+        """The state `restart` saves of the run at the end of macro step `step`, whose history row is `row`."""
+        return {"format": restart.FORMAT, "run": self, "step": step, "row": row, "time_s": float(self.sim.t),
+                "rng": np.random.get_state(), "meta": self.settings.save_meta, "end": end}
+
+    def _copy(self, step, rows, last=None):
+        """(the run's state at the end of macro step `step`, pickled in memory as `restart.save` pickles it, with "end"
+        None; the number of history rows to that step), which a failure or a stop by hand writes as the end state (Task
+        4). A copy that cannot be made leaves `last`, the previous step's, as a save that fails never fails the flight; a
+        stop by hand during it leaves it too, since the new copy replaces the old only once it is complete. The first
+        copy that cannot be made is said at once on standard error, whatever the command line's --quiet, and recorded as
+        `copy_error` = (message, flight time), which the results carry: from then on a failure saves an earlier step's
+        state than the last completed one, or none if no copy was ever made."""
+        try:
+            return restart.dumps(self._state(step, rows[-1])), len(rows)
+        except Exception as exc:
+            if self.copy_error is None:
+                self.copy_error = ("{}: {}".format(type(exc).__name__, exc), float(self.sim.t))
+                print("warning: copying the state at {:.6g} s, which a failure or a stop by hand would save, failed: {}; "
+                      "such an end would now save an earlier step's state, or none".format(self.copy_error[1],
+                                                                                           self.copy_error[0]),
+                      file=sys.stderr, flush=True)
+            return last
+
+    def _failed(self, exc, last, rows, states, started):
+        """The end of a flight whose macro step raised `exc`, or that was stopped by hand (Task 4; Asha, 2026-11-12: "the
+        code should always produce a saved state when it terminates"). `last`, the copy of the last completed step, is
+        loaded back as a run of its own -- consistent, unlike this one, which the step left part way -- and saved to
+        `settings.end_path` with "end" `failed`, or `stopped` for Control-C or FlightStopped. The run is saved as it was,
+        its flight not ended (`sim.end_reason` None), so a resume flies on from it and repeats the failing step; only
+        then is its end reason set. A save that fails, a second Control-C included, is recorded and changes nothing
+        else. Returns that run's history of the completed steps, with `history.run` that run, `results["failure"]` =
+        {"kind", "error": "<Type>: <message>", "time_s": the time of the step saved}, which is the last completed step
+        unless a copy could not be made (`copy_error`, carried over to the results), and what the command line says of the
+        end and exits with: `history.failure_traceback`, `exc`'s traceback formatted as Python prints it (None for a
+        stop), `history.failure_message`, its message (its type's name if it has none), and `history.failure_signum`, the
+        signal of a stop (FlightStopped's, or SIGINT for Control-C; None for a failure). Not `exc` itself (final fix
+        wave, item 4): its traceback holds `run`'s frame, and with it the copy's bytes, which would then stay alive
+        through the writing of the results."""
+        kind = "stopped" if isinstance(exc, STOPS) else "failed"
+        data, n = last
+        state = restart.loads(data)
+        state["end"] = kind
+        run = state["run"]
+        run.end_saved_at = run.end_save_error = None
+        try:
+            restart.save(run.settings.end_path, state)
+            run.end_saved_at = state["time_s"]
+        except (Exception,) + STOPS as error:
+            run.end_save_error = "{}: {}".format(type(error).__name__, error)
+        run.sim.end_reason = kind
+        run.copy_error = self.copy_error              # this run's record: the copy restored may predate it
+        run._collection()
+        history = run._history(rows[:n], states[:n], started)
+        history.run = run
+        history.failure_traceback = ("".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                                     if kind == "failed" else None)
+        history.failure_message = str(exc) or type(exc).__name__
+        history.failure_signum = (exc.signum if isinstance(exc, FlightStopped)
+                                  else int(signal.SIGINT) if isinstance(exc, KeyboardInterrupt) else None)
+        history.results["failure"] = {"kind": kind, "error": "{}: {}".format(type(exc).__name__, exc), "time_s": state["time_s"]}
+        return history
 
     def _switch(self, t, a):
         """The continuum step (amendment of 2026-10-07): from the first step whose aero state -- the one the body was
@@ -283,6 +413,8 @@ class CoupledRun:
                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
                                                   "wall_move_s", "wall_rebuild_s", "wall_flow_s", "rebuild_mass_residual_kg")})
         out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "jump_faults_bottom_cell", "absorb_capped", "interface_repeats")})
+        stop = self.geometry_stopped                                            # what ended the flight at a geometry breach, or None
+        out["geometry_stop"] = None if stop is None else {"test": stop[0], "time_s": stop[1], "value": stop[2]}
         if body.spread_limit is not None:                                       # the deposit's spreading (sub-plan 22 Task 5c)
             out.update({"spread_limit_deg": body.spread_limit, "spread_mass_kg": body.spread_mass})
         return out
@@ -384,8 +516,9 @@ def write_vtk_frame(output_dir, k, body, loads):
 def write_skin_frame(output_dir, k, body, loads):
     """A frame of the layered-skin body (sub-plan 20, spec 10.2): field_<k>.vtu, the 3D model's nodal T on its current
     (moving) mesh; surface_<k>.vtp, the top surface with per-corner point data -- top temperature, convective flux,
-    liquid and flowing depths, skin thickness and cells, the base's position (the corner on the 3D mesh) and the top
-    cell's speed (sub-plan 21 Task 6c)."""
+    liquid and flowing depths, skin thickness and cells, the base's position (the corner on the 3D mesh), the top
+    cell's speed (sub-plan 21 Task 6c), the angle the windward loads read [deg] and, under the sphere rule, whether the
+    corner is sheltered (the fitted-sphere loads design, Asha 2026-11-13)."""
     import pyvista as pv
     mesh, sk, mat = body.mesh, body.skins, body.material
     cells = np.hstack([np.full((mesh.n_elements, 1), 4), mesh.tets]).ravel()
@@ -402,4 +535,9 @@ def write_skin_frame(output_dir, k, body, loads):
     poly.point_data["flowing_depth"] = sk.depth_above(mat.T_rigid) if mat.melts else np.zeros(sk.n)
     poly.point_data["base_position"] = body.columns.points
     poly.point_data["top_speed"] = np.where(sk.count > 0, np.linalg.norm(sk.U[:, 0], axis=1), 0.0)
+    # the angle each corner's windward loads read [deg] (`load_angles`), and under the sphere rule whether the corner is
+    # sheltered (1) or not (0), so that the shelter test can be inspected in ParaView
+    poly.point_data["load_angle_deg"] = np.degrees(body.load_angles())
+    if body.windward_loads == "sphere":
+        poly.point_data["sheltered"] = body.sphere_fit.sheltered.astype(float)
     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))

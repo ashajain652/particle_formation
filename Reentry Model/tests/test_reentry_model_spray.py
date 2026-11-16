@@ -1,7 +1,9 @@
 """spray.py: delta_m, the thin-film and Rayleigh-Taylor modes against Girin & Kopyt (1994), the thick branch, release
 bookkeeping, size caps and histograms."""
+import dataclasses
 import json
 import os
+import pickle
 
 import numpy as np
 import pytest
@@ -932,3 +934,330 @@ def test_spray_gates_before_and_band_off_change_nothing_to_the_last_bit():
         old, new = spraying_cases()[name][0], spraying_cases(spray_gates="2026-11-10")[name][0]
         for field in ("r", "mdot", "dm", "dn", "branch", "wavelength"):
             assert np.array_equal(getattr(old, field), getattr(new, field), equal_nan=True)
+
+
+# -- the profile path: Girin's gradient mode solved on the skins' own melt profile (kinked-profile dispersion, Task 5) ------
+K_F = 1.0 / 50e-6           # 1/m, the fastest wave's wavenumber in these tests: a wavelength of 2 pi x 50 um = 0.31 mm
+NU_LIQUID = 5e-7            # m2/s, a layer's Couette viscosity near the liquid's own 5.4e-7
+
+
+def profile_modes(n, resolved=True, growth=0.0, k=np.nan, wall_depth=1e-4, nu_eff=NU_LIQUID, we_s=1.5,
+                  cap_gradient=1e-3, cap_driven=1e-3):
+    """A spray.ProfileModes of n columns, each field one value for all or one per column."""
+    full = lambda x, dtype=float: np.array(np.broadcast_to(np.asarray(x, dtype=dtype), (n,)))
+    return spray.ProfileModes(resolved=full(resolved, bool), growth=full(growth), k=full(k), wall_depth=full(wall_depth),
+                              nu_eff=full(nu_eff), we_s=full(we_s), cap_gradient=full(cap_gradient),
+                              cap_driven=full(cap_driven))
+
+
+def same_result(a, b, skip=()):
+    """Every SprayResult field of a and b np.array_equal (nan equal to nan), or None in both."""
+    for f in dataclasses.fields(spray.SprayResult):
+        if f.name in skip:
+            continue
+        x, y = getattr(a, f.name), getattr(b, f.name)
+        if x is None or y is None:
+            assert x is None and y is None, f.name
+        else:
+            assert np.array_equal(x, y, equal_nan=True), f.name
+
+
+def melt_layer_cases():
+    """The evaluate calls of `test_melt_layer_and_branches`, as (args, kwargs): the thick, thin and dry patches on
+    Girin's closure, the Couette closure, the free-molecular branch, and the leeward patches."""
+    flow = FakeFlow(3)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.array([1e-3, 2e-5, 0.0])
+    v_s = np.array([5.0, 20.0, 0.0])
+    areas, m_f = np.full(3, 1e-5), b * LIQ.rho * 1e-5
+    flow_c = FakeFlow(2, closure=sf.CLOSURE_COUETTE)
+    dm_c, _ = spray.melt_layer(flow_c, LIQ)
+    flow_fm = FakeFlow(2, closure=sf.CLOSURE_COUETTE, branch=sf.BRANCH_FREE_MOLECULAR)
+    two = (np.array([2e-5, 1e-3]), dm_c, np.array([20.0, 20.0]), np.array([True, True]), 0.5, areas[:2], m_f[:2] + 1e-9)
+    return [((flow, FakeState(), b, delta_m, v_s, np.array([True, True, True]), 0.5, areas, m_f), {}),
+            ((flow_c, FakeState()) + two, {}),
+            ((flow_fm, FakeState()) + two, {"b_layer": np.full(2, 1e-3), "regime_layer": np.full(2, 1e-3)}),
+            ((flow, FakeState(), b, delta_m, v_s, np.array([False, False, False]), 0.5, areas, m_f), {})]
+
+
+def test_profile_none_is_todays_evaluate():
+    """With profile=None and rt_extent=None every SprayResult field is today's, on the inputs of
+    `test_melt_layer_and_branches`, and the result has no cap depth; a profile that resolves no column changes no field
+    but the cap depth it records, the caller's, because every unresolved column takes today's code."""
+    model = spray.SprayModel(LIQ)
+    for args, kw in melt_layer_cases():
+        today = model.evaluate(*args, **kw)
+        same_result(today, model.evaluate(*args, **kw, profile=None, rt_extent=None))
+        assert today.cap_depth is None
+        n = args[2].size
+        cap = np.full(n, 1e-3)
+        capped = model.evaluate(*args, **kw, cap_depth=cap)
+        unresolved = model.evaluate(*args, **kw, cap_depth=cap,
+                                    profile=profile_modes(n, resolved=False, growth=2e4, k=K_F, wall_depth=5e-4))
+        same_result(capped, unresolved, skip=("cap_depth",))
+        assert capped.cap_depth is None and np.array_equal(unresolved.cap_depth, cap)
+
+
+def test_the_gradient_mode_on_the_profile():
+    """Spec 6.5 and 6.6: on a resolved column the gradient mode solved on the profile sprays by Girin's torus form, with
+    lambda = 2 pi / k, r = k_r lambda and the growth time k_t / growth, as branch 5, and records the profile's Weber number;
+    no critical Weber number applies (0.5 here, below 3.08). It is active only where its growth beats the viscous damping
+    of its own wave, 2 nu_eff k^2: at k = 1/(50 um) that damping is 400 1/s for nu_eff = 5e-7 m2/s and 4000 1/s for
+    5e-6 m2/s, so a growth of 2000 1/s is active on the first and damped on the second; and only where the wave fits in
+    its region. Where it is not active the gas-driven mode takes the column, with today's Weber number."""
+    flow = FakeFlow(4, u=500.0)           # the gas-driven lambda* is 7.4 mm and its tau* 27 ms: the gradient mode is faster
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, areas = np.full(4, 1e-3), np.full(4, 1e-5)
+    damping = 2.0 * NU_LIQUID * K_F ** 2
+    modes = profile_modes(4, growth=np.array([2000.0, damping, 2000.0, 2000.0]), k=K_F,
+                          nu_eff=np.array([NU_LIQUID, NU_LIQUID, 5e-6, NU_LIQUID]), we_s=np.array([0.5, 1.0, 1.5, 2.0]),
+                          wall_depth=1e-3)
+    extent = np.array([1.0, 1.0, 1.0, 1e-4])          # the fourth column's region, 0.1 mm, is narrower than the 0.31 mm wave
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.full(4, 5.0), np.ones(4, bool), 0.5, areas,
+                                         b * LIQ.rho * areas, extent=extent, cap_depth=np.full(4, 1e-3), profile=modes)
+    lam = 2.0 * np.pi * 50e-6
+    assert res.branch[0] == spray.BRANCH_PROFILE and res.we_s[0] == modes.we_s[0] and res.we_s[0] < 3.08
+    assert res.mdot[0] == pytest.approx(LIQ.rho * np.pi * (0.17 * lam) ** 2 / (lam * 1.1 / 2000.0), rel=1e-12)
+    assert res.wavelength[0] == pytest.approx(lam, rel=1e-12) and res.growth[0] == pytest.approx(1.1 / 2000.0, rel=1e-12)
+    assert res.r[0] == pytest.approx(0.17 * lam, rel=1e-12) and res.dm[0] > 0.0 and res.unstable[0]
+    assert np.isnan(res.h_floor[0]) and np.isnan(res.gamma_tau[0]) and not res.outside[0]
+    assert damping == pytest.approx(400.0) and 2.0 * 5e-6 * K_F ** 2 == pytest.approx(4000.0)
+    assert res.branch[1:].tolist() == [spray.BRANCH_THIN] * 3                 # not active: the gas-driven mode's
+    assert not np.isclose(res.wavelength[1:], lam).any()
+    assert res.we_s[1:] == pytest.approx(LIQ.rho * 25.0 * delta_m[1:] / LIQ.sigma, rel=1e-12)   # today's We_s there
+
+
+def test_the_gas_driven_mode_reads_the_wall_and_nu_eff():
+    """Spec 6.5: on a resolved column the gas-driven mode is Girin & Kopyt's thin branch with the edge state, with the depth
+    to the wall in place of the film depth b in min(b, lambda*/8), and the viscous-film check on that depth with nu_eff in
+    place of the liquid's viscosity; of the two modes, the one with the shorter growth time takes the column. The edge
+    state gives lambda* = 0.46 mm and tau* = 0.42 ms; the caller's b, 1 mm, is deeper than lambda*/8 = 58 um and is not
+    read. On the free-molecular branch the mode is the rarefied one, with the freestream."""
+    n = 5
+    flow = FakeFlow(n)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, areas = np.full(n, 1e-3), np.full(n, 1e-5)
+    wall = np.array([3e-5, 2e-4, 3e-5, 1e-4, 1e-4])
+    nu_eff = np.array([NU_LIQUID, NU_LIQUID, 5e-6, NU_LIQUID, NU_LIQUID])
+    growth = np.array([0.0, 0.0, 0.0, 2000.0, 20000.0])      # 1/s: none; none; none; 0.55 ms; 55 us
+    modes = profile_modes(n, growth=growth, k=K_F, wall_depth=wall, nu_eff=nu_eff)
+    model = spray.SprayModel(LIQ)
+    res = model.evaluate(flow, FakeState(), b, delta_m, np.full(n, 5.0), np.ones(n, bool), 0.5, areas,
+                         b * LIQ.rho * areas, cap_depth=np.full(n, 1e-3), profile=modes)
+    lam, tau = spray.thin_film_mode(np.full(n, 1.0), np.full(n, 7e-4 * 2000.0 ** 2), LIQ)
+    gt, out = spray.viscous_film(lam, tau, wall, LIQ, nu=nu_eff)
+    assert res.branch.tolist() == [spray.BRANCH_THIN] * 4 + [spray.BRANCH_PROFILE]
+    assert res.gamma_tau[:4] == pytest.approx(gt[:4], rel=1e-12) and np.array_equal(res.h_floor[:4], wall[:4])
+    assert not out.any() and not res.outside.any() and np.isnan(res.gamma_tau[4]) and np.isnan(res.h_floor[4])
+    # the wall, not b: 30 um is below lambda*/8, 0.2 mm above it
+    assert res.mdot[0] == pytest.approx(LIQ.rho * 3e-5 / tau[0], rel=1e-12)
+    assert res.mdot[1] == pytest.approx(LIQ.rho * lam[1] / 8.0 / tau[1], rel=1e-12)
+    # nu_eff, not the liquid's: ten times the viscosity damps the wave on 30 um (gamma tau* 2.1), which the liquid's does not
+    assert gt[2] > 1.0 and res.mdot[2] == 0.0 and res.dm[2] == 0.0
+    assert spray.viscous_film(lam[2:3], tau[2:3], wall[2:3], LIQ)[0][0] < 1.0
+    # the faster mode wins: tau* = 0.42 ms against k_t / growth = 0.55 ms, then 55 us
+    assert tau[3] < 1.1 / 2000.0 and res.growth[3] == pytest.approx(tau[3], rel=1e-12)
+    assert res.wavelength[3] == pytest.approx(lam[3], rel=1e-12)
+    assert 1.1 / 20000.0 < tau[4] and res.growth[4] == pytest.approx(1.1 / 20000.0, rel=1e-12)
+    # viscous_film with the liquid's own nu given is the function without it, to the last bit
+    with_nu, without = spray.viscous_film(lam, tau, wall, LIQ, nu=LIQ.mu / LIQ.rho), spray.viscous_film(lam, tau, wall, LIQ)
+    assert np.array_equal(with_nu[0], without[0]) and np.array_equal(with_nu[1], without[1])
+    # the free-molecular branch (Girin's closure kept, so delta_m is finite): the freestream's lambda* = 7.5 mm, tau* = 27 ms
+    flow_fm = FakeFlow(1, branch=sf.BRANCH_FREE_MOLECULAR)
+    dm_fm, _ = spray.melt_layer(flow_fm, LIQ)
+    res = model.evaluate(flow_fm, FakeState(), np.full(1, 1e-3), dm_fm, np.full(1, 5.0), np.ones(1, bool), 0.5, areas[:1],
+                         np.full(1, 1e-3 * LIQ.rho * 1e-5), cap_depth=np.full(1, 1e-2),
+                         profile=profile_modes(1, wall_depth=5e-4))
+    lam_r, tau_r = spray.thin_film_mode(np.array([24.0]), np.array([8e-5 * 7200.0 ** 2]), LIQ)
+    assert res.branch[0] == spray.BRANCH_RAREFIED and 5e-4 < lam_r[0] / 8.0
+    assert res.mdot[0] == pytest.approx(LIQ.rho * 5e-4 / tau_r[0], rel=1e-12) and res.h_floor[0] == 5e-4
+
+
+def test_no_delta_m_no_shear_mode_on_resolved_columns():
+    """Decision 6: delta_m decides whether a resolved column may shear-spray, the profile how. Off Girin's closure (no
+    delta_m) a resolved column takes no shear mode under either spray_gates setting, though `before` lets today's thin
+    branch spray an unresolved column there; nor does a resolved column whose layer above the wall is thinner than B_MIN,
+    or a leeward one. The Rayleigh-Taylor mode is not gated: a deep pool at the nose (lambda* 2 cm) takes its resolved
+    column all the same."""
+    n = 4
+    flow = FakeFlow(n, closure=sf.CLOSURE_COUETTE)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    assert np.isnan(delta_m).all()
+    b, areas = np.array([1e-4, 1e-4, 1e-4, 5e-3]), np.full(n, 1e-5)
+    w_n = np.array([0.0, 0.0, 0.0, 3.0 * LIQ.sigma * (2.0 * np.pi / 0.02) ** 2 / LIQ.rho])
+    modes = profile_modes(n, resolved=np.array([True, True, False, True]), growth=np.array([0.0, 2e4, 2e4, 0.0]), k=K_F)
+    for gates in spray.SPRAY_GATES_NAMES:
+        res = spray.SprayModel(LIQ, spray_gates=gates).evaluate(
+            flow, FakeState(), b, delta_m, np.full(n, 5.0), np.ones(n, bool), 0.5, areas, b * LIQ.rho * areas,
+            extent=np.full(n, 0.05), deceleration_n=w_n, cap_depth=np.full(n, 1e-3), profile=modes)
+        assert res.branch[:2].tolist() == [-1, -1] and (res.mdot[:2] == 0.0).all() and (res.dm[:2] == 0.0).all()
+        assert np.isnan(res.wavelength[:2]).all() and np.isnan(res.growth[:2]).all() and np.isnan(res.r[:2]).all()
+        assert res.branch[3] == spray.BRANCH_RT and res.dm[3] > 0.0
+        if gates == "before":
+            assert res.branch[2] == spray.BRANCH_THIN and res.dm[2] > 0.0       # today's thin branch, unresolved
+        else:
+            assert res.branch[2] == -1 and res.dm[2] == 0.0
+    flow = FakeFlow(3)                                          # Girin's closure: delta_m is finite
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, areas = np.full(3, 1e-4), np.full(3, 1e-5)
+    modes = profile_modes(3, growth=2e4, k=K_F, wall_depth=np.array([0.5 * spray.B_MIN, 1e-4, 1e-4]))
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.full(3, 5.0), np.array([True, False, True]),
+                                         0.5, areas, b * LIQ.rho * areas, cap_depth=np.full(3, 1e-3), profile=modes)
+    assert res.branch.tolist() == [-1, -1, spray.BRANCH_PROFILE] and res.dm[:2].tolist() == [0.0, 0.0] and res.dm[2] > 0.0
+
+
+def test_the_rayleigh_taylor_mode_reads_rt_extent():
+    """The front-surface Rayleigh-Taylor mode reads `rt_extent` (the skins' liquid pool region, spec 6.6) where it is given,
+    in place of `extent`, and only that mode does: the shear modes keep `extent`. Given `extent` itself, the result is
+    today's to the last bit. A pool narrower than half the marginal wavelength admits no Rayleigh-Taylor wave."""
+    flow = FakeFlow(2, closure=sf.CLOSURE_COUETTE, u=1.0)     # at the nose: the thin lambda* is 1.8 m and fits nowhere
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, layer, v_s = np.full(2, 1e-4), np.full(2, 5e-3), np.full(2, 0.1)
+    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+    lam_c = 2 * np.pi * np.sqrt(LIQ.sigma / (95.0 * LIQ.rho))          # the marginal wavelength
+    regions = np.array([0.4 * lam_c, 20.0 * lam_c])
+    run = lambda **kw: model.evaluate(flow, FakeState(), b, delta_m, v_s, np.full(2, True), 0.5, areas, m_f,
+                                      b_layer=layer, deceleration_n=np.full(2, 95.0), extent=regions, **kw)
+    today = run()
+    assert today.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_RT]
+    swapped = run(rt_extent=regions[::-1])
+    assert swapped.branch.tolist() == [spray.BRANCH_RT, spray.BRANCH_THIN]
+    assert swapped.dm[0] > 0.0 and swapped.dm[1] == 0.0
+    same_result(today, run(rt_extent=regions))
+    # the shear modes keep extent: the thin lambda* of 0.46 mm does not fit in 0.1 mm, whatever the pool's region
+    flow = FakeFlow(1, closure=sf.CLOSURE_COUETTE)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    thin = lambda **kw: model.evaluate(flow, FakeState(), np.full(1, 2e-5), delta_m, np.full(1, 20.0), np.ones(1, bool),
+                                       0.5, areas[:1], np.full(1, 2e-5 * LIQ.rho * 1e-5), **kw)
+    assert thin(extent=np.full(1, 1e-4), rt_extent=np.full(1, 1.0)).dm[0] == 0.0
+    assert thin(extent=np.full(1, 1e-2), rt_extent=np.full(1, 1e-4)).dm[0] > 0.0
+
+
+def test_the_crest_cap_follows_the_chosen_mode():
+    """Spec 6.6: the one-crest cap, (4/3) pi r^3 at most lambda^2 h, takes h from the run of the mode that took the column:
+    the gradient mode's (cap_gradient) on branch 5, the gas-driven mode's (cap_driven) where a resolved column took branch 1
+    or 2, and the caller's cap depth on every other column, the Rayleigh-Taylor mode's on a resolved column included. The
+    depth used is the result's `cap_depth`. A run of no depth gives no droplet, and nothing leaves."""
+    n = 5
+    flow = FakeFlow(n)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, areas = np.full(n, 1e-3), np.full(n, 1e-5)
+    modes = profile_modes(n, resolved=np.array([True, True, False, True, True]),
+                          growth=np.array([2e4, 0.0, 0.0, 0.0, 2e4]), k=K_F, wall_depth=1e-4,
+                          cap_gradient=np.array([2e-6, 5e-5, 7e-4, 7e-4, 0.0]),
+                          cap_driven=np.array([3e-5, 3e-5, 7e-4, 7e-4, 3e-5]))
+    w_n = np.array([0.0, 0.0, 0.0, 3.0 * LIQ.sigma * (2.0 * np.pi / 0.02) ** 2 / LIQ.rho, 0.0])   # lambda* 2 cm
+    res = spray.SprayModel(LIQ).evaluate(
+        flow, FakeState(), b, delta_m, np.full(n, 5.0), np.ones(n, bool), 0.5, areas, b * LIQ.rho * areas,
+        extent=np.array([1.0, 1.0, 1.0, 1e-4, 1.0]),     # the fourth: neither shear wave fits, the Rayleigh-Taylor one does
+        rt_extent=np.full(n, 1.0), deceleration_n=w_n, rt_layer=np.array([0.0, 0.0, 0.0, 5e-3, 0.0]),
+        cap_depth=np.full(n, 2e-4), profile=modes)
+    assert res.branch.tolist() == [spray.BRANCH_PROFILE, spray.BRANCH_THIN, spray.BRANCH_THICK, spray.BRANCH_RT,
+                                   spray.BRANCH_PROFILE]
+    assert res.cap_depth.tolist() == [2e-6, 3e-5, 2e-4, 2e-4, 0.0]
+    k_mode = {spray.BRANCH_PROFILE: 0.17, spray.BRANCH_THIN: 0.25, spray.BRANCH_THICK: 0.17, spray.BRANCH_RT: 1.0}
+    for i in range(4):
+        lam = res.wavelength[i]
+        assert res.dm[i] > 0.0
+        assert res.r[i] == pytest.approx(min(k_mode[res.branch[i]] * lam, crest(lam, res.cap_depth[i]), 0.0125), rel=1e-12)
+    assert res.r[0] < 0.17 * res.wavelength[0]                  # a run of 2 um binds the gradient mode's droplet
+    assert res.mdot[4] == 0.0 and res.dm[4] == 0.0 and res.dn[4] == 0.0 and np.isnan(res.r[4]) and not res.unstable[4]
+
+
+def test_the_dispersion_setting_defaults_to_table_and_is_validated():
+    """Spec 6.1 and the plan's call 8: `SprayModel.dispersion` is "table" as a class attribute and as the constructor's
+    default, so a model pickled before the setting existed, or built directly, keeps Girin's theory; the command line sets
+    "profile". An unknown name is refused. Only a setting other than the class's is stored, so a table model pickles as it
+    did before the setting existed, and the same bytes again once loaded. The model only carries the setting: evaluate
+    does not read it."""
+    assert spray.SprayModel.dispersion == "table" and spray.SprayModel(LIQ).dispersion == "table"
+    table = spray.SprayModel(LIQ, dispersion="table")
+    assert "dispersion" not in vars(table)
+    blob = pickle.dumps(table, protocol=0)
+    assert pickle.dumps(pickle.loads(blob), protocol=0) == blob
+    assert spray.SprayModel(LIQ, dispersion="profile").dispersion == "profile"
+    for bad in ("Profile", "girin", ""):
+        with pytest.raises(ValueError):
+            spray.SprayModel(LIQ, dispersion=bad)
+    model = spray.SprayModel(LIQ, dispersion="profile")
+    del vars(model)["dispersion"]                                       # a model pickled before the setting existed
+    assert pickle.loads(pickle.dumps(model)).dispersion == "table"
+    args, kw = melt_layer_cases()[0]
+    same_result(spray.SprayModel(LIQ).evaluate(*args, **kw), spray.SprayModel(LIQ, dispersion="profile").evaluate(*args, **kw))
+
+
+def test_records_append_the_profile_columns_and_spools_keep_their_names(tmp_path):
+    """Spec 6.8 and Review Focus 4: the profile path's records append the nine PROFILE_COLUMNS to the 27 SOURCE_COLUMNS,
+    which keep their meaning; `source_block`'s `extra` carries them on each released row. A spool keeps the names it was
+    made with, refuses a block of any other width, and a spool pickled before it had names reads 27 columns. `fit_width`
+    pads in-memory blocks with nan or cuts them, for a resume that changes the setting, the kept columns bit for bit."""
+    assert spray.record_columns(27) == spray.SOURCE_COLUMNS and len(spray.PROFILE_COLUMNS) == 9
+    assert spray.record_columns(36) == spray.SOURCE_COLUMNS + list(spray.PROFILE_COLUMNS)
+    assert spray.PROFILE_COLUMNS[:2] == ("depth_to_wall_m", "floor_like_wall")
+    # no record column may look like a wall-clock timer: same_results.py's comparison and the tests' row helpers skip
+    # every name that starts with "wall_" (final review of the kinked-profile dispersion, 2026-11-12)
+    assert not any(k.startswith("wall_") for k in spray.SOURCE_COLUMNS + list(spray.PROFILE_COLUMNS))
+    for width in (0, 26, 30, 37):
+        with pytest.raises(ValueError):
+            spray.record_columns(width)
+    # source_block's extra: one row per released patch, the patch's own extra values appended
+    flow = FakeFlow(2)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.array([1e-3, 1e-3])
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.array([5.0, 5.0]), np.array([False, True]), 0.5,
+                                         np.full(2, 1e-5), b * LIQ.rho * 1e-5)
+    args = (10.0, 71e3, 7200.0, np.radians([30.0, 60.0]), np.zeros((2, 3)), np.tile([0.0, 1.0, 0.0], (2, 1)), flow, res, b,
+            LIQ, FakeState())
+    extra = np.arange(18.0).reshape(2, 9)
+    plain, wide = spray.source_block(*args), spray.source_block(*args, extra=extra)
+    assert plain.shape == (1, 27) and wide.shape == (1, 36)
+    assert np.array_equal(wide[:, :27], plain, equal_nan=True) and np.array_equal(wide[0, 27:], extra[1])
+    # a spool with the profile names round-trips them
+    names = spray.record_columns(36)
+    rng = np.random.default_rng(2)
+    blocks = [rng.normal(size=(k, 36)) for k in (4, 2)]
+    blocks[1][1, 30] = np.nan
+    spool = spray.SourceSpool(str(tmp_path / "wide"), names=names)
+    for blk in blocks:
+        spool.append(blk)
+    cols = spray.source_columns(spool)
+    assert list(spool.names) == names and list(cols) == names
+    table = spray.source_table(blocks)
+    assert table.shape == (6, 36) and np.array_equal(spray.source_table(spool), table, equal_nan=True)
+    listed = spray.source_columns(blocks)
+    assert list(listed) == names and all(np.array_equal(listed[k], cols[k], equal_nan=True) for k in names)
+    for width in (27, 30):
+        with pytest.raises(ValueError):
+            spool.append(np.zeros((2, width)))
+    del cols
+    spool.remove()
+    assert not (tmp_path / "wide").exists()
+    # a spool pickled before it had names reads the 27 source columns, and refuses a 30-column block
+    spool = spray.SourceSpool(str(tmp_path / "old"))
+    assert list(spool.names) == spray.SOURCE_COLUMNS
+    spool.append(blocks[0][:, :27])
+    del vars(spool)["names"]
+    old = pickle.loads(pickle.dumps(spool))
+    assert old.names == tuple(spray.SOURCE_COLUMNS) and list(old.columns()) == spray.SOURCE_COLUMNS
+    assert np.array_equal(spray.source_table(old), blocks[0][:, :27])
+    with pytest.raises(ValueError):
+        old.append(np.zeros((1, 30)))
+    old.append(blocks[1][:, :27])
+    assert spray.source_table(old).shape == (6, 27)
+    # fit_width: switching profile -> table cuts in-memory blocks to 27 columns, table -> profile pads them with nan
+    narrow = [blk[:, :27].copy() for blk in blocks]
+    padded = spray.fit_width(narrow, 36)
+    bits = lambda a: np.ascontiguousarray(a).view(np.uint64)
+    for blk, pad in zip(narrow, padded):
+        assert pad.shape == (len(blk), 36) and np.array_equal(bits(pad[:, :27]), bits(blk)) and np.isnan(pad[:, 27:]).all()
+    for blk, cut in zip(narrow, spray.fit_width(padded, 27)):
+        assert np.array_equal(bits(cut), bits(blk))
+    for blk, cut in zip(blocks, spray.fit_width(blocks, 27)):
+        assert np.array_equal(bits(cut), bits(blk[:, :27]))
+    for blk, same in zip(blocks, spray.fit_width(blocks, 36)):
+        assert np.array_equal(bits(same), bits(blk))
+    assert spray.fit_width(old, 36) is old
+    empty = []
+    assert spray.fit_width(empty, 36) is empty
+    old.remove()

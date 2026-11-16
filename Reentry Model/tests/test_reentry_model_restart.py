@@ -4,12 +4,15 @@ a saved flight resumes from it, in an object graph of its own, to the last bit."
 import csv
 import json
 import os
+import signal
+import weakref
 
 import numpy as np
 import pytest
 
 from reentry_model import cli, restart, spray
 from reentry_model import trajectory as tj
+from reentry_model.skyscrapers import coupled, skinbody
 
 # the spraying skin flight of the command line's test (sub-plan 22 Task 3): 65 km, a body at 893 K under physics heating,
 # the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s.
@@ -24,6 +27,10 @@ DEFAULT_FLIGHT = FLIGHT
 # change and of the state's `flown` saved options, which need those settings and not the new defaults (Task 5h); it flies
 # `--spray-gates 2026-11-10`, the default, as every other flight here does
 FLIGHT_ON = FLIGHT[:-3] + ["--hand-down", "on", "--part-count-from", "moves"] + FLIGHT[-3:]
+# The element model's melting flight (`--surface-model elements`): the same 65 km, 893 K body and 25 ms first step, with no
+# prism-layer, skin or fine-band option (the port's `element` case of analysis/skyscrapers_port/same_results.py)
+MELTING_ELEMENTS = FLIGHT[:FLIGHT.index("--prism-layers")] + ["--temperature", "893", "--dt", "0.025",
+                                                               "--surface-model", "elements", "--quiet"]
 
 
 def rows_of(path):
@@ -63,6 +70,25 @@ def test_a_coarse_grid_solver_with_arguments_is_refused(tmp_path):
     assert not os.path.exists(str(tmp_path / "s.pkl"))
 
 
+def test_dumps_holds_the_pickle_once_and_does_not_copy_it():
+    """`restart.dumps` makes every save and every copy of a completed step (on the 100 mm sphere 1.32 GB a macro step), so
+    it must hold the pickle once: the bytes it returns are the pickling buffer itself, not a copy of it (final fix wave,
+    item 1). Measured with tracemalloc from just before the call: at its peak `dumps` holds the pickle and its buffer's
+    growth margin (at most an eighth), 1.125 times the pickle here; a copy of the buffer would hold it twice, 2.13 times.
+    The pickle comes back as the state it was made of."""
+    import tracemalloc
+    state = {"T": np.arange(2_000_000, dtype=float), "n": 3}                     # a 16 MB field
+    tracemalloc.start()
+    try:
+        data = restart.dumps(state)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert len(data) > state["T"].nbytes and peak < 1.5 * len(data)
+    back = restart.loads(data)
+    assert back["n"] == 3 and np.array_equal(back["T"], state["T"])
+
+
 def test_a_flight_saved_on_its_way_is_unchanged_by_the_save_and_resumes_to_the_last_bit(tmp_path):
     """The flight to 0.2125 s twice, once saving its state at 0.1875 s: the same history and droplet records, so a save
     changes nothing in the flight that makes it. The saved state, loaded as a new object graph with the random state it
@@ -91,7 +117,7 @@ def test_a_flight_saved_on_its_way_is_unchanged_by_the_save_and_resumes_to_the_l
     run = state["run"]
     assert run.body.solver._solves == 28 and run.body.solver.amg_rebuild_every == 30
     np.random.set_state(state["rng"])
-    run.body.source_rows = spray.SourceSpool(str(tmp_path / "resumed_rows"))
+    run.body.source_rows = spray.SourceSpool(str(tmp_path / "resumed_rows"), run.body.record_names())
     run.settings.save_at = None
     history = run.run(resume=state)
     assert run.body.solver._solves == 32                          # the 31st solve built a new hierarchy
@@ -102,7 +128,7 @@ def test_a_flight_saved_on_its_way_is_unchanged_by_the_save_and_resumes_to_the_l
     assert after.any() and all(np.array_equal(got[k], a[k][after], equal_nan=True) for k in a.files)
 
 
-def test_a_save_that_fails_leaves_the_flight_flying(tmp_path, monkeypatch):
+def test_a_save_that_fails_leaves_the_flight_flying(tmp_path, monkeypatch, capsys):
     """A save that fails (a full disk, say) is recorded and the flight goes on: the state is worth less than the flight."""
     pytest.importorskip("cantera")
 
@@ -114,7 +140,12 @@ def test_a_save_that_fails_leaves_the_flight_flying(tmp_path, monkeypatch):
     doc = json.load(open(str(tmp_path / "f.json")))
     assert doc["results"]["end_reason"] == "t_max" and doc["results"]["state_saved_at_s"] is None
     assert "no space left on device" in doc["results"]["state_save_error"] and "state" not in doc["files"]
+    assert "no space left on device" in doc["results"]["end_state_error"] and "end_state" not in doc["files"]
+    assert doc["results"]["end_state_saved_at_s"] is None
     assert len(rows_of(str(tmp_path / "f.csv"))) == 5
+    err = capsys.readouterr().err                                 # said on stderr even under --quiet, one line for each save
+    assert "saving the state at --save-state-at failed: OSError: no space left on device" in err
+    assert "saving the end state failed: OSError: no space left on device" in err
 
 
 @pytest.mark.parametrize("argv", [
@@ -142,12 +173,34 @@ def flown(tmp_path_factory):
     return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
 
 
-def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_files(flown, tmp_path):
+@pytest.fixture(scope="module")
+def flown_normals(tmp_path_factory):
+    """The same flight under `--windward-loads normals`, the earlier rule (the one whose nose radius and leeward test are options):
+    (the flight's directory, its history rows as text, its droplet records, the saved state's path)."""
+    pytest.importorskip("cantera")
+    out = str(tmp_path_factory.mktemp("flown_normals"))
+    assert cli.main(FLIGHT_ON + ["--windward-loads", "normals", "--t-max", "0.2125", "--outdir", out, "--name", "f",
+                                 "--save-state-at", "0.1875"]) == 0
+    rows = rows_of(os.path.join(out, "f.csv"))
+    assert len(rows) == 17
+    return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
+
+
+def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_files(tmp_path):
     """`resume` on the state saved at 0.1875 s, with nothing changed: it writes the files `run` writes under its own name
     -- the history, the JSON, the droplet files -- the history starting with the saved step's row and repeating the
     unbroken flight's from there in every column, the droplet records those of the flight after the save, to the last bit,
-    and the JSON naming the state it came from with nothing changed (sub-plan 22 Task 5b, Asha 2026-11-06)."""
-    out, flight, records, state_path = flown
+    and the JSON naming the state it came from with nothing changed (sub-plan 22 Task 5b, Asha 2026-11-06). The flight is
+    its own, `FLIGHT` (the defaults: the hand-down off, the part count by the melting) to 0.2125 s saved at 0.1875 s as
+    `flown` is, because on the gas loads' hold (one solve per --dt) the `flown` flight releases nothing after 0.1875 s and
+    this one does, so the records' check is not empty (the test must use a flight that releases droplets after 0.1875 s; ruling P6 in
+    docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md)."""
+    pytest.importorskip("cantera")
+    out = str(tmp_path / "flown")
+    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
+    flight, state_path = rows_of(os.path.join(out, "f.csv")), os.path.join(out, "f.state.pkl")
+    records = dict(np.load(os.path.join(out, "f", "particles.npz")))
+    assert len(flight) == 17
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r"]) == 0
     assert rows_of(str(tmp_path / "r.csv")) == flight[14:]
     after = records["time_s"] > 0.1875 + 1e-9        # the saved step's records carry its end: 0.1875 and a round-off
@@ -189,9 +242,14 @@ def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flo
     limit, or the later rows would raise KeyError (sub-plan 22 Task 5c). The test flight's state saved without a limit, as the
     two real states were, resumed with one: the columns are in every row, zero in the saved one, the JSON records the limit in
     its settings, its results and what was changed, and every other column is the flight's, the limit binding nowhere. Then
-    the flight saved with a limit: the resume keeps it unless told, and `off` gives back the flight's column set."""
+    the flight saved with a limit: the resume keeps it unless told, and `off` gives back the flight's column set. The test
+    flight flies on `profile` (the kinked-profile dispersion's default), whose history columns come last in a flight's rows,
+    after the spreading ones; a resume appends what it adds after the saved row's."""
+    from reentry_model.shared import melt_profile
     out, flight, records, state_path = flown
     names = ["spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "spread_jump_max_K"]
+    last = [k for k in flight[0] if k in melt_profile.DISPERSION_COLUMNS]
+    limited_columns = [k for k in flight[0] if k not in last] + names + last
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on", "--spread-limit", "60"]) == 0
     rows = rows_of(str(tmp_path / "on.csv"))
     assert len(rows) == 3 and list(rows[0]) == list(flight[14]) + names and all(list(r) == list(rows[0]) for r in rows)
@@ -207,10 +265,10 @@ def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flo
     saved = os.path.join(limited, "f.state.pkl")
     doc = json.load(open(os.path.join(limited, "f.json")))
     assert doc["settings"]["skin"]["spread_limit_deg"] == 60.0 and doc["results"]["spread_limit_deg"] == 60.0
-    assert list(rows_of(os.path.join(limited, "f.csv"))[0]) == list(flight[0]) + names
+    assert list(rows_of(os.path.join(limited, "f.csv"))[0]) == limited_columns
 
     assert cli.main(["resume", saved, "--outdir", str(tmp_path), "--name", "kept"]) == 0
-    assert list(rows_of(str(tmp_path / "kept.csv"))[0]) == list(flight[0]) + names
+    assert list(rows_of(str(tmp_path / "kept.csv"))[0]) == limited_columns
     assert json.load(open(str(tmp_path / "kept.json")))["results"]["spread_limit_deg"] == 60.0
 
     assert cli.main(["resume", saved, "--outdir", str(tmp_path), "--name", "off", "--spread-limit", "off"]) == 0
@@ -222,14 +280,23 @@ def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flo
 
 
 @pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan",
-                                  "spread_0", "spread_180", "spread_nan", "save_not_after", "save_at_end", "save_nan"])
-def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path):
+                                  "spread_0", "spread_180", "spread_nan", "save_not_after", "save_at_end", "save_nan",
+                                  "dispersion_kinked", "dispersion_dry"])
+def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path, capsys):
     """A missing state file, a state of another format, an end of flight not after the saved time, a continuum step outside
-    (0, the saved flight's --dt of 0.025 s], a spread limit outside (0, 180) degrees and a value that is not a number are
-    refused with exit 2 (bad input), and nothing is written."""
+    (0, the saved flight's --dt of 0.025 s], a spread limit outside (0, 180) degrees, a value that is not a number, a
+    dispersion that is neither `table` nor `profile`, and `--dispersion profile` on a saved flight without the skins'
+    spraying (the kinked-profile dispersion's Task 8) are refused with exit 2 (bad input), and nothing is written."""
     out, flight, records, state_path = flown
     bad_format = str(tmp_path / "other.pkl")
     restart.save(bad_format, {"format": restart.FORMAT + 1})
+    dry = str(tmp_path / "dry" / "dry.state.pkl")
+    if case == "dispersion_dry":                    # a flight that does not melt, so has no spray model
+        k = FLIGHT.index("--melt")
+        argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
+        assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path / "dry"), "--name", "dry",
+                                "--save-state-at", "0.05"]) == 0
+        capsys.readouterr()
     state, options = {"missing": (str(tmp_path / "none.pkl"), []), "format": (bad_format, []),
                       "t_max": (state_path, ["--t-max", "0.1875"]), "dt_continuum": (state_path, ["--dt-continuum", "0.05"]),
                       "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"]),
@@ -237,10 +304,14 @@ def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path)
                       "spread_nan": (state_path, ["--spread-limit", "nan"]),
                       "save_not_after": (state_path, ["--save-state-at", "0.1875"]),
                       "save_at_end": (state_path, ["--save-state-at", "0.2125"]),
-                      "save_nan": (state_path, ["--save-state-at", "nan"])}[case]
+                      "save_nan": (state_path, ["--save-state-at", "nan"]),
+                      "dispersion_kinked": (state_path, ["--dispersion", "kinked"]),
+                      "dispersion_dry": (dry, ["--dispersion", "profile"])}[case]
     with pytest.raises(SystemExit) as exc:
         cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", *options])
     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
+    if case == "dispersion_dry":
+        assert "--dispersion needs a saved flight with the skins' spraying" in capsys.readouterr().err
 
 
 def test_a_spread_limit_is_refused_on_a_flight_that_does_not_melt(tmp_path):
@@ -248,7 +319,7 @@ def test_a_spread_limit_is_refused_on_a_flight_that_does_not_melt(tmp_path):
     it; `off` asks nothing of the flight, so that goes through."""
     pytest.importorskip("cantera")
     k = FLIGHT.index("--melt")
-    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]              # without --melt on and --skin-flow-cycles 2
+    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "skin", "--quiet"]   # without --melt on and --skin-flow-cycles 2
     assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
     state = str(tmp_path / "dry.state.pkl")
     with pytest.raises(SystemExit) as exc:
@@ -328,7 +399,7 @@ def test_the_melting_rule_is_refused_on_a_resume_of_a_flight_that_does_not_melt(
     as `run` refuses it; `moves` asks nothing of the flight, so that goes through (sub-plan 22 Task 5d)."""
     pytest.importorskip("cantera")
     k = FLIGHT.index("--melt")
-    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]              # without --melt on and --skin-flow-cycles 2
+    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "skin", "--quiet"]   # without --melt on and --skin-flow-cycles 2
     assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
     state = str(tmp_path / "dry.state.pkl")
     with pytest.raises(SystemExit) as exc:
@@ -411,13 +482,13 @@ def test_resuming_with_height_pairing_sets_it_on_the_body_and_records_it(flown, 
     assert "--sideways-heat height needs a saved flight of skins" in capsys.readouterr().err
 
 
-def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, tmp_path, capsys):
+def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown_normals, tmp_path, capsys):
     """`--size-feedback` on a resume (sub-plan 22 Task 5g, Asha 2026-11-10). The test flight is `current` by default (its
     JSON says so in the skins' settings); a resume keeps that, names it in the line before the flight and records it in
     the JSON's settings, and `initial` asked of it flies the mesh's 50 mm radius, recorded in what was changed with no
     settings key, and is kept by the state it saves. A state saved before Task 5g (no setting, no fit, no nose columns on
     its row) resumes as `initial` with the nose columns filled, and `current` asked of it fits the cap at the first load."""
-    out, flight, records, state_path = flown
+    out, flight, records, state_path = flown_normals
     assert json.load(open(os.path.join(out, "f.json")))["settings"]["skin"]["size_feedback"] == "current"
     assert all(k in flight[0] for k in ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points",
                                         "nose_cap_concave")) and float(flight[-1]["nose_radius_mm"]) != 50.0
@@ -464,13 +535,104 @@ def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, 
     assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
 
 
-def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_an_old_state_as_facing(flown, tmp_path, capsys):
+def test_resume_windward_loads_keeps_the_saved_rule_switches_it_and_reads_an_old_state_as_normals(flown, flown_normals, tmp_path, capsys):
+    """`--windward-loads` on a resume (fitted-sphere loads, Task 4). The test flight flies `sphere`: a resume keeps it, names it
+    in the line before the flight, records it in the JSON's settings and keeps the three sphere columns in its history;
+    `normals` asked of it drops them (one header) and is recorded in what was changed, and `sphere` asked of that state
+    adds them again. A state whose body lost the attribute (saved before the option) resumes as `normals`, with the
+    history header of a `normals` run, and refuses the earlier rule's options under `sphere`. An explicit --size-feedback or
+    --leeward-test under `sphere` exits 2; the element model's saved flight refuses the option."""
+    out, flight, records, state_path = flown
+    assert all(k in flight[0] for k in skinbody.SPHERE_COLUMNS)
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
+    assert "windward loads sphere" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "same.json")))
+    assert doc["settings"]["windward_loads"] == "sphere" and doc["resumed_from"]["changed"] == {}
+    assert all(k in rows_of(str(tmp_path / "same.csv"))[0] for k in skinbody.SPHERE_COLUMNS)
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "n", "--windward-loads", "normals",
+                     "--save-state-at", "0.2"]) == 0
+    assert "windward loads normals" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "n.json")))
+    assert doc["resumed_from"]["changed"] == {"--windward-loads": "normals", "--save-state-at": 0.2}
+    assert doc["settings"]["windward_loads"] == "normals"
+    header = open(str(tmp_path / "n.csv")).readline().strip().split(",")
+    assert not any(k in header for k in skinbody.SPHERE_COLUMNS)
+    assert header == open(os.path.join(flown_normals[0], "f.csv")).readline().strip().split(",")
+    assert restart.load(str(tmp_path / "n.state.pkl"))["run"].body.windward_loads == "normals"
+    back = str(tmp_path / "n.end.state.pkl")
+    assert cli.main(["resume", back, "--outdir", str(tmp_path), "--name", "s", "--windward-loads", "sphere", "--t-max", "0.3"]) == 0
+    assert all(k in rows_of(str(tmp_path / "s.csv"))[0] for k in skinbody.SPHERE_COLUMNS)
+    # the saved header, the `normals` one, with the three sphere columns at its end (cli.cmd_resume adds them to the saved row)
+    assert open(str(tmp_path / "s.csv")).readline().strip().split(",") == header + list(skinbody.SPHERE_COLUMNS)
+    # a state saved before the option
+    state = restart.load(state_path)
+    del vars(state["run"].body)["windward_loads"]
+    for key in skinbody.SPHERE_COLUMNS:
+        del state["row"][key]
+    state["run"].body._sphere_raw = None
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    assert "windward loads normals" in capsys.readouterr().out
+    assert open(str(tmp_path / "o.csv")).readline() == open(os.path.join(flown_normals[0], "f.csv")).readline()
+    assert json.load(open(str(tmp_path / "o.json")))["settings"]["windward_loads"] == "normals"
+    for argv in (["--size-feedback", "initial"], ["--leeward-test", "facing"]):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["resume", state_path, "--outdir", str(tmp_path / "x"), "--name", "r"] + argv)
+        assert exc.value.code == 2 and "applies only with --windward-loads normals" in capsys.readouterr().err
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o2", "--size-feedback", "initial"]) == 0     # the old state flies normals
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o3"), "--name", "r",
+                  "--windward-loads", "normals"])
+    assert exc.value.code == 2 and "--windward-loads needs a saved flight of skins" in capsys.readouterr().err
+
+
+def test_resume_rheology(flown, tmp_path, capsys):
+    """`--rheology` on a resume (Asha, 2026-11-12). A state saved before the option has no `rheology` on its skins' settings,
+    so it reads the class default, the bridge law: with no option the resume keeps the bridge, names it and records it; with
+    `--rheology composite` it switches, which is recorded in what was changed, in the settings and in the saved state.
+    The element model's saved flight refuses it (exit 2)."""
+    out, flight, records, state_path = flown
+    state = restart.load(state_path)
+    settings = state["run"].body.settings
+    assert settings is state["run"].body.skins.settings
+    del vars(settings)["rheology"]                                  # a state saved before the option
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert restart.load(old)["run"].body.settings.rheology == "bridge"
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "keep"]) == 0
+    assert "rheology bridge" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "keep.json")))
+    assert doc["settings"]["rheology"] == "bridge" and "--rheology" not in doc["resumed_from"]["changed"]
+    assert doc["settings"]["internal_solid_fraction"] == 0.5        # recorded beside the law, as `run` does
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "comp", "--rheology", "composite",
+                     "--save-state-at", "0.2"]) == 0
+    assert "rheology composite" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "comp.json")))
+    assert doc["resumed_from"]["changed"] == {"--rheology": "composite", "--save-state-at": 0.2}
+    assert doc["settings"]["rheology"] == "composite" and doc["settings"]["internal_solid_fraction"] == 0.5
+    assert restart.load(str(tmp_path / "comp.state.pkl"))["run"].body.settings.rheology == "composite"
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o"), "--name", "r",
+                  "--rheology", "bridge"])
+    assert exc.value.code == 2 and "--rheology needs a saved flight of skins" in capsys.readouterr().err
+
+
+def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_an_old_state_as_facing(flown_normals, tmp_path, capsys):
     """`--leeward-test` on a resume (sub-plan 22 Task 5j, Asha 2026-11-10). The test flight is `centroid` by default; a resume
     keeps it, names it in the line before the flight and records it in the settings, and `facing` asked of it is recorded in
     what was changed and kept by the state it saves. A state saved before Task 5j (no setting on its body, no leeward
     columns on its row) resumes as `facing` with the two columns filled, and `centroid` asked of it is applied. The element
     model's saved flight refuses it (exit 2)."""
-    out, flight, records, state_path = flown
+    out, flight, records, state_path = flown_normals
     assert json.load(open(os.path.join(out, "f.json")))["settings"]["skin"]["leeward_test"] == "centroid"
     assert all(k in flight[0] for k in ("centroid_offset_mm", "leeward_corners"))
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
@@ -520,30 +682,57 @@ def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_a
     assert exc.value.code == 2 and "--leeward-test needs a saved flight of skins" in capsys.readouterr().err
 
 
-def test_an_element_model_state_saved_with_40_size_bins_is_padded_to_50_on_resume(tmp_path):
-    """The parked gap of Task 5j's re-review (Task 5k): the skins' state with 40-bin histogram accumulators resumes padded to
-    the 50 bins (`cmd_resume`, the first 40 edges unchanged), and so must an element model's, whose body (`body.Body`) holds
-    `hist_n` and `hist_m` as the skins do. **No flight of the element model can save such a state today** (found 2026-11-11, reported,
-    not fixed here): the flight that sprays (`--melt on`) fails its save with `state_save_error` "TypeError: cannot pickle
-    'module' object", and the one that saves (no melting) runs a `ThermalBody`, which has no accumulators. So the state is made
-    by hand: a saved element-model state (the thermal body, as the other tests of this file use) is given a `source_rows` list
-    and 40-bin accumulators holding known counts, saved again, and resumed: the state the resumed flight saves has them 50 long, the first 40 bins exactly
-    as they were and the added ten empty."""
+def test_a_melting_element_flight_saves_its_state_and_resumes_to_the_last_bit(tmp_path):
+    """Defect 1 of the 2026-11-11 handoff: the element model's melting body (`body.MeltingBody`) held the film module as an
+    attribute, which pickle cannot save, so its flight recorded `state_save_error` "TypeError: cannot pickle 'module' object"
+    and saved nothing. The flight to 0.125 s twice, once saving at 0.05 s: the save succeeds and changes nothing in the
+    flight, and the resumed flight repeats the unbroken one's rows from the saved step on, to the last bit."""
+    pytest.importorskip("cantera")
+    plain, saved = str(tmp_path / "plain"), str(tmp_path / "saved")
+    assert cli.main(MELTING_ELEMENTS + ["--t-max", "0.125", "--outdir", plain, "--name", "f"]) == 0
+    assert cli.main(MELTING_ELEMENTS + ["--t-max", "0.125", "--outdir", saved, "--name", "f", "--save-state-at", "0.05"]) == 0
+    results = json.load(open(os.path.join(saved, "f.json")))["results"]
+    assert results["state_save_error"] is None and results["state_saved_at_s"] == pytest.approx(0.05)
+    flight = rows_of(os.path.join(plain, "f.csv"))
+    assert rows_of(os.path.join(saved, "f.csv")) == flight
+    assert cli.main(["resume", os.path.join(saved, "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    resumed = rows_of(str(tmp_path / "r.csv"))
+    assert len(flight) == 11 and len(resumed) == 8 and resumed == flight[-8:]
+
+
+def test_a_non_melting_element_flight_resumes_to_the_last_bit(tmp_path):
+    """Defect 2 of the 2026-11-11 handoff: a non-melting element flight's body is a plain `ThermalBody`, which has no
+    `source_rows`, and `cmd_resume` read them unconditionally (AttributeError). Saved at 0.05 s of a 0.1 s flight, it
+    resumes and repeats the unbroken flight's rows from the saved step on, to the last bit."""
     pytest.importorskip("cantera")
     k = FLIGHT.index("--melt")
     elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
-    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    assert cli.main(elements + ["--t-max", "0.1", "--outdir", str(tmp_path), "--name", "f", "--save-state-at", "0.05"]) == 0
+    assert cli.main(["resume", str(tmp_path / "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    flight, resumed = rows_of(str(tmp_path / "f.csv")), rows_of(str(tmp_path / "r.csv"))
+    assert len(flight) == 5 and len(resumed) == 3 and resumed == flight[-3:]
+
+
+def test_an_element_model_state_saved_with_40_size_bins_is_padded_to_50_on_resume(tmp_path):
+    """The parked gap of Task 5j's re-review (Task 5k): the skins' state with 40-bin histogram accumulators resumes padded to
+    the 50 bins (`cmd_resume`, the first 40 edges unchanged), and so must an element model's, whose melting body
+    (`body.MeltingBody`) holds `hist_n` and `hist_m` as the skins do. A melting element flight's saved state is given 40-bin
+    accumulators holding known counts, as saved before Task 5j, saved again and resumed: the state the resumed flight saves
+    has them 50 long, the first 40 bins exactly as they were (the flight sprays nothing in this time) and the added ten
+    empty."""
+    pytest.importorskip("cantera")
+    assert cli.main(MELTING_ELEMENTS + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el",
+                                        "--save-state-at", "0.05"]) == 0
     state = restart.load(str(tmp_path / "el.state.pkl"))
     body = state["run"].body
-    assert not hasattr(body, "skins")
-    body.source_rows = []          # which `cmd_resume` reads, and a thermal body has not (a plain resume of it raises AttributeError: also found
-    #                                2026-11-11, outside this task); the spraying element model's body has it with the accumulators
+    assert not hasattr(body, "skins") and len(body.hist_n) == spray.N_BINS
     body.hist_n, body.hist_m = np.arange(1.0, 41.0), 1e-9 * np.arange(1.0, 41.0)         # as saved with 40 bins before Task 5j
     old = str(tmp_path / "old.state.pkl")
     restart.save(old, state)
     assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o", "--t-max", "0.125",
                      "--save-state-at", "0.075"]) == 0
     after = restart.load(str(tmp_path / "o.state.pkl"))["run"].body
+    assert after.n_released == 0.0
     assert len(after.hist_n) == len(after.hist_m) == spray.N_BINS == 50
     np.testing.assert_array_equal(after.hist_n[:40], np.arange(1.0, 41.0))
     np.testing.assert_array_equal(after.hist_m[:40], 1e-9 * np.arange(1.0, 41.0))
@@ -631,7 +820,7 @@ def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_sta
     doc = json.load(open(str(tmp_path / "b.json")))
     assert doc["settings"]["spray_gates"] == "before" and doc["resumed_from"]["changed"] == {"--spray-gates": "before"}
     k = FLIGHT.index("--melt")
-    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
+    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "skin", "--quiet"]
     assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
     capsys.readouterr()
     with pytest.raises(SystemExit) as exc:
@@ -669,9 +858,648 @@ def test_resuming_with_the_slip_band_sets_it_on_the_spray_model_and_a_state_with
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "off", "--slip-band", "off"]) == 0
     assert json.load(open(str(tmp_path / "off.json")))["resumed_from"]["changed"] == {"--slip-band": "off"}
     k = FLIGHT.index("--melt")
-    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
+    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "skin", "--quiet"]
     assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
     capsys.readouterr()
     with pytest.raises(SystemExit) as exc:
         cli.main(["resume", str(tmp_path / "dry.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r", "--slip-band", "on"])
     assert exc.value.code == 2 and "--slip-band needs a saved flight with spraying" in capsys.readouterr().err
+
+
+def test_the_volume_test_ends_a_skin_flight_normally(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "g"]) == 0
+    res = json.load(open(str(tmp_path / "g.json")))["results"]
+    assert res["end_reason"] == "geometry" and res["geometry_stop"]["test"] == "volume"
+    assert res["geometry_stop"]["time_s"] == pytest.approx(0.025) and len(rows_of(str(tmp_path / "g.csv"))) == 2
+    assert "geometry stop at 0.025 s: the column tops enclose {:.3g} times the metal's volume (limit 0.5)".format(
+        res["geometry_stop"]["value"]) in capsys.readouterr().out          # the printed line's volume wording (final fix wave)
+
+
+def test_the_centre_test_ends_a_skin_flight_and_says_so(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(skinbody, "GEOMETRY_FRONT_LIMIT_MM", 1e3)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "c"]) == 0
+    assert json.load(open(str(tmp_path / "c.json")))["results"]["geometry_stop"]["test"] == "centre"
+    assert "geometry stop at 0.025 s: the core's front is" in capsys.readouterr().out
+
+
+def test_another_end_on_the_same_step_wins_over_the_geometry_stop(tmp_path, monkeypatch):
+    calls = {"n": 0}
+    real = skinbody.SkinBody.geometry_breach
+
+    def late(self):
+        calls["n"] += 1
+        return ("volume", 9.0) if calls["n"] >= 2 else real(self)
+    monkeypatch.setattr(skinbody.SkinBody, "geometry_breach", late)
+    assert cli.main(FLIGHT + ["--t-max", "0.0375", "--outdir", str(tmp_path), "--name", "t"]) == 0
+    res = json.load(open(str(tmp_path / "t.json")))["results"]
+    assert res["end_reason"] == "t_max" and res["geometry_stop"] is None
+    assert calls["n"] == 1             # asked on step 1 only: on step 2, which would breach, t_max came first and it was not asked
+
+
+def test_the_stop_can_be_turned_off_and_is_then_named(tmp_path, monkeypatch):
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "o", "--geometry-stop", "off"]) == 0
+    assert json.load(open(str(tmp_path / "o.json")))["results"]["end_reason"] == "t_max"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, geometry_stop=False) == "_geomstop-off"
+
+
+def test_a_resume_can_turn_the_stop_off_and_old_states_fly_with_it_on(flown, tmp_path, monkeypatch):
+    out, flight, records, state_path = flown
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on"]) == 0
+    assert json.load(open(str(tmp_path / "on.json")))["results"]["end_reason"] == "geometry"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "off", "--geometry-stop", "off"]) == 0
+    doc = json.load(open(str(tmp_path / "off.json")))
+    assert doc["results"]["end_reason"] == "t_max" and doc["resumed_from"]["changed"] == {"--geometry-stop": "off"}
+
+
+def test_a_state_saved_before_the_geometry_stop_flies_with_it_on(flown, tmp_path, monkeypatch):
+    """A state pickled before the geometry stop existed has no `geometry_stop` on its body, which then reads the class
+    default, on (Task 2, parked; final fix wave item 5): the option deleted from the saved body (and the state's "end",
+    which such a state lacks too), saved again and resumed with the volume limit lowered, the flight ends at the geometry
+    stop and records the stop as on."""
+    out, flight, records, state_path = flown
+    state = restart.load(state_path)
+    del vars(state["run"].body)["geometry_stop"]
+    del state["end"]
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    doc = json.load(open(str(tmp_path / "o.json")))
+    assert doc["results"]["end_reason"] == "geometry" and doc["results"]["geometry_stop"]["test"] == "volume"
+    assert doc["settings"]["geometry_stop"] == "on" and doc["resumed_from"]["changed"] == {}
+
+
+def test_every_normal_end_saves_its_state_beside_the_mid_flight_one(tmp_path):
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "e", "--save-state-at", "0.05"]) == 0
+    doc = json.load(open(str(tmp_path / "e.json")))
+    assert doc["files"]["end_state"] == os.path.abspath(str(tmp_path / "e.end.state.pkl"))
+    assert restart.load(str(tmp_path / "e.end.state.pkl"))["end"] == "t_max"
+    assert restart.load(str(tmp_path / "e.state.pkl"))["end"] is None
+    assert doc["results"]["end_state_saved_at_s"] == pytest.approx(0.0625)
+
+
+def test_an_end_state_at_t_max_resumes_to_a_later_t_max_as_the_unbroken_flight(tmp_path):
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "a"]) == 0
+    assert cli.main(FLIGHT + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "u"]) == 0
+    assert cli.main(["resume", str(tmp_path / "a.end.state.pkl"), "--t-max", "0.0875",
+                     "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert rows_of(str(tmp_path / "r.csv")) == rows_of(str(tmp_path / "u.csv"))[4:]
+
+
+@pytest.mark.parametrize("extra", [[], ["--t-max", "0.0625"]])
+def test_an_end_state_is_not_resumed_past_an_end_that_still_holds(tmp_path, extra):
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "a"]) == 0
+    path = str(tmp_path / "a.end.state.pkl")
+    if extra:
+        state = restart.load(path); state["end"] = "demise"; restart.save(path, state)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", path, "--outdir", str(tmp_path), "--name", "r"] + extra)
+    assert exc.value.code == 2
+
+
+def test_the_element_models_melting_flight_saves_an_end_state(tmp_path):
+    pytest.importorskip("cantera")
+    assert cli.main(MELTING_ELEMENTS + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "el"]) == 0
+    assert restart.load(str(tmp_path / "el.end.state.pkl"))["end"] == "t_max"
+
+
+def test_a_failed_end_state_resumes_as_it_is_and_flies_on(tmp_path):
+    """A `failed` (or `stopped`) end state holds the run of its last completed step, whose flight had not ended (Task 4: the
+    run is pickled with `sim.end_reason` None), so its resume is not refused and flies on, here one 12.5 ms step to the
+    later --t-max."""
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "a"]) == 0
+    path = str(tmp_path / "a.end.state.pkl")
+    state = restart.load(path); state["end"] = "failed"; state["run"].sim.end_reason = None; restart.save(path, state)
+    assert cli.main(["resume", path, "--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "r"]) == 0
+    res = json.load(open(str(tmp_path / "r.json")))["results"]
+    assert res["end_reason"] == "t_max" and res["final_time_s"] == pytest.approx(0.0625)
+    assert len(rows_of(str(tmp_path / "r.csv"))) == 2
+
+
+def test_a_geometry_end_state_resumes_with_the_stop_off(tmp_path):
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "a"]) == 0
+    path = str(tmp_path / "a.end.state.pkl")
+    state = restart.load(path)
+    state["end"] = "geometry"; state["run"].sim.end_reason = "geometry"
+    state["run"].geometry_stopped = ("centre", 0.05, 1.0)
+    restart.save(path, state)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", path, "--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "r"])
+    assert exc.value.code == 2
+    assert cli.main(["resume", path, "--t-max", "0.0625", "--geometry-stop", "off", "--outdir", str(tmp_path), "--name", "r"]) == 0
+    res = json.load(open(str(tmp_path / "r.json")))["results"]
+    assert res["end_reason"] == "t_max" and res["geometry_stop"] is None
+
+
+def test_the_resume_command_refuses_the_geometry_stop_on_a_state_without_skins(tmp_path, capsys):
+    pytest.importorskip("cantera")
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.025", "--outdir", str(tmp_path), "--name", "el"]) == 0
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.end.state.pkl"), "--t-max", "0.05", "--geometry-stop", "off",
+                  "--outdir", str(tmp_path / "o"), "--name", "r"])
+    assert exc.value.code == 2 and "--geometry-stop needs a saved flight of skins" in capsys.readouterr().err
+
+
+# Task 4: a flight that fails, or is stopped by SIGTERM or Control-C, saves its last completed macro step as its end state,
+# writes its results files from the completed steps' rows with end reason `failed` or `stopped`, and exits 1, 143 or 130
+
+
+def fail_on_call(monkeypatch, n, exc):
+    real, calls = skinbody.SkinBody.advance, {"n": 0}
+    def advance(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == n:
+            raise exc
+        return real(self, *a, **k)
+    monkeypatch.setattr(skinbody.SkinBody, "advance", advance)
+
+
+def test_a_failure_saves_the_last_completed_step_and_writes_its_results(tmp_path, monkeypatch):
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "u"]) == 0
+    fail_on_call(monkeypatch, 3, RuntimeError("a corner move degrades the mesh"))
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    doc = json.load(open(str(tmp_path / "f.json")))
+    assert doc["results"]["end_reason"] == "failed" and "degrades the mesh" in doc["results"]["failure"]["error"]
+    assert rows_of(str(tmp_path / "f.csv")) == rows_of(str(tmp_path / "u.csv"))[:3]
+    state = restart.load(str(tmp_path / "f.end.state.pkl"))
+    assert state["end"] == "failed" and state["step"] == 2 and state["time_s"] == pytest.approx(0.0375)
+    monkeypatch.undo()
+    assert cli.main(["resume", str(tmp_path / "f.end.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert rows_of(str(tmp_path / "r.csv")) == rows_of(str(tmp_path / "u.csv"))[2:]
+
+
+def histories_finished(monkeypatch):
+    """The histories `cli.finish_run` is given (its 10th argument), in a list, the real one writing them."""
+    real, seen = cli.finish_run, []
+    def finish(*a, **k):
+        seen.append(a[9])
+        return real(*a, **k)
+    monkeypatch.setattr(cli, "finish_run", finish)
+    return seen
+
+
+def holds_no_exception(history):
+    return not any(isinstance(v, BaseException) for v in vars(history).values())
+
+
+def test_a_failed_flights_history_keeps_its_error_as_text_and_says_it_as_before(tmp_path, monkeypatch, capsys):
+    """The history of a failed flight holds what `finish_run` says of the failure -- its traceback, formatted, and its
+    message -- as text, not the exception (final fix wave item 4): the exception's traceback held the failed run's frames
+    and with them the copy of the last completed step, about 1.3 GB on the 100 mm sphere, through `finish_run`'s writing
+    of the droplet files. The copies are watched here (as a bytearray subclass, since bytes cannot be weakly referenced):
+    none is alive when `finish_run` starts (one was, the last, before the fix). The failing step raises an exception made
+    as it raises, as the model's code does: one the test held (`fail_on_call`'s) would keep its traceback's frames, and
+    the copy, alive itself. What is said is unchanged: the traceback, then the message, and exit 1."""
+    class Copy(bytearray):
+        pass
+    copies, real_dumps = [], restart.dumps
+    def dumps(state):
+        data = Copy(real_dumps(state))
+        copies.append(weakref.ref(data))
+        return data
+    monkeypatch.setattr(restart, "dumps", dumps)
+    real_finish, seen = cli.finish_run, []
+    def finish(*a, **k):
+        seen.append((a[9], sum(c() is not None for c in copies)))
+        return real_finish(*a, **k)
+    monkeypatch.setattr(cli, "finish_run", finish)
+    real_advance, calls = skinbody.SkinBody.advance, {"n": 0}
+    def advance(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise RuntimeError("a corner move degrades the mesh")
+        return real_advance(self, *a, **k)
+    monkeypatch.setattr(skinbody.SkinBody, "advance", advance)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    (history, alive), = seen
+    assert len(copies) == 4 and alive == 0           # the copies before step 1 and after steps 1 and 2, and the end state
+    err = capsys.readouterr().err
+    assert err.startswith("Traceback (most recent call last):\n") and "in advance\n    raise RuntimeError(" in err
+    assert err.endswith("RuntimeError: a corner move degrades the mesh\nERROR: a corner move degrades the mesh\n")
+    assert holds_no_exception(history) and history.failure_signum is None
+    assert err == history.failure_traceback + "ERROR: a corner move degrades the mesh\n"
+
+
+def test_a_sigterm_stops_the_flight_with_the_last_completed_step_and_exit_143(tmp_path, monkeypatch, capsys):
+    seen = histories_finished(monkeypatch)
+    before = signal.getsignal(signal.SIGTERM)
+    real, calls = skinbody.SkinBody.advance, {"n": 0}
+    def advance(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            os.kill(os.getpid(), signal.SIGTERM)
+        return real(self, *a, **k)
+    monkeypatch.setattr(skinbody.SkinBody, "advance", advance)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "s"]) == 143
+    assert json.load(open(str(tmp_path / "s.json")))["results"]["end_reason"] == "stopped"
+    assert restart.load(str(tmp_path / "s.end.state.pkl"))["step"] == 1
+    assert signal.getsignal(signal.SIGTERM) == before
+    assert capsys.readouterr().err == "ERROR: stopped by signal 15 (SIGTERM)\n"         # a stop: the message, no traceback
+    (history,) = seen
+    assert holds_no_exception(history) and history.failure_signum == signal.SIGTERM and history.failure_traceback is None
+
+
+def test_control_c_during_the_end_write_leaves_no_partial_state(tmp_path, monkeypatch):
+    """A second Control-C while the end state is written (Review Focus 2; fix round 1): the real `restart.write_bytes`
+    writes the whole part file and is interrupted as it renames it into place, the end state's rename alone (any other
+    file the flight renames goes through); neither the end state nor its part file is left, the save's error is recorded
+    and the exit code is still 130."""
+    fail_on_call(monkeypatch, 2, KeyboardInterrupt())
+    real_replace, renamed = os.replace, []
+
+    def interrupted(src, dst, *a, **k):
+        if os.path.basename(str(dst)) == "k.end.state.pkl":
+            renamed.append(os.path.getsize(src))                 # the part file, written whole
+            raise KeyboardInterrupt
+        return real_replace(src, dst, *a, **k)
+    monkeypatch.setattr(restart.os, "replace", interrupted)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "k"]) == 130
+    assert len(renamed) == 1 and renamed[0] > 0
+    assert not os.path.exists(str(tmp_path / "k.end.state.pkl"))
+    assert not os.path.exists(str(tmp_path / "k.end.state.pkl") + restart.PART)
+    assert json.load(open(str(tmp_path / "k.json")))["results"]["end_state_error"].startswith("KeyboardInterrupt")
+
+
+def test_a_failure_in_the_first_step_of_a_resume_saves_the_resumed_step(flown, tmp_path, monkeypatch):
+    out, flight, records, state_path = flown
+    fail_on_call(monkeypatch, 1, RuntimeError("boom"))
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r"]) == 1
+    assert restart.load(str(tmp_path / "r.end.state.pkl"))["step"] == 14
+
+
+def test_a_failure_after_the_droplet_records_were_spooled_resumes_without_repeating_them(tmp_path, monkeypatch):
+    # the flight names the classic gas loads, on which it sprays from the step ending 0.05 s (interim gas loads, Task 7): on
+    # the similarity loads, the default since, its first release comes at 0.0875 s (1.5 mg in 2 records, against 0.81 g in
+    # 606 records by then on the classic loads; measured 2026-11-14), so the failing step of 0.075 s would have spooled none
+    classic = FLIGHT + ["--gas-loads", "classic"]
+    assert cli.main(classic + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "u"]) == 0
+    real, calls = coupled.CoupledRun._frame, {"n": 0}
+    def frame(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 6:                        # the frame of step 5 (0.075 s), after its records were spooled
+            raise RuntimeError("frame writer failed")
+        return real(self, *a, **k)
+    monkeypatch.setattr(coupled.CoupledRun, "_frame", frame)
+    assert cli.main(classic + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    monkeypatch.undo()
+    assert cli.main(["resume", str(tmp_path / "f.end.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    whole = np.load(str(tmp_path / "u" / "particles.npz"))
+    assert np.isclose(whole["time_s"], 0.075).any()       # the failing step sprayed: its records were spooled before it failed
+    got = np.load(str(tmp_path / "r" / "particles.npz"))
+    after = whole["time_s"] > restart.load(str(tmp_path / "f.end.state.pkl"))["time_s"] + 1e-9
+    assert all(np.array_equal(got[k], whole[k][after], equal_nan=True) for k in whole.files)
+    # the failed flight's own records (controller's ruling, Task 4): the failing step's, already spooled, are not among them,
+    # so the failed flight's and the resume's together are the unbroken flight's, none twice
+    end = restart.load(str(tmp_path / "f.end.state.pkl"))
+    assert end["end"] == "failed" and end["step"] == 4
+    failed = np.load(str(tmp_path / "f" / "particles.npz"))
+    assert (failed["time_s"] <= end["time_s"] + 1e-9).all()
+    assert after.any() and (~after).any()
+    assert all(np.array_equal(failed[k], whole[k][~after], equal_nan=True) for k in whole.files)
+
+
+def test_no_saved_state_carries_the_copy_of_the_last_completed_step(tmp_path):
+    """The copy of the last completed step that a failure writes is kept outside the run (controller's ruling, Task 4): were
+    it an attribute of the run, every state pickled after it -- the next copy, the state at --save-state-at, the end state --
+    would carry the copy before it inside it, and the states would grow with every step. The end state, saved at the end
+    of the 4th step, is the size of the state saved at the end of the 1st (1.02 times it, measured 2026-11-12; about 4 times
+    with the copy held by the run), and its run holds no pickled bytes."""
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "c", "--save-state-at", "0.025"]) == 0
+    first, end = str(tmp_path / "c.state.pkl"), str(tmp_path / "c.end.state.pkl")
+    assert restart.load(first)["step"] == 1 and restart.load(end)["step"] == 4
+    held = [x for v in vars(restart.load(end)["run"]).values() for x in (v if isinstance(v, (tuple, list)) else (v,))]
+    assert not any(isinstance(x, (bytes, bytearray)) for x in held)
+    assert os.path.getsize(end) < 1.2 * os.path.getsize(first)
+
+
+def fail_dumps_on_call(monkeypatch, n):
+    real, calls = restart.dumps, {"n": 0}
+    def dumps(state):
+        calls["n"] += 1
+        if calls["n"] == n:
+            raise MemoryError("no room for the copy")
+        return real(state)
+    monkeypatch.setattr(restart, "dumps", dumps)
+
+
+def test_a_copy_that_cannot_be_made_is_said_at_once_and_recorded(tmp_path, monkeypatch, capsys):
+    """The copy of a completed step that cannot be made (a MemoryError here; fix round 1) never fails the flight, but is
+    said on standard error when it happens, even under --quiet, and the results record the first such error and its flight
+    time, on a normal end and on a failure. `restart.dumps` makes the copies (the one before the first step is its 1st
+    call, step k's its (k+1)th) and the end state. A flight whose copy of step 1 fails ends normally with the record. A
+    flight whose copy of step 2 fails and whose 3rd step then raises saves step 1, the last step copied, not step 2."""
+    fail_dumps_on_call(monkeypatch, 2)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "n"]) == 0
+    assert "warning: copying the state at 0.025 s, which a failure or a stop by hand would save, failed: MemoryError: " \
+           "no room for the copy" in capsys.readouterr().err
+    res = json.load(open(str(tmp_path / "n.json")))["results"]
+    assert res["end_reason"] == "t_max" and res["end_state_error"] is None
+    assert res["copy_error"] == "MemoryError: no room for the copy" and res["copy_error_time_s"] == pytest.approx(0.025)
+    monkeypatch.undo()
+    fail_dumps_on_call(monkeypatch, 3)
+    fail_on_call(monkeypatch, 3, RuntimeError("boom"))
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    assert "warning: copying the state at 0.0375 s" in capsys.readouterr().err
+    res = json.load(open(str(tmp_path / "f.json")))["results"]
+    assert res["end_reason"] == "failed" and res["failure"]["time_s"] == pytest.approx(0.025)
+    assert res["copy_error"] == "MemoryError: no room for the copy" and res["copy_error_time_s"] == pytest.approx(0.0375)
+    assert len(rows_of(str(tmp_path / "f.csv"))) == 2 and restart.load(str(tmp_path / "f.end.state.pkl"))["step"] == 1
+
+
+def test_resuming_with_dispersion_table_cuts_its_columns_and_a_state_without_it_resumes_on_table(flown, tmp_path, capsys):
+    """`--dispersion` on a resume (the kinked-profile dispersion design, spec 6.1 and 6.8; Review Focus 4). The test flight
+    flies on `profile`, the default of a spraying skin run: its JSON records it, its droplet records have the 36 columns
+    and its history the DISPERSION_COLUMNS. Resumed with `--dispersion table`, the spray model loses its stored setting (so
+    it pickles as a model built on `table`) and the saved row its DISPERSION_COLUMNS, so that no row carries them; the
+    records after the resume have the 27 SOURCE_COLUMNS; the line before the flight names the setting, the JSON records it
+    in the settings and in what was changed, and the state the resumed flight saves keeps it. Records held in memory
+    (a body without a spool) are cut to their 27 columns. A state saved before the option existed (the setting removed
+    from its spray model, which then reads the class default, the profile path's fields from its plan, whose `modes`
+    then read None, and the columns from its row) resumes on `table`, recorded as such, and `profile` asked of it adds the
+    columns to its rows -- an empty step's summary in the saved row -- and pads its records held in memory with nan. Resuming
+    with nothing changed repeats the flight to the last bit (`test_the_resume_command_repeats_the_flight_...`)."""
+    from reentry_model.shared import melt_profile
+    columns = list(melt_profile.DISPERSION_COLUMNS)
+
+    def header(path):          # the history's header: every column, in order
+        with open(path) as fh:
+            return next(csv.reader(fh))
+
+    def doc_of(path):
+        with open(path) as fh:
+            return json.load(fh)
+
+    def records_of(path):
+        with np.load(path) as z:
+            return {k: z[k] for k in z.files}
+
+    out, flight, records, state_path = flown
+    assert doc_of(os.path.join(out, "f.json"))["settings"]["skin"]["dispersion"] == "profile"
+    assert list(records) == spray.record_columns(36) and header(os.path.join(out, "f.csv"))[-len(columns):] == columns
+    resume = lambda state, name, *options: cli.main(["resume", state, "--outdir", str(tmp_path), "--name", name, *options])
+
+    # profile to table, the records on the spool
+    assert resume(state_path, "t", "--dispersion", "table", "--save-state-at", "0.2") == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "dispersion table" in line
+    doc = doc_of(str(tmp_path / "t.json"))
+    assert doc["settings"]["dispersion"] == "table"
+    assert doc["resumed_from"]["changed"] == {"--dispersion": "table", "--save-state-at": 0.2}
+    rows = rows_of(str(tmp_path / "t.csv"))
+    assert len(rows) == 3 and not set(columns) & set(header(str(tmp_path / "t.csv")))
+    assert rows[0] == {k: v for k, v in flight[14].items() if k not in columns}
+    assert list(records_of(str(tmp_path / "t" / "particles.npz"))) == spray.SOURCE_COLUMNS
+    saved = restart.load(str(tmp_path / "t.state.pkl"))
+    model = saved["run"].body.spray
+    assert model.dispersion == "table" and "dispersion" not in vars(model) and saved["meta"]["args"]["dispersion"] == "table"
+
+    # profile to table, the records in memory: cut to the 27 SOURCE_COLUMNS, bit for bit
+    state = restart.load(state_path)
+    held = np.arange(2.0 * 36).reshape(2, 36)
+    state["run"].body.source_rows = [held.copy()]
+    memory = str(tmp_path / "memory.state.pkl")
+    restart.save(memory, state)
+    assert resume(memory, "m", "--dispersion", "table") == 0
+    got = records_of(str(tmp_path / "m" / "particles.npz"))
+    assert list(got) == spray.SOURCE_COLUMNS
+    assert all(np.array_equal(got[k][:2], held[:, i]) for i, k in enumerate(spray.SOURCE_COLUMNS))
+
+    # a state saved before the option existed: table, with no columns for it
+    state = restart.load(state_path)
+    vars(state["run"].body.spray).pop("dispersion")                          # pickled before the setting existed
+    plan = state["run"].body.spray_plan
+    for name in ("T_run", "resolved", "profile", "modes", "record"):        # its plan too: made on no profile path
+        vars(plan).pop(name)
+    assert plan.modes is None and plan.record is None
+    for key in columns:
+        del state["row"][key]
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    capsys.readouterr()
+    assert resume(old, "o") == 0
+    assert "dispersion table" in capsys.readouterr().out
+    doc = doc_of(str(tmp_path / "o.json"))
+    assert doc["settings"]["dispersion"] == "table" and doc["resumed_from"]["changed"] == {}
+    assert not set(columns) & set(header(str(tmp_path / "o.csv")))
+    assert list(records_of(str(tmp_path / "o" / "particles.npz"))) == spray.SOURCE_COLUMNS
+
+    # ... switched to profile, its records in memory: padded with nan, and the columns in every row
+    state["run"].body.source_rows = [held[:, :27].copy()]
+    restart.save(old, state)
+    assert resume(old, "p", "--dispersion", "profile") == 0
+    assert "dispersion profile" in capsys.readouterr().out
+    doc = doc_of(str(tmp_path / "p.json"))
+    assert doc["settings"]["dispersion"] == "profile" and doc["resumed_from"]["changed"] == {"--dispersion": "profile"}
+    assert header(str(tmp_path / "p.csv"))[-len(columns):] == columns and len(rows_of(str(tmp_path / "p.csv"))) == 3
+    saved_row = rows_of(str(tmp_path / "p.csv"))[0]           # its plan has no modes: an empty step's summary
+    for key, value in melt_profile.summary(None, None, None, None).items():
+        assert (np.isnan(float(saved_row[key])) if np.isnan(value) else float(saved_row[key]) == value), key
+    assert np.isnan(float(saved_row["floor_like_share"])) and float(saved_row["fluid_like_columns"]) == 0.0
+    got = records_of(str(tmp_path / "p" / "particles.npz"))
+    assert list(got) == spray.record_columns(36)
+    assert all(np.array_equal(got[k][:2], held[:, i]) for i, k in enumerate(spray.SOURCE_COLUMNS))
+    assert all(np.isnan(got[k][:2]).all() for k in spray.PROFILE_COLUMNS)
+
+
+# -- the interim gas loads (docs/superpowers/plans/2026-11-13-interim-gas-loads.md, Task 7; Review Focus 5) -------------------
+def test_a_flight_on_the_provider_saves_it_and_resumes_with_it(flown, tmp_path, capsys):
+    """The test flight flies on the similarity loads, the default: its state carries one `GasLoads` shared by the skins'
+    surface flow and the `SimilarityHeating` (pickle keeps the one object), with no solve cached (`GasLoads.__getstate__`),
+    and a skin body whose sheltered corners are read at pi (ruling R15). Resumed with nothing changed it repeats the flight
+    to the last bit (as `test_the_resume_command_repeats_the_flight_...` checks on the same state), says the loads in the line
+    before the flight, records them in the settings, and the state it saves keeps the provider."""
+    from reentry_model import heating
+    from reentry_model.shared.gas_loads import GasLoads
+    out, flight, records, state_path = flown
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["gas_loads"] == "similarity"
+    state = restart.load(state_path)
+    run = state["run"]
+    assert type(run.heating) is heating.SimilarityHeating and type(run.heating.gas_loads) is GasLoads
+    assert run.body.surface_flow.gas_loads is run.heating.gas_loads and run.heating.gas_loads._cache == {}
+    assert run.body.sheltered_angle == np.pi and state["meta"]["args"]["gas_loads"] == "similarity"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r", "--save-state-at", "0.2"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "gas loads similarity" in line
+    assert rows_of(str(tmp_path / "r.csv")) == flight[14:]
+    settings = json.load(open(str(tmp_path / "r.json")))["settings"]
+    assert settings["gas_loads"] == "similarity" and settings["gas_loads_hold_s"] == 0.025      # the provider's hold, --dt
+    again = restart.load(str(tmp_path / "r.state.pkl"))
+    assert type(again["run"].heating) is heating.SimilarityHeating
+    assert again["run"].body.surface_flow.gas_loads is again["run"].heating.gas_loads
+    assert again["run"].body.sheltered_angle == np.pi and again["meta"]["args"]["gas_loads"] == "similarity"
+
+
+def test_a_state_saved_before_the_gas_loads_resumes_on_the_classic_loads(tmp_path, capsys):
+    """A state saved before the interim gas loads has a `SurfaceFlow` with no `gas_loads` on the instance, a `PhysicsHeating`,
+    a skin body with no sheltered angle of its own and no `gas_loads` among its arguments: a flight on `--gas-loads classic`
+    saves exactly such objects, so one, with the argument removed, stands in for it. It resumes on the classic loads (the
+    class attributes: no provider, sheltered corners at 90 degrees plus a microradian), says and records `classic`, and
+    repeats the unbroken classic flight from the saved step to the last bit."""
+    from reentry_model import heating
+    pytest.importorskip("cantera")
+    out = str(tmp_path / "classic")
+    assert cli.main(FLIGHT + ["--gas-loads", "classic", "--t-max", "0.1", "--outdir", out, "--name", "f",
+                              "--save-state-at", "0.05"]) == 0
+    flight = rows_of(os.path.join(out, "f.csv"))
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["gas_loads"] == "classic"
+    state = restart.load(os.path.join(out, "f.state.pkl"))
+    run = state["run"]
+    assert "gas_loads" not in vars(run.body.surface_flow) and run.body.surface_flow.gas_loads is None
+    assert type(run.heating) is heating.PhysicsHeating and "sheltered_angle" not in vars(run.body)
+    assert run.body.sheltered_angle == 0.5 * np.pi + 1e-6
+    del state["meta"]["args"]["gas_loads"]                     # the arguments of a flight saved before the option existed
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    capsys.readouterr()
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "r", "--save-state-at", "0.075"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "gas loads classic" in line
+    assert len(flight) == 8 and rows_of(str(tmp_path / "r.csv")) == flight[state["step"]:]
+    doc = json.load(open(str(tmp_path / "r.json")))
+    assert doc["settings"]["gas_loads"] == "classic" and doc["resumed_from"]["changed"] == {"--save-state-at": 0.075}
+    assert "gas_loads_hold_s" not in doc["settings"]
+    again = restart.load(str(tmp_path / "r.state.pkl"))
+    assert again["run"].body.surface_flow.gas_loads is None and type(again["run"].heating) is heating.PhysicsHeating
+    assert again["meta"]["args"]["gas_loads"] == "classic"
+
+
+def test_a_resumed_state_keeps_the_gas_loads_its_arguments_name(tmp_path, capsys):
+    """A flight on the similarity loads whose objects hold no provider -- SESAM's heating on the element model that does not
+    melt, which has no surface flow -- records `similarity` (the loads its arguments chose), and its resume says and records
+    `similarity` too, from the saved arguments, while flying the same objects (the unbroken flight's rows, to the last bit);
+    the loads are inferred from the objects only for a state whose arguments do not name them (review T7-1; the state saved
+    before the option is `test_a_state_saved_before_the_gas_loads_resumes_on_the_classic_loads`)."""
+    from reentry_model import heating
+    pytest.importorskip("cantera")
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    elements[elements.index("--heating") + 1] = "sesam"
+    out = str(tmp_path / "f")
+    assert cli.main(elements + ["--t-max", "0.1", "--outdir", out, "--name", "f", "--save-state-at", "0.05"]) == 0
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["gas_loads"] == "similarity"
+    state = restart.load(os.path.join(out, "f.state.pkl"))
+    assert type(state["run"].heating) is heating.SesamEquivalentHeating and not hasattr(state["run"].body, "flow")
+    assert state["meta"]["args"]["gas_loads"] == "similarity" and cli.gas_loads_of_run(state["run"]) == "classic"
+    capsys.readouterr()
+    assert cli.main(["resume", os.path.join(out, "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "gas loads similarity" in line
+    flight, resumed = rows_of(os.path.join(out, "f.csv")), rows_of(str(tmp_path / "r.csv"))
+    assert len(flight) == 5 and resumed == flight[-3:]
+    settings = json.load(open(str(tmp_path / "r.json")))["settings"]
+    assert settings["gas_loads"] == "similarity" and settings["gas_loads_hold_s"] is None       # no provider to hold
+    assert restart.load(str(tmp_path / "r.end.state.pkl"))["meta"]["args"]["gas_loads"] == "similarity"
+
+
+def test_a_skin_flight_solves_one_meridian_per_dt_shared_by_the_heating_and_the_surface_flow(tmp_path, monkeypatch):
+    """One provider per flight, holding its solution for one --dt of flight (`GasLoads.hold_s`, plan 2026-11-14 Task 2):
+    the melting skins' test flight to 0.0625 s has five rows, the first and four macro steps (25 ms, then 12.5 ms ones from
+    the continuum switch at the first step), and the provider solves three times: at 0 s, the heating's alone for the
+    history's first row, then at 0.025 s and 0.05 s, one --dt (25 ms) apart, the heating's call solving and the surface
+    flow's at the same time and key finding the solution. Every other call, at 0.0375 s and 0.0625 s at the freestream of
+    its own time, is within a held window and returns the held solution (review T7-4 counted one solve a macro step
+    before the hold). Counted by wrapping `GasLoads.meridian` and `GasLoads._solve`, not by instrumenting the package."""
+    from reentry_model import heating, surface_flow
+    from reentry_model.shared.gas_loads import HOLD_TOL, GasLoads
+    pytest.importorskip("cantera")
+    calls, solves, caller = [], [], [None]
+    meridian, solve = GasLoads.meridian, GasLoads._solve
+
+    def tag(cls, label):
+        real = cls.evaluate
+
+        def evaluate(self, *a, **k):
+            caller.append(label)
+            try:
+                return real(self, *a, **k)
+            finally:
+                caller.pop()
+        monkeypatch.setattr(cls, "evaluate", evaluate)
+    tag(heating.SimilarityHeating, "heating")
+    tag(surface_flow.SurfaceFlow, "flow")
+    key_of = lambda state, radius, T_wall: (state.freestream.rho, state.freestream.T, state.V, radius, T_wall)
+
+    def counted_meridian(self, state, radius, T_wall):
+        got = meridian(self, state, radius, T_wall)
+        calls.append((caller[-1], state.t, key_of(state, radius, T_wall), got))
+        return got
+
+    def counted_solve(self, state, radius, T_wall):
+        got = solve(self, state, radius, T_wall)
+        solves.append((state.t, key_of(state, radius, T_wall), got))
+        return got
+    monkeypatch.setattr(GasLoads, "meridian", counted_meridian)
+    monkeypatch.setattr(GasLoads, "_solve", counted_solve)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f"]) == 0
+    rows = rows_of(str(tmp_path / "f.csv"))
+    times = [float(r["time_s"]) for r in rows]
+    assert times == pytest.approx([0.0, 0.025, 0.0375, 0.05, 0.0625], abs=1e-12)
+    assert [t for t, _, _ in solves] == pytest.approx([0.0, 0.025, 0.05], abs=1e-12)
+    assert len({key for _, key, _ in solves}) == 3
+    for who, t, key, got in calls:
+        t0, key0, held = [s for s in solves if s[0] <= t][-1]          # the latest solve at or before the call
+        assert got is held, (who, t)
+        assert key == key0 if t == t0 else 0.0 < t - t0 < 0.025 * (1.0 - HOLD_TOL), (who, t)
+    callers = {}
+    for who, t, _, _ in calls:
+        callers.setdefault(round(t, 9), []).append(who)
+    assert {t: sorted(w) for t, w in callers.items()} == {
+        round(t, 9): ["heating"] if t == 0.0 else ["flow", "heating"] for t in times}, callers
+    assert json.load(open(str(tmp_path / "f.json")))["settings"]["gas_loads_hold_s"] == 0.025      # --dt
+
+
+def test_a_flight_resumed_inside_a_hold_window_matches_the_unbroken_flight(tmp_path, monkeypatch):
+    """Review Focus 3: the test flight saved at 0.025 s, just after the provider solved there, carries the held solution
+    and its time in its state (`GasLoads.__getstate__` keeps them), so the resumed step to 0.0375 s flies on the held
+    solution without solving, and the next solve is at 0.05 s, one --dt after the held one, as in the unbroken flight.
+    The resumed rows are the flight's from the saved step on, to the last bit."""
+    from reentry_model.shared.gas_loads import GasLoads
+    pytest.importorskip("cantera")
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f", "--save-state-at", "0.025"]) == 0
+    flight = rows_of(str(tmp_path / "f.csv"))
+    state = restart.load(str(tmp_path / "f.state.pkl"))
+    loads = state["run"].heating.gas_loads
+    assert state["step"] == 1 and state["time_s"] == pytest.approx(0.025)
+    assert loads.hold_s == 0.025 and loads._held_t == state["time_s"] and loads._held is not None and loads._cache == {}
+    solves, solve = [], GasLoads._solve
+
+    def counted(self, s, radius, T_wall):
+        solves.append(s.t)
+        return solve(self, s, radius, T_wall)
+    monkeypatch.setattr(GasLoads, "_solve", counted)
+    assert cli.main(["resume", str(tmp_path / "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert solves == pytest.approx([0.05], abs=1e-12)           # the step to 0.0375 s flew on the held solution
+    assert len(flight) == 5 and rows_of(str(tmp_path / "r.csv")) == flight[1:]
+
+
+def test_a_state_whose_provider_has_no_hold_resumes_solving_every_step_and_records_none(flown, tmp_path, monkeypatch):
+    """Review Focus 4 on the resume command (a state saved before the hold must resume without it; ruling P9 in
+    docs/superpowers/plans/2026-11-14-gas-loads-low-mach-and-cadence-rulings.md): the `flown` state with its provider stripped of the hold's
+    attributes stands in for a state saved before the hold. Resumed, it solves at both steps from 0.1875 s (0.2 and
+    0.2125 s, 12.5 ms apart), where the state as saved solves at 0.2 s only, one --dt after its held solve at 0.175 s,
+    and holds that solution at 0.2125 s; its JSON records
+    `gas_loads_hold_s` as null, the loaded provider's (no) hold; the resume of the state as saved records 0.025 s
+    (`test_a_flight_on_the_provider_saves_it_and_resumes_with_it`)."""
+    from reentry_model.shared.gas_loads import GasLoads
+    out, flight, records, state_path = flown
+    state = restart.load(state_path)
+    provider = state["run"].heating.gas_loads
+    for name in ("hold_s", "_held", "_held_t"):
+        del provider.__dict__[name]
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    solves, solve = [], GasLoads._solve
+
+    def counted(self, s, radius, T_wall):
+        solves.append(s.t)
+        return solve(self, s, radius, T_wall)
+    monkeypatch.setattr(GasLoads, "_solve", counted)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert solves == pytest.approx([0.2, 0.2125], abs=1e-12)
+    settings = json.load(open(str(tmp_path / "r.json")))["settings"]
+    assert settings["gas_loads"] == "similarity" and settings["gas_loads_hold_s"] is None

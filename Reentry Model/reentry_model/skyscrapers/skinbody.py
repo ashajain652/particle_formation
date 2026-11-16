@@ -111,7 +111,22 @@ node's enthalpy and the rest of its heat goes to that node through `pending` (`_
 the fault count keep the hand-down as it left each skin. The history's spreading columns are `SPREAD_COLUMNS`, with a limit
 only (`spread_stats`), and a limit that does not bind changes nothing to the last bit. A body pickled before this has none of
 these attributes on the instance, so they are class defaults too: the saved flights of 2026-11-06 resume with or without a
-limit."""
+limit.
+
+The profile path (the kinked-profile dispersion design, docs/superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md;
+a spray model whose `dispersion` is "profile"): `girin_plan` reads the cells as `layer_columns` and the shared `melt_profile`
+fits each windward column's speed profile, places its wall and solves Girin's gradient mode on it, for the shared spray
+model's profile path; each column's release is heat-limited by its mode's threshold temperature (`skin.Cascade.T_run`), the
+records carry spray.PROFILE_COLUMNS after the 27 (`record_names`) and the history the summary's columns
+(`dispersion_stats`). Everything else is wiring: the physics is in `reentry_model/shared/`.
+
+The windward loads (the fitted-sphere loads design, docs/superpowers/specs/2026-11-13-fitted-sphere-loads-design.md; Asha,
+2026-11-13; `windward_loads`, `sphere` by default): the heating, the surface flow, the spray plan and the wet statistics read
+each top corner's angle to the flow and one nose radius (`load_angles`, `nose_radius`, `windward_corners`). Under `sphere` the
+corners ahead of the plane through the mass centroid cast a ray up the flow; those whose ray crosses the tops are sheltered
+(`shelter.upstream_hits`), one sphere is fitted to the rest (`sphere_fit`), each of them reads the angle of the ray from its
+centre, and the radius is the fit capped at the flat-face bound; sheltered corners and those behind the plane are leeward.
+`normals`, the class's default for states saved before it, is the rule of sub-plan 22 Tasks 5g and 5j unchanged."""
 import copy
 import dataclasses
 import math
@@ -123,8 +138,10 @@ import numpy as np
 from . import columns as columns_mod
 from ..shared import lubrication
 from ..shared import material as material_mod
+from ..shared import melt_profile
 from . import movemesh
 from ..shared import rheology
+from . import shelter
 from . import skin as skin_mod
 from ..shared import spray as spray_mod
 from . import spreading
@@ -203,12 +220,45 @@ NOSE_COLUMNS = ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nos
 # flights at 186.5-187.3 s: releases came from corners up to 82 mm behind the original centre whose normals faced forward
 # (12-20 degrees off the flow, median), which the first test counted as windward though they sit behind the body; the
 # centroid itself was 30 mm behind the original centre by 187.0 s, the metal having run to the back. The choices
-# (`LEEWARD_TESTS`), the plane test (`ahead_of`) and the angles (`load_angles`) are in reentry_model.shared.nose since
-# level-set stage 3 Task 1.
+# (`LEEWARD_TESTS`), the plane test (`ahead_of`) and the classic loads' angles (`load_angles`) are in
+# reentry_model.shared.nose since level-set stage 3 Task 1.
+# The angle the loads read at a sheltered corner -- one whose normal faces the flow but which the `centroid` test puts behind
+# the plane through the mass centroid (`SkinBody.load_angles`). On the classic loads a microradian past 90 degrees, where
+# they are zero, as since Task 5j; on the interim gas loads' provider pi, the rear of the separated wake: its base
+# pressure, no shear and no heating, where an angle just past 90 degrees would carry shoulder-level loads (decision 2a, Asha
+# 2026-11-12; ruling R15 of the interim gas loads, 2026-11-14: only the sheltered corners move, a corner facing away keeps
+# its true angle and the provider's lee loads). The class default is the classic one, so a state saved before the interim
+# gas loads resumes as it flew; `cli.build_thermal` gives a run on the provider SHELTER_WAKE. Under `windward_loads` `sphere`
+# the corners the ray test shelters (`SphereFit.sheltered`) read it too, whichever way they face (the merge with the interim
+# gas loads, 2026-11-15; model_assumptions section 15).
+SHELTER_CLASSIC = 0.5 * np.pi + 1e-6
+SHELTER_WAKE = np.pi
 # the history's two leeward columns (`SkinBody.nose_stats`), with either setting: the centroid's position along the flight
 # direction relative to the 3D mesh's mean point [mm, positive forward], and the corners that face the flow but lie behind the
 # plane through it
 LEEWARD_COLUMNS = ("centroid_offset_mm", "leeward_corners")
+
+# The windward loads' rule (the fitted-sphere loads design, docs/superpowers/specs/2026-11-13-fitted-sphere-loads-design.md;
+# Asha, 2026-11-13). `sphere`: the candidates are the top corners ahead of the plane through the mass centroid; a candidate
+# whose ray up the flow crosses the tops is sheltered (`shelter.upstream_hits`), the rest are exposed; one sphere is fitted to
+# the exposed corners and each reads the angle of the ray from its centre through the corner, the radius the loads read being
+# the fit capped at the flat-face bound; sheltered corners and corners behind the plane are leeward. `normals`: the rule as it
+# was (sub-plan 22 Tasks 5g and 5j), each corner at its own normal's angle and the radius from the 30-degree cap, with
+# `leeward_test` and `size_feedback` as they were. The constructor's default is `sphere`, the class's `normals`.
+WINDWARD_LOADS = ("sphere", "normals")
+# the history's three sphere columns under `sphere` (`SkinBody.nose_stats`), after the leeward ones: the sheltered corners, the
+# fitted centre's position along the flight direction from the mesh's coordinate origin (the sphere's original centre) [mm] and
+# the root-mean-square distance of the exposed corners from the fitted sphere [mm] (both nan where there is no valid sphere)
+SPHERE_COLUMNS = ("sheltered_corners", "sphere_centre_mm", "sphere_fit_rms_mm")
+
+# The geometry measures (open item 4; Asha, 2026-11-12): the skin columns stop describing the metal once the 3D core has been
+# eaten back past the sphere's original centre, or once the column tops enclose more space than the metal fills (tall columns
+# keep their base area and fan apart). On the 50 mm slip-band-on flight the volume ratio was 1.03 at 179 s, 1.17 at 183 s and
+# 1.42 at 185.5 s. `geometry_breach` reads these at call time. Columns: the core's front along the flight direction [mm, from
+# the original centre, the mesh's mean point at time zero] and the tops' enclosed volume over the metal's volume.
+GEOMETRY_COLUMNS = ("core_front_mm", "tops_volume_ratio")
+GEOMETRY_VOLUME_RATIO = 1.25
+GEOMETRY_FRONT_LIMIT_MM = 0.0
 
 
 @dataclasses.dataclass
@@ -224,6 +274,28 @@ class NoseFit:
     points: int
     concave: bool
     used: float
+
+
+@dataclasses.dataclass
+class SphereFit:
+    """The sphere rule's fit of the skins' tops (`SkinBody.sphere_fit`; the fitted-sphere loads design, Asha 2026-11-13):
+    `centre` [m, (3,)] and `fitted` [m] the sphere fitted unweighted to the exposed corners (`body.fit_sphere`), `bound` [m]
+    the flat-face bound (`body.NOSE_CAP_FACTOR` times the windward transverse radius over the corners ahead of the centroid's
+    plane whose base normals face the flow), `used` [m] the radius the loads read, `exposed` and `sheltered` (bool, (n,)) the
+    candidates (the corners ahead of the plane) whose ray up the flow crosses no top and the ones whose ray does, `points` the
+    exposed corners counted, `concave` True where there is no valid sphere (fewer than 4 exposed corners, a radius not finite
+    and positive, exposed corners coplanar to rounding, or a centre on the flow side of their mean point) and `rms` [m] the
+    root-mean-square distance of the exposed corners from the sphere. `centre`, `fitted` and `rms` are nan where there is no
+    valid sphere."""
+    centre: np.ndarray
+    fitted: float
+    bound: float
+    used: float
+    exposed: np.ndarray
+    sheltered: np.ndarray
+    points: int
+    concave: bool
+    rms: float
 
 
 @dataclasses.dataclass
@@ -262,7 +334,14 @@ class SprayPlan:
     Task 2): `theta` [rad], `closure` (the surface flow's), `points` [m, (n, 3)] the top surface's corners, `state` the
     aero state and `props` the liquid's properties; and for the history and Register's release angle (Task 4), `area`
     [m2] the columns' top areas, `centre` [m, (3,)] the centroid of the volume the top surface enclosed and `v_hat` the
-    direction of flight."""
+    direction of flight.
+
+    On the profile path (the kinked-profile dispersion design, spec 6.6 and 6.8): `T_run` [K, (n,)] each column's
+    threshold for its mode's release run, which the cascade takes (`skin.Cascade.T_run`; NaN, today's liquid run, where
+    no profile mode sprays); `resolved` (bool, (n,)) the columns whose profile was resolved; `profile` (n, 9) the records'
+    appended columns (`melt_profile.profile_rows`, spray.PROFILE_COLUMNS); and `modes` and `record`, the plan's
+    `spray.ProfileModes` and `melt_profile.ProfileRecord`, for the history's summary. They are stored only when given,
+    so that a plan on the table path holds, and pickles, what it did before them; read there they are None."""
     rate: np.ndarray
     rate_slurry: np.ndarray
     result: object
@@ -283,11 +362,20 @@ class SprayPlan:
     area: np.ndarray = None
     centre: np.ndarray = None
     v_hat: np.ndarray = None
+    T_run: dataclasses.InitVar[np.ndarray] = None
+    resolved: dataclasses.InitVar[np.ndarray] = None
+    profile: dataclasses.InitVar[np.ndarray] = None
+    modes: dataclasses.InitVar[object] = None
+    record: dataclasses.InitVar[object] = None
 
-    def __post_init__(self):
+    def __post_init__(self, T_run, resolved, profile, modes, record):
+        for name, value in (("T_run", T_run), ("resolved", resolved), ("profile", profile), ("modes", modes),
+                            ("record", record)):
+            if value is not None:
+                setattr(self, name, value)
         T = self.slurry["T"]
         self._cascade = skin_mod.Cascade(self.rate, self.rate_slurry, np.where(np.isfinite(T), T, np.inf),
-                                         histogram=self.histogram)
+                                         histogram=self.histogram, T_run=self.T_run)
         n = len(self.rate)
         self.mass, self.mass_slurry = np.zeros(n), np.zeros(n)
         self.number, self.number_slurry = np.zeros(n), np.zeros(n)
@@ -355,14 +443,21 @@ class SprayPlan:
         is at rest); We_d, Oh and the breakup flag at their radius, by their phase's density, viscosity and surface tension
         (the slurry's mixture density, viscosity at its sheared layer's rate and SLURRY_SIGMA, the 2026-10-07 design 8.4);
         their solid fraction and enthalpy per kilogram, mass-weighted over the cells released; and their column's release
-        angle (Task 4)."""
+        angle (Task 4). On the profile path each row ends with its column's `profile` columns (spray.PROFILE_COLUMNS, the
+        rows `record_columns(36)` wide; spec 6.8), the slurry's with no release depth and no growth rate, which are the
+        liquid's mode's [plan call 6]."""
         s = self.slurry
+        extra = extra_slurry = self.profile
+        if extra is not None:
+            extra_slurry = np.array(extra, dtype=float)
+            extra_slurry[:, [spray_mod.PROFILE_COLUMNS.index("release_depth_m"),
+                             spray_mod.PROFILE_COLUMNS.index("growth_rate_per_s")]] = np.nan
         modes = ((self.mass, self.enthalpy, self.solid, self.momentum, self.number, self.result, self.flowing, self.props),
                  (self.mass_slurry, self.enthalpy_slurry, self.solid_slurry, self.momentum_slurry, self.number_slurry,
                   types.SimpleNamespace(**{k: s[k] for k in ("branch", "r", "delta_m", "we_s", "h_floor", "gamma_tau")}),
                   s["depth"], material_mod.LiquidProperties(s["rho"], s["mu"], SLURRY_SIGMA)))
         return spray_mod.plan_source_block(t, self.state, self.theta, self.points, self.closure, modes,
-                                           self.release_angle())
+                                           self.release_angle(), extra=extra, extra_slurry=extra_slurry)
 
 
 def sheared_depth(sk):
@@ -383,6 +478,30 @@ def sheared_depth(sk):
 # to shared/spray.py for level-set stage 3 Task 8; the names kept here)
 _no_step_spray = spray_mod.no_step_spray
 _rows = spray_mod.rows_of
+
+
+def layer_columns(sk, tau):
+    """Every column's cells as plain arrays for the shared straight-segment fit (`melt_profile.LayerColumns`; the
+    kinked-profile dispersion design's section 6.4): the cells' centre depths and thicknesses, each cell's velocity
+    projected on the top cell's direction (zero where the top cell is at rest), temperatures, masses and densities
+    (`density(T)`), the viscosities `skin.cell_viscosity` at `skin.cell_shear_rates` under the gas shear |tau| [Pa, (n,)]
+    -- the shear rates the momentum step starts from -- the contiguous runs from the top of flowing cells and of fully
+    liquid ones (flowing and at or above the liquidus, as `skin.cascade_mass` reads the liquid), and the rigid front
+    `depth_above(T_rigid)`. Beyond each column's cells z, u, T and rho are NaN, dz and m 0 and mu inf."""
+    valid = sk.valid
+    mu = skin_mod.cell_viscosity(sk, skin_mod.cell_shear_rates(sk, tau))
+    dz = sk.dz()
+    top = sk.U[:, 0]
+    speed = np.linalg.norm(top, axis=1)
+    direction = np.divide(top, speed[:, None], out=np.zeros_like(top), where=speed[:, None] > 0.0)
+    u = np.einsum("ikj,ij->ik", sk.U, direction)
+    flowing = np.cumprod(valid & np.isfinite(mu), axis=1).astype(bool)
+    liquid = np.cumprod(flowing & (sk.T >= sk.material.T_liquidus), axis=1).astype(bool)
+    cells = lambda a: np.where(valid, a, np.nan)
+    return melt_profile.LayerColumns(z=cells(np.cumsum(dz, axis=1) - 0.5 * dz), dz=dz, u=cells(u), T=cells(sk.T),
+                                     m=np.where(valid, sk.m, 0.0), rho=cells(sk.density(sk.T)), mu=mu, flowing=flowing,
+                                     liquid=liquid, front=sk.depth_above(sk.material.T_rigid))
+
 
 
 def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False, points=None, centre=None,
@@ -410,7 +529,19 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
     22 Task 5i, the plan of 2026-11-06 with Asha's change of 2026-11-10), at the nose radius `nose_radius` (default `radius`)
     the integrated shear was taken at: `b`, the regime layers, the Rayleigh-Taylor pool, the mass run and the cap stay as
     they are, so the liquid sprays on the flowing depth and a liquid on slurry is held only where delta_m is not finite. The
-    film transport reads Girin's delta_m as before."""
+    film transport reads Girin's delta_m as before.
+
+    With `model.dispersion` "profile" (the kinked-profile dispersion design, spec 6.4-6.8) the windward columns whose top
+    cell flows and moves are resolved: their cells are read as `layer_columns` under the gas shear |tau|, and the shared
+    `melt_profile.profile_modes` fits their profiles, places their walls and solves their gradient mode, for the spray
+    model's profile path (`model.evaluate(..., profile=)`). There the wave must fit in the contiguous region of windward
+    columns whose layer above the wall -- the flowing depth on the columns not resolved -- is at least spray.B_MIN deep,
+    and the Rayleigh-Taylor mode's in the liquid's region, as today; a column not resolved keeps today's path, its wave in
+    the liquid's region too. Each column's release run is fixed by the mode that sprays it (`melt_profile.select_run`,
+    a mode with no rate fixing none: today's liquid run), its droplets carry the run's cells' mass-weighted density and
+    viscosity (`melt_profile.run_properties`; the liquid's on the columns not resolved, and where the run is empty), and
+    the slurry's own mode reads the first flowing cell below that run. The plan keeps the thresholds, the resolved
+    columns, the records' appended columns and the modes and record for the history (`SprayPlan`)."""
     mat, liq = sk.material, model.liquid
     n = sk.n
     F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
@@ -427,17 +558,35 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
     extent = region_extent(edges, L > 0.0, A_top)
     run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
     cap = F if slurry else L
-    res = model.evaluate(flow, state, F, delta_m, v_s, windward, dt, A_top, (sk.m * run).sum(axis=1), radius,
-                         b_layer=F, extent=extent, deceleration_n=w_n, regime_layer=F, on_slurry=on_slurry, rt_layer=L,
-                         cap_depth=cap)
+    if model.dispersion != "profile":
+        res = model.evaluate(flow, state, F, delta_m, v_s, windward, dt, A_top, (sk.m * run).sum(axis=1), radius,
+                             b_layer=F, extent=extent, deceleration_n=w_n, regime_layer=F, on_slurry=on_slurry, rt_layer=L,
+                             cap_depth=cap)
+        n_above, props, on_profile = n_liq, liq, {}
+    else:                                    # the profile path (kinked-profile dispersion spec 6.4-6.8): the physics shared
+        cols = layer_columns(sk, np.abs(flow.tau))
+        pm, rec = melt_profile.profile_modes(cols, windward, liq.sigma)
+        D = np.where(pm.resolved, pm.wall_depth, F)
+        waves = np.where(pm.resolved, region_extent(edges, windward & (D >= spray_mod.B_MIN), A_top), extent)
+        res = model.evaluate(flow, state, F, delta_m, v_s, windward, dt, A_top, (sk.m * run).sum(axis=1), radius,
+                             b_layer=F, extent=waves, deceleration_n=w_n, regime_layer=F, on_slurry=on_slurry, rt_layer=L,
+                             cap_depth=cap, profile=pm, rt_extent=extent)
+        T_run = melt_profile.select_run(np.where(res.mdot > 0.0, res.branch, -1), pm, rec)
+        mode = skin_mod.mode_run(sk, T_run)
+        n_above = mode.sum(axis=1)
+        rho_run, mu_run = melt_profile.run_properties(cols, mode)
+        own = pm.resolved & (n_above > 0)
+        props = material_mod.LiquidProperties(np.where(own, rho_run, liq.rho), np.where(own, mu_run, liq.mu), liq.sigma)
+        on_profile = dict(T_run=T_run, resolved=pm.resolved, profile=melt_profile.profile_rows(rec, delta_m, v_s),
+                          modes=pm, record=rec)
     if slurry:
-        rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow,
+        rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_above, n_flow,
                                      theta=theta, nose_radius=nose_radius)
     else:
         rate_s, modes = np.zeros(n), _no_slurry(n)
     return SprayPlan(res.mdot, rate_s, res, modes, F, L, cap, on_slurry, theta=theta, closure=np.asarray(flow.closure),
-                     points=points, state=state, props=liq, area=np.asarray(A_top, dtype=float), centre=centre,
-                     v_hat=None if v_hat is None else np.asarray(v_hat, dtype=float))
+                     points=points, state=state, props=props, area=np.asarray(A_top, dtype=float), centre=centre,
+                     v_hat=None if v_hat is None else np.asarray(v_hat, dtype=float), **on_profile)
 
 
 _no_slurry = spray_mod.no_slurry          # moved to shared/spray.py (level-set stage 3 Task 8)
@@ -448,11 +597,13 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     """The exposed slurry's own mode per column, the cascade of spec 8 (the 2026-10-07 design's 8.1-8.2; Asha, 2026-10-29,
     option i): (rate [kg/(m2 s)], the per-column dict of SprayPlan.slurry). Where a flowing cell that is not fully liquid
     lies beneath the liquid run on the windward face, its cell -- the slurry the release exposes first -- gives the
-    properties: Li et al.'s viscosity (`rheology.viscosity`, with the bridge to the liquid) at the cell's solid fraction
-    and the shear rate of the slurry's own sheared layer, V_s over delta_m or over the layer, found by fixed-point
-    iteration from rest (at most skin.SHEAR_PASSES passes, until no viscosity moves by skin.SHEAR_TOL, the rate held at
-    rheology.GAMMA_MAX); the cell's mixture density; SLURRY_SIGMA. The layer runs from the cell's top to T_rigid, and the
-    regime test, the viscous film's floor and b are it. Girin's formulas are the shared model's with these properties
+    properties: the viscosity of the law the skins' settings select (`skin.viscosity_of`: Li et al.'s with the bridge to
+    the liquid, or the composite law) at the cell's solid fraction and the shear rate of the slurry's own sheared layer,
+    V_s over delta_m or over the layer, found by fixed-point iteration from rest (at most skin.SHEAR_PASSES passes, until
+    no viscosity moves by skin.SHEAR_TOL, the rate held at `rheology.rate_cap` of the law: GAMMA_MAX under the bridge law,
+    no cap under the composite law, whose viscosity does not depend on the rate); the cell's mixture density;
+    SLURRY_SIGMA. The layer runs from the cell's top to T_rigid, and the regime test, the viscous film's floor and b are
+    it. Girin's formulas are the shared model's with these properties
     (its k_r, k_t, critical Weber number and dispersion table), the Rayleigh-Taylor mode left to the liquid; the wave
     must fit in the flowing region; the cap is the flowing depth. Evaluated once a macro step, as the liquid's mode: its
     rate holds for slurry cells at least as warm as the one whose properties gave it, and a colder cell, more solid and
@@ -477,7 +628,8 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     cells = np.arange(sk.m.shape[1])[None, :]
     m_s = (sk.m * ((cells >= n_liq[:, None]) & (cells < n_flow[:, None]))).sum(axis=1)     # the slurry run, nominally
     return spray_mod.slurry_modes(rows, T, f_s, rho, depth, flow, state, model, mat, windward, w_n, A_top, m_s, extent, F,
-                                  radius, dt, skin_mod.SHEAR_PASSES, skin_mod.SHEAR_TOL, theta=theta, nose_radius=nose)
+                                  radius, dt, skin_mod.SHEAR_PASSES, skin_mod.SHEAR_TOL, theta=theta, nose_radius=nose,
+                                  law=sk.settings.rheology)
 
 def base_temperature(T, dz, count):
     """The skin's temperature at its base [K], extrapolated linearly from the centres of its bottom two cells: with `T_b`
@@ -562,7 +714,15 @@ class SkinBody(ThermalBody):
     `centroid` (`LEEWARD_TESTS`; the command line's default): which top corners are windward for every consumer of the angle
     to the flow -- the heating, the surface flow, the spray plan (its shear modes and its Rayleigh-Taylor mode) and the
     windward sphere fit (`load_angles`, `windward_corners`; sub-plan 22 Task 5j, Asha, 2026-11-10). `theta` itself, the frames and the
-    release angle (`spray.enclosed_centroid`) do not change."""
+    release angle (`spray.enclosed_centroid`) do not change.
+    `windward_loads`: `sphere` (the constructor's default) or `normals` (the class's, so a state saved before the rule existed
+    flies as it was; `WINDWARD_LOADS`): under `sphere` the windward loads read one sphere fitted to the exposed tops
+    (`sphere_fit`), each exposed corner at the angle of the ray from its centre, sheltered corners and corners behind the
+    centroid's plane leeward (the fitted-sphere loads design, Asha 2026-11-13); `leeward_test` and `size_feedback` are read
+    only under `normals`, which is the rule above, unchanged.
+    `sheltered_angle` [rad, within (90, 180] degrees, or None for the class's `SHELTER_CLASSIC`]: the angle every consumer of
+    `load_angles` reads at a corner the `centroid` test shelters, and under `windward_loads` `sphere` also at one the ray test
+    shelters; `SHELTER_WAKE`, pi, for the loads of the interim gas loads' provider (decision 2a, ruling R15)."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
@@ -571,7 +731,11 @@ class SkinBody(ThermalBody):
     size_feedback = "initial"            # the nose radius's source (Task 5g): the states saved before it flew on the mesh's radius
     _nose_raw = None                     # the fit of the tops, made at the first read after `_refresh_geometry`; old states have none
     leeward_test = "facing"              # which corners are windward (Task 5j): the states saved before it flew on `theta` alone
+    sheltered_angle = SHELTER_CLASSIC    # where a sheltered corner's loads are read: the states saved before the provider, classic
     _leeward_raw = None                  # (the centroid, the corners ahead of its plane) of the surface, made at the first read
+    geometry_stop = True                 # the run ends at a geometry breach (open item 4): the states saved before it fly on with it on
+    windward_loads = "normals"           # the loads' rule (fitted-sphere loads, 2026-11-13): the states saved before it fly on `normals`
+    _sphere_raw = None                   # the sphere rule's fit of the tops (`SphereFit`), made at the first read after a refresh
     _moment3d = None                     # the 3D model's (mass, mass moment) since the last move, made at the first read
     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
     spread_over = 0                      # edges over the limit on the last move's first estimate
@@ -582,7 +746,16 @@ class SkinBody(ThermalBody):
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
                  spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth",
-                 size_feedback="current", leeward_test="facing"):
+                 size_feedback="current", leeward_test="facing", geometry_stop=True, windward_loads="sphere",
+                 sheltered_angle=None):
+        if sheltered_angle is not None:                  # None: the class's classic angle, stored on no instance
+            if not 0.5 * np.pi < sheltered_angle <= np.pi:
+                raise ValueError("sheltered_angle must be None or an angle within (pi/2, pi] rad, got {!r}".format(sheltered_angle))
+            self.sheltered_angle = float(sheltered_angle)
+        self.geometry_stop = bool(geometry_stop)
+        if windward_loads not in WINDWARD_LOADS:
+            raise ValueError("windward_loads must be one of {}, got {!r}".format(WINDWARD_LOADS, windward_loads))
+        self.windward_loads = windward_loads
         if leeward_test not in LEEWARD_TESTS:
             raise ValueError("leeward_test must be one of {}, got {!r}".format(LEEWARD_TESTS, leeward_test))
         self.leeward_test = leeward_test
@@ -621,7 +794,8 @@ class SkinBody(ThermalBody):
         self.spray, self.spray_plan = spray, None            # Girin's model, and its plan of the last macro step (Task 1c)
         self.particles = bool(particles)                     # keep the droplet records' rows (Task 2)
         # one block of source-table rows per macro step (Task 2), in memory or, with `spool`, on disk (Task 4)
-        self.source_rows = spray_mod.SourceSpool(spool) if spool is not None and self.particles else []
+        self.source_rows = (spray_mod.SourceSpool(spool, self.record_names()) if spool is not None and self.particles
+                            else [])
         self.sprayed_mass, self.n_source_rows = 0.0, 0         # kg of droplet records, and their rows kept (Task 4)
         self.step_spray, self._released_step = _no_step_spray(), 0.0     # this macro step's droplet columns, release
         self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)   # droplets, kg per size bin
@@ -702,6 +876,7 @@ class SkinBody(ThermalBody):
         self._leeward_raw = None                         # the centroid and what is ahead of it, made at the first read, as `_volume` is
         self._moment3d = None
         self._nose_raw = None                            # the fit of this surface, made at the first read (`nose_fit`), as `_volume` is
+        self._sphere_raw = None                          # the sphere rule's fit of this surface, made at the first read (`sphere_fit`)
 
     def mass_centroid(self):
         """The mass-weighted centre of the body's metal [m, (3,)] (sub-plan 22 Task 5j): the 3D model's active elements (their
@@ -729,21 +904,138 @@ class SkinBody(ThermalBody):
         return self._leeward_raw
 
     def windward_corners(self):
-        """Which top corners are windward, bool (n,): their normal within 90 degrees of the direction of motion, and under
-        `leeward_test` `centroid` also ahead of the plane through the mass centroid (sub-plan 22 Task 5j)."""
+        """Which top corners are windward, bool (n,). Under `windward_loads` `sphere`: the exposed corners (`sphere_fit`) whose
+        load angle is at most 90 degrees (the fitted-sphere loads design, Asha 2026-11-13). Under `normals`: their normal within
+        90 degrees of the direction of motion, and under `leeward_test` `centroid` also ahead of the plane through the mass
+        centroid (sub-plan 22 Task 5j)."""
+        if self.windward_loads == "sphere":
+            return self.sphere_fit.exposed & (self.load_angles() <= 0.5 * np.pi)
         facing = self.theta <= 0.5 * np.pi
         return facing & self._leeward()[1] if self.leeward_test == "centroid" else facing
 
     def load_angles(self):
         """The angles to the flow [rad, (n,)] every windward consumer reads -- the heating (`CoupledRun.loads_at`), the surface
         flow (`flow_forcing`) and the spray plan (`girin_plan`: its shear modes, and through its `windward` and `w_n` the
-        Rayleigh-Taylor mode) -- (sub-plan 22 Task 5j; Asha, 2026-11-10: a corner behind the centroid's plane gets no shear,
-        no spray and no Rayleigh-Taylor mode, whichever way its normal faces). `theta` itself under `facing`, bit for bit;
-        under `centroid` `theta` where `windward_corners` and the larger of `theta` and 90 degrees plus a microradian where not. `theta`
-        itself, the frames and the release angle do not change."""
+        Rayleigh-Taylor mode).
+
+        Under `windward_loads` `sphere` (the fitted-sphere loads design, Asha 2026-11-13): an exposed corner (`sphere_fit`)
+        reads the angle between the direction of motion and the unit ray from the fitted centre through it, even past 90
+        degrees, or its own `theta` where there is no valid sphere. On the classic loads (`sheltered_angle` the class's
+        `SHELTER_CLASSIC`) every other corner -- sheltered, or behind the centroid's plane -- reads the larger of `theta` and
+        90 degrees plus a microradian, so it takes no heating, shear or spraying. On the provider's (`SHELTER_WAKE`; the
+        merge with the interim gas loads, 2026-11-15) a corner the ray test shelters reads `sheltered_angle` whichever way it
+        faces, in the separated wake, and a corner behind the centroid's plane reads its own `theta` where it faces away from
+        the flow (the provider's lee loads, ruling R15) and `sheltered_angle` where it faces the flow.
+
+        Under `normals` (sub-plan 22 Task 5j; Asha, 2026-11-10: a corner behind the centroid's plane gets no shear, no spray
+        and no Rayleigh-Taylor mode, whichever way its normal faces): `theta` itself under `facing`, bit for bit; under
+        `centroid` `theta` where `windward_corners` and, where not, on the classic loads the larger of `theta` and 90 degrees
+        plus a microradian, and on the provider's `theta` where the corner faces away from the flow and `sheltered_angle`
+        where it faces the flow -- a sheltered corner, read in the separated wake (decision 2a, ruling R15). `theta` itself,
+        the frames' geometry and the release angle do not change under either rule."""
+        if self.windward_loads == "sphere":
+            sf = self.sphere_fit
+            exposed = self.theta if sf.concave else self._ray_angles(sf.centre)
+            if self.sheltered_angle == SHELTER_CLASSIC:  # the classic loads: the sphere rule as it was (bit for bit)
+                return np.where(sf.exposed, exposed, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
+            away = ~self._leeward()[1] & (self.theta > 0.5 * np.pi)       # behind the centroid's plane and facing away
+            return np.where(sf.exposed, exposed, np.where(away, self.theta, self.sheltered_angle))
         if self.leeward_test != "centroid":
             return self.theta
-        return nose_mod.load_angles(self.theta, self.windward_corners())
+        if self.sheltered_angle == SHELTER_CLASSIC:      # the classic loads' rule, as it was (bit for bit)
+            return nose_mod.load_angles(self.theta, self.windward_corners())
+        return np.where(self.windward_corners() | (self.theta > 0.5 * np.pi), self.theta, self.sheltered_angle)
+
+    def load_meridian(self):
+        """The unit vectors (n, 3) along which the gas pressure gradient and the gas shear push the melt, each in its base's
+        tangent plane (the plane normal to `columns.normal`, where `momentum_step` solves for the velocities); None under
+        `windward_loads` `normals`, where the push follows each base normal's own meridian (`skin.along_meridian`).
+
+        Under `sphere` an exposed corner with a valid fitted sphere is pushed along the fitted sphere's meridian away from its
+        stagnation point, minus the tangential part of the flight direction about the unit ray from the fitted centre through
+        its top point, projected onto the base's tangent plane and made a unit vector (zero where that projection is no larger
+        than 1e-12, as `along_meridian` does). Every other corner keeps `along_meridian`'s direction."""
+        if self.windward_loads != "sphere":
+            return None
+        n, v = self.columns.normal, self.v_hat
+        mer = skin_mod.along_meridian(n, v, np.ones(len(n)))
+        sf = self.sphere_fit
+        if sf.concave:
+            return mer
+        k = np.flatnonzero(sf.exposed)
+        u = self.surface.points[k] - sf.centre
+        u /= np.linalg.norm(u, axis=1)[:, None]
+        away = -(v[None, :] - (u @ v)[:, None] * u)
+        away -= np.einsum("ij,ij->i", away, n[k])[:, None] * n[k]
+        size = np.linalg.norm(away, axis=1)
+        mer[k] = np.divide(away, size[:, None], out=np.zeros_like(away), where=size[:, None] > 1e-12)
+        return mer
+
+    def _ray_angles(self, centre):
+        """The angle [rad, (n,)] between the direction of motion and the unit ray from `centre` [m, (3,)] through each top
+        corner."""
+        u = self.surface.points - centre
+        u = u / np.linalg.norm(u, axis=1)[:, None]
+        return np.arccos(np.clip(u @ self.v_hat, -1.0, 1.0))
+
+    def _windward_bound(self, ahead=None):
+        """The flat-face bound [m, nan where no corner qualifies]: `NOSE_CAP_FACTOR` (a flat face of radius R heats like a
+        sphere of 1.67 R, Boison and Curtiss 1959) times the windward transverse radius, the largest distance from the axis
+        through the 3D mesh's mean point along the flight direction of the tops of the columns whose base normals are at most
+        90 degrees from it, and that lie ahead of the centroid's plane where `ahead` (bool, (n,)) is given. Both rules read
+        it: `_fit_nose` (with `ahead` under `leeward_test` `centroid` only, as Task 5j built it) and `_fit_sphere`."""
+        pts, v = self.surface.points, self.v_hat
+        X = pts - self.mesh.points.mean(axis=0)
+        r_tw = np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ v) ** 2, 0.0))
+        wind = self.columns.normal @ v >= 0.0
+        if ahead is not None:
+            wind = wind & ahead
+        return float(NOSE_CAP_FACTOR * r_tw[wind].max()) if wind.any() else float("nan")
+
+    def _fit_sphere(self):
+        """The sphere rule's fit of the top surface at the last refresh (`SphereFit`; the fitted-sphere loads design, Asha
+        2026-11-13). The candidates are the corners ahead of the plane through the mass centroid (`_leeward`); a candidate whose
+        ray up the flow crosses any triangle of the tops is sheltered (`shelter.upstream_hits`), the others are exposed. The
+        sphere is `body.fit_sphere` on the exposed corners, unweighted; it is not valid with fewer than 4 of them, with a radius
+        not finite and positive, with the corners coplanar to rounding (the smallest singular value of the centred corners
+        below 1e-9 of the largest, as `_fit_nose` tests it) or with its centre on the flow side of their mean point. Corners
+        that all coincide exactly (every singular value zero) count as flat here and read the bound; `_fit_nose` does not
+        test that case and hands them to the least-squares fit, whose answer for coincident points is not a surface's radius
+        (a radius near their distance from the origin, or zero, no fit, and so the mesh's radius, for points at the origin).
+        The radius used is the fit capped at the flat-face bound (`_windward_bound` over the corners ahead of the plane; Asha:
+        keep the cap), the fit itself where there is no bound, or, with no valid sphere, the bound, or the mesh's radius
+        where there is no bound."""
+        s, v = self.surface, self.v_hat
+        ahead = self._leeward()[1]
+        sheltered = shelter.upstream_hits(s.points, s.faces, s.normals, s.areas, v, candidates=ahead)
+        exposed = ahead & ~sheltered
+        bound = self._windward_bound(ahead)
+        pts = s.points[exposed]
+        n = len(pts)
+        centre, fitted, rms, valid = np.full(3, np.nan), float("nan"), float("nan"), False
+        if n >= 4:
+            mean = pts.mean(axis=0)
+            sv = np.linalg.svd(pts - mean, compute_uv=False)
+            c, r = fit_sphere(pts)
+            flat = sv[0] == 0.0 or sv[-1] < 1e-9 * sv[0]      # coplanar to rounding: a flat face, which no sphere describes
+            valid = bool(not flat and np.isfinite(r) and r > 0.0 and not ((c - mean) @ v > 0.0))
+            if valid:
+                centre, fitted = c, r
+                rms = float(np.sqrt(np.mean((np.linalg.norm(pts - c, axis=1) - r) ** 2)))
+        bounded = np.isfinite(bound) and bound > 0.0
+        if valid:
+            used = min(fitted, bound) if bounded else fitted
+        else:
+            used = bound if bounded else float(self.mesh.params.get("radius_m", 0.05))
+        return SphereFit(centre, fitted, bound, float(used), exposed, sheltered, n, not valid, rms)
+
+    @property
+    def sphere_fit(self):
+        """The sphere rule's fit (`SphereFit`) of the top surface at the last refresh, made at the first read after it
+        (`_sphere_raw`); a body saved before the rule existed makes it from its surface at the first ask."""
+        if self._sphere_raw is None:
+            self._sphere_raw = self._fit_sphere()
+        return self._sphere_raw
 
     def _fit_nose(self):
         """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
@@ -751,24 +1043,22 @@ class SkinBody(ThermalBody):
         concave). The cap is the top corners whose normals are within `NOSE_CAP_ANGLE` of the direction of motion, fitted
         unweighted as the element model fits its patch centroids (`body.fit_sphere`); fewer than 4 corners, or a radius
         not finite and positive, is no fit. Concave: the fitted centre lies on the flow side of the cap's mean point, so no
-        sphere of positive curvature describes it. The bound is `NOSE_CAP_FACTOR` (a flat face of radius R heats like a
-        sphere of 1.67 R, Boison and Curtiss 1959) times the windward transverse radius, the largest distance from the axis
-        through the 3D mesh's mean point along the flight direction of the tops of the columns whose base normals are at
-        most 90 degrees from it (the rigid surface's direction, which a pool lying on top cannot tilt: selecting by the
-        tops' own angles let a pool reaching the equator tilt its step corners forward and move the bound by 1.7 times
-        its depth; review of 2026-11-10). A cap whose centred corners are coplanar to rounding (smallest singular value
-        below 1e-9 of the largest) is a flat face: concave, no fitted radius. Measured on the comparison flights' frames (2026-11-10): the cap's
-        radius is 49.7 mm at 22.5 s on the 100 mm sphere and 95-107 mm from about 30 s, 24.7 mm at 171.0 s on the 50 mm sphere
-        and 83 mm at 176.0 s."""
+        sphere of positive curvature describes it. The bound is `_windward_bound`: `NOSE_CAP_FACTOR` (a flat face of radius
+        R heats like a sphere of 1.67 R, Boison and Curtiss 1959) times the windward transverse radius, the largest distance
+        from the axis through the 3D mesh's mean point along the flight direction of the tops of the columns whose base
+        normals are at most 90 degrees from it (the rigid surface's direction, which a pool lying on top cannot tilt:
+        selecting by the tops' own angles let a pool reaching the equator tilt its step corners forward and move the bound
+        by 1.7 times its depth; review of 2026-11-10). A cap whose centred corners are coplanar to rounding (smallest
+        singular value below 1e-9 of the largest) is a flat face: concave, no fitted radius. Measured on the comparison
+        flights' frames (2026-11-10): the cap's radius is 49.7 mm at 22.5 s on the 100 mm sphere and 95-107 mm from about
+        30 s, 24.7 mm at 171.0 s on the 50 mm sphere and 83 mm at 176.0 s. The `normals` rule's fit (`windward_loads`)."""
         pts, v = self.surface.points, self.v_hat
-        X = pts - self.mesh.points.mean(axis=0)
-        r_tw = np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ v) ** 2, 0.0))
-        wind = self.columns.normal @ v >= 0.0
         capped = self.theta <= np.radians(NOSE_CAP_ANGLE)
+        ahead = None
         if self.leeward_test == "centroid":              # Task 5j: only corners ahead of the centroid's plane are windward
             ahead = self._leeward()[1]
-            wind, capped = wind & ahead, capped & ahead
-        bound = float(NOSE_CAP_FACTOR * r_tw[wind].max()) if wind.any() else float("nan")
+            capped = capped & ahead
+        bound = self._windward_bound(ahead)
         cap = pts[capped]
         fitted, concave = nose_mod.fit_cap(cap, v)
         n = len(cap)
@@ -777,7 +1067,13 @@ class SkinBody(ThermalBody):
     @property
     def nose_fit(self):
         """The windward cap's fit and the radius the loads read (`NoseFit`), from the top surface at the last refresh; a body
-        saved before the fit existed makes it from its surface at the first ask."""
+        saved before the fit existed makes it from its surface at the first ask. Under `windward_loads` `sphere` it is the
+        sphere rule's fit (`sphere_fit`: its radius, bound, exposed corners counted, no valid sphere as `concave`, and the
+        radius used), so `nose_radius()` and the history's nose columns carry it; `size_feedback` is read only under
+        `normals`."""
+        if self.windward_loads == "sphere":
+            sf = self.sphere_fit
+            return NoseFit(sf.fitted, sf.bound, sf.points, sf.concave, sf.used)
         if self._nose_raw is None:
             self._nose_raw = self._fit_nose()
         fitted, bound, n, concave = self._nose_raw
@@ -843,7 +1139,7 @@ class SkinBody(ThermalBody):
         self._q_prev = q_end.copy()
         if self.spray is not None and self.flow_on:          # the macro step's droplets, from its accepted passes' mass
             p = self.spray_plan
-            p.count(self.spray.liquid.rho)
+            p.count(p.props.rho)                             # the liquid's on table; the run's cells' on profile (spec 6.6)
             self.droplet_number += float(p.number.sum() + p.number_slurry.sum())
             block = p.source_block(t)                        # its records' rows (Task 2), and the history's columns
             self.step_spray = self._step_columns(p, block)   # from them (Task 4)
@@ -890,9 +1186,10 @@ class SkinBody(ThermalBody):
         if self.flow_on:                                                    # the gas side's push at the part's middle
             f = self._forcing[0].toward(self._forcing[1], frac)
             sigma = mat.liquid.sigma if mat.liquid is not None else 0.0
-            flow = skin_mod.Flow(self.columns, f.dp_ds, skin_mod.along_meridian(self.columns.normal, self.v_hat, f.tau),
-                                 f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles, release=self._step_release,
-                                 slurry=self.slurry_spray)
+            mer = self.load_meridian()                                      # None under the normals' rule: today's push
+            shear = skin_mod.along_meridian(self.columns.normal, self.v_hat, f.tau) if mer is None else mer * f.tau[:, None]
+            flow = skin_mod.Flow(self.columns, f.dp_ds, shear, f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles,
+                                 release=self._step_release, slurry=self.slurry_spray, meridian=mer)
         eps = np.full(sk.n, self.emissivity)
         m_min = skin_mod.minimum_mass(mat, sk.area, self.settings)
         # implicit (sub-plan 21); with the height pairing heat passes between cells that touch (Asha's idea and decision of
@@ -1194,18 +1491,55 @@ class SkinBody(ThermalBody):
     def nose_radius(self):
         """The nose radius the windward loads read [m] (`CoupledRun.loads_at`, the surface flow): `nose_fit.used`, the radius
         of the sphere fitted to the tops' cap under `size_feedback` `current`, the mesh's own under `initial` or where there
-        is no fit (sub-plan 22 Task 5g)."""
+        is no fit (sub-plan 22 Task 5g); under `windward_loads` `sphere` the sphere rule's radius used (`sphere_fit`)."""
         return self.nose_fit.used
 
     def nose_stats(self):
         """The history's nose columns (`NOSE_COLUMNS`) and then the two leeward ones (`LEEWARD_COLUMNS`), after the other skin
-        columns and before the spreading ones."""
+        columns and before the spreading ones; under `windward_loads` `sphere` the nose columns carry the sphere rule's fit and
+        the three `SPHERE_COLUMNS` follow the leeward ones (the fitted-sphere loads design, Asha 2026-11-13)."""
         f = self.nose_fit
         c, ahead = self._leeward()
         out = dict(zip(NOSE_COLUMNS, (f.used * 1e3, f.fitted * 1e3, f.bound * 1e3, f.points, float(f.concave))))
         out["centroid_offset_mm"] = float((c - self.mesh.points.mean(axis=0)) @ self.v_hat * 1e3)
         out["leeward_corners"] = int(((self.theta <= 0.5 * np.pi) & ~ahead).sum())
+        if self.windward_loads == "sphere":
+            sf = self.sphere_fit
+            out["sheltered_corners"] = int(sf.sheltered.sum())
+            out["sphere_centre_mm"] = float(sf.centre @ self.v_hat * 1e3)      # from the mesh's origin, the original centre
+            out["sphere_fit_rms_mm"] = sf.rms * 1e3
         return out
+
+    def geometry_stats(self):
+        """The history's two geometry columns (`GEOMETRY_COLUMNS`), after the nose ones (open item 4, Asha 2026-11-12).
+        `core_front_mm`: the 3D core's most forward point along the flight direction [mm, relative to the origin of the
+        mesh's coordinates, the sphere's original centre]; the base corners are the core's surface. `tops_volume_ratio`: the
+        volume the top surface encloses (absolute, by signed tetrahedra from the points' mean as `spray.enclosed_centroid`
+        builds them, so the triangles' winding does not matter) over the metal's volume, the 3D model's (cached as `mass`
+        caches it) plus the skins' columns (thickness times base area). Near 1 while the columns describe the metal; the
+        slip-band-on 50 mm flight read 1.03 at 179 s, 1.17 at 183 s and 1.42 at 185.5 s."""
+        if self._volume is None:
+            self._volume = self.mesh.volume()
+        sk = self.skins
+        metal = self._volume + float((sk.dz() * sk.area[:, None]).sum())
+        pts, faces = self.surface.points, np.asarray(self.surface.faces, dtype=np.int64)
+        o = pts[np.unique(faces)].mean(axis=0)
+        a, b, c = (pts[faces[:, i]] - o for i in range(3))
+        enclosed = abs(float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum()) / 6.0)
+        return {"core_front_mm": float((self.columns.points @ self.v_hat).max() * 1e3),
+                "tops_volume_ratio": enclosed / metal}
+
+    def geometry_breach(self):
+        """None while the skins describe the metal; else the first test failed and its value: ("volume", ratio) when the
+        tops enclose more than `GEOMETRY_VOLUME_RATIO` times the metal's volume, else ("centre", core_front_mm) when the
+        core's front lies below `GEOMETRY_FRONT_LIMIT_MM` (behind the original centre). The module constants are read at
+        call time."""
+        g = self.geometry_stats()
+        if g["tops_volume_ratio"] > GEOMETRY_VOLUME_RATIO:
+            return ("volume", g["tops_volume_ratio"])
+        if g["core_front_mm"] < GEOMETRY_FRONT_LIMIT_MM:
+            return ("centre", g["core_front_mm"])
+        return None
 
     def transverse_radius(self):
         """The top surface's largest distance from the axis through the 3D mesh's mean point along the flight direction
@@ -1287,7 +1621,25 @@ class SkinBody(ThermalBody):
                 **self._depth_ratios(flowing),
                 "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
                 "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0,
-                **self.nose_stats(), **self.spread_stats()}
+                **self.nose_stats(), **self.geometry_stats(), **self.spread_stats(), **self.dispersion_stats()}
+
+    def record_names(self):
+        """The droplet records' column names (spec 6.8): `spray.record_columns(36)` where the spray model is on `profile`,
+        whose rows carry its PROFILE_COLUMNS, and the 27 SOURCE_COLUMNS otherwise -- what the spool is made with and the
+        coupled writer writes, records or none."""
+        return spray_mod.record_columns(36 if getattr(self.spray, "dispersion", "table") == "profile" else 27)
+
+    def dispersion_stats(self):
+        """The history's profile-path columns (`melt_profile.DISPERSION_COLUMNS`, spec 6.8), last in `skin_stats`: the
+        summary of the last macro step's plan (`melt_profile.summary`), an empty step's before any plan was evaluated on the
+        profile path; none on `table` or without a spray model, so that those runs keep their column set. Read here alone,
+        as `spread_stats` is, so that a resume that changes the setting can add them to its saved row or drop them."""
+        if getattr(self.spray, "dispersion", "table") != "profile":
+            return {}
+        p = self.spray_plan
+        if p is None or p.modes is None:
+            return melt_profile.summary(None, None, None, None)
+        return melt_profile.summary(p.modes, p.record, p.result.branch, p.mass)
 
     def spread_stats(self):
         """The history's spreading columns (SPREAD_COLUMNS), last in `skin_stats`; none without a limit, so that every run
@@ -1299,7 +1651,8 @@ class SkinBody(ThermalBody):
 
     def _depth_ratios(self, flowing):
         """Spec 10.2's b over delta_m and resolved sheared depth over delta_m (medians) on the wet windward columns: on
-        the windward face (`windward_corners`: theta <= 90 degrees, and under `leeward_test` `centroid` ahead of the centroid's plane),
+        the windward face (`windward_corners`: under `windward_loads` `sphere` the exposed corners whose load angle is at most
+        90 degrees; under `normals` theta <= 90 degrees, and under `leeward_test` `centroid` ahead of the centroid's plane),
         with flowing metal (b, the flowing depth, above zero) and a conjugate depth delta_m (finite and above zero); the
         sheared depth `sheared_depth`, on those whose top moves. nan where there are none, or without the flow.
         The depth is the one the step's spraying read where the step has a plan and the band is on (`spray_plan.result.

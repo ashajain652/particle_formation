@@ -42,7 +42,8 @@ def test_data_paths_resolve():
 
 
 SHARED_DIR = os.path.join(PROJECT_ROOT, "reentry_model", "shared")
-SHARED_MODULES = sorted(MOVED + ["droplets", "body", "thermal", "cli_common", "lubrication", "nose"])   # the 23 modules
+SHARED_MODULES = sorted(MOVED + ["droplets", "body", "thermal", "cli_common", "lubrication", "nose",
+                         "melt_profile", "daniels_schwartzentruber", "similarity", "gas_loads"])   # the 27 modules
                                                        # besides __init__.py (nose: level-set stage 3 Task 1)
 
 
@@ -75,7 +76,7 @@ def test_shared_modules_import_nothing_outside_shared_statically():
     level 1 (`from . import x`, `from .x import y`) must name shared modules, absolute ones must name reentry_model.shared."""
     paths = sorted(glob.glob(os.path.join(SHARED_DIR, "*.py")))
     names = [os.path.basename(p)[:-3] for p in paths]
-    assert sorted(n for n in names if n != "__init__") == SHARED_MODULES and "__init__" in names and len(paths) == 24
+    assert sorted(n for n in names if n != "__init__") == SHARED_MODULES and "__init__" in names and len(paths) == 28
     shared_names = set(names)
     violations, scanned_imports = [], 0
     for path, name in zip(paths, names):
@@ -364,7 +365,7 @@ def _spray_plan_case():
                            G=f(-3e4), kn_local=f(1e-3), deceleration=30.0)
     state = SimpleNamespace(freestream=SimpleNamespace(rho=8e-5), V=7200.0, ma=24.0, h=71e3)
     area = np.full(n, 1e-6) * np.linspace(1, 2, n)
-    sk = sky.Skins(mat, area.copy())
+    sk = sky.Skins(mat, area.copy(), sky.SkinSettings(rheology="bridge"))   # the values below are the bridge law's
     count = np.array([len(t) for t in temps])
     K = count.max()
     T = np.array([t + [300.0] * (K - len(t)) for t in temps])

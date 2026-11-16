@@ -87,6 +87,27 @@ def test_frames_need_an_output_dir(coarse_sphere_mesh):
                            heating.SesamEquivalentHeating(), coupled.CoupledSettings(frames_every=5))
 
 
+@pytest.mark.parametrize("raised", [ArithmeticError("a failed solve"), KeyboardInterrupt()], ids=["error", "control_c"])
+def test_a_library_run_without_an_end_path_lets_a_failing_step_raise_unchanged(coarse_sphere_mesh, raised):
+    """With `CoupledSettings.end_path` unset, the library default, a run behaves as it did before Task 4 of the geometry
+    stop (final fix wave item 7): an exception raised in its second macro step, or a Control-C, escapes `CoupledRun.run`
+    as the very object raised, with nothing chained to it, and no failure is recorded on the run."""
+    b = thermal_body(coarse_sphere_mesh)
+    advance, calls = b.advance, []
+
+    def failing(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise raised
+        return advance(*args, **kwargs)
+    b.advance = failing
+    run = coupled.CoupledRun(simulator(b, t_max=5.0), b, heating.SesamEquivalentHeating(), coupled.CoupledSettings(dt=0.5))
+    with pytest.raises(type(raised)) as exc:
+        run.run()
+    assert exc.value is raised and exc.value.__cause__ is None and exc.value.__context__ is None
+    assert len(calls) == 2 and run.sim.end_reason is None and run.copy_error is None
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Step 3: the melting run, its columns, results, VTK fields and particle files
 
@@ -184,6 +205,28 @@ def test_surface_frames_carry_the_conjugate_depth_per_patch(coarse_sphere_mesh, 
     nr = np.asarray(last.cell_data["nonrigid_depth"])
     np.testing.assert_array_equal(nr, b.on_current_surface(b.last_nonrigid, np.nan))
     assert np.isfinite(nr).any() and (nr[np.isfinite(nr)] >= 0.0).all()
+
+
+def test_the_frame_carries_the_load_angle_and_the_shelter(coarse_sphere_mesh, tmp_path):
+    """A skin body's surface frame carries each corner's load angle [deg] (`load_angles`, with either rule) and, under the
+    sphere rule, whether the corner is sheltered (1.0) or not (0.0), so that the shelter test can be inspected in ParaView
+    (fitted-sphere loads design, Asha 2026-11-13). The tops carry the shelter test's raised ring, so some corners are
+    sheltered."""
+    pv = pytest.importorskip("pyvista")
+    from test_reentry_model_skinbody import make, ringed
+    for how in ("sphere", "normals"):
+        b = make(coarse_sphere_mesh, windward_loads=how)
+        ringed(b)
+        out = os.path.join(str(tmp_path), how)
+        coupled.write_vtk_frame(out, 0, b, heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0))
+        poly = pv.read(os.path.join(out, "surface_0.vtp"))
+        np.testing.assert_array_equal(np.asarray(poly.point_data["load_angle_deg"]), np.degrees(b.load_angles()))
+        if how == "sphere":
+            sheltered = np.asarray(poly.point_data["sheltered"])
+            np.testing.assert_array_equal(sheltered, b.sphere_fit.sheltered.astype(float))
+            assert sheltered.sum() > 0
+        else:
+            assert "sheltered" not in poly.point_data
 
 
 def test_demise_ends_the_run(coarse_sphere_mesh):

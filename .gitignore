@@ -21,6 +21,11 @@ objects.xml
 
 # physics-model outputs (histories, comparison plots, cached meshes, verification runs)
 Reentry Model/output/
+# four analysis scripts' default outputs, written beside them (Asha, 2026-11-11): by exact name, never *.json
+Reentry Model/analysis/skin_plate.json
+Reentry Model/analysis/ablation_1d.json
+Reentry Model/analysis/movemesh_recession.json
+Reentry Model/analysis/skin_timing.json
 
 # one-off ground-track plot for NORAD 62878 (scratch, unrelated to the re-entry model)
 plot_groundtrack_62878.py
