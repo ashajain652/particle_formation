@@ -924,7 +924,7 @@
  },
  "cost_rim": {
   "code": {
-   "commit": "e129c953b51042fad5918212d3ad30556ff3f82f",
+   "commit": "216296b6738821c13d783da035edfb6133683744",
    "dirty": false
   },
   "case": "cost-rim",
@@ -943,11 +943,11 @@
     "1.4": 27600,
     "2.8": 7194
    },
-   "build_s": 8.35,
-   "setup_s": 1.01,
-   "step_s": 1.16,
+   "build_s": 2.78,
+   "setup_s": 0.31,
+   "step_s": 0.47,
    "newton_iterations": 7,
-   "peak_rss_gb": 0.576
+   "peak_rss_gb": 0.553
   },
   "floor_0p25": {
    "floor_mm": 0.25,
@@ -960,24 +960,24 @@
     "1.4": 27532,
     "2.8": 7138
    },
-   "build_s": 36.09,
-   "setup_s": 3.88,
-   "step_s": 5.87,
+   "build_s": 11.43,
+   "setup_s": 1.48,
+   "step_s": 2.25,
    "newton_iterations": 7,
-   "peak_rss_gb": 1.319
+   "peak_rss_gb": 1.71
   },
   "extra": {
    "cells": 450256,
    "cells_at_0p175": 271760,
    "cells_at_0p175_per_mm_of_rim": 1802.1644722772282,
    "extra_cells_per_mm_of_rim": 2985.852835699351,
-   "step_ratio": 5.060344827586207,
-   "build_ratio": 4.322155688622755
+   "step_ratio": 4.787234042553192,
+   "build_ratio": 4.111510791366906
   }
  },
  "cost_skip_dev": {
   "code": {
-   "commit": "e129c953b51042fad5918212d3ad30556ff3f82f",
+   "commit": "216296b6738821c13d783da035edfb6133683744",
    "dirty": false
   },
   "case": "cost-skip",
@@ -988,53 +988,53 @@
     "recession_second_mm": 0.0,
     "change_mm": 0.0,
     "change_rel": null,
-    "wall_every_s": 1.6,
-    "wall_second_s": 1.27,
-    "psi_every_s": 0.189,
-    "psi_second_s": 0.055,
-    "remesh_every_s": 0.226,
-    "remesh_second_s": 0.236,
+    "wall_every_s": 1.08,
+    "wall_second_s": 1.01,
+    "psi_every_s": 0.024,
+    "psi_second_s": 0.024,
+    "remesh_every_s": 0.113,
+    "remesh_second_s": 0.117,
     "cells_every": 4440,
     "cells_second": 4440
    },
    "1.0": {
-    "recession_every_mm": 0.8199999999993999,
-    "recession_second_mm": 0.8199999999994,
-    "change_mm": 1.1102230246251565e-16,
-    "change_rel": 2.220446049250313e-16,
-    "wall_every_s": 3.85,
-    "wall_second_s": 3.69,
-    "psi_every_s": 0.067,
+    "recession_every_mm": 0.799999999999999,
+    "recession_second_mm": 0.799999999999999,
+    "change_mm": 0.0,
+    "change_rel": 0.0,
+    "wall_every_s": 1.89,
+    "wall_second_s": 1.68,
+    "psi_every_s": 0.03,
     "psi_second_s": 0.0,
-    "remesh_every_s": 0.247,
+    "remesh_every_s": 0.129,
     "remesh_second_s": 0.0,
     "cells_every": 4856,
     "cells_second": 4440
    },
    "1.5": {
-    "recession_every_mm": 2.762130528013159,
-    "recession_second_mm": 2.762130528013159,
-    "change_mm": 0.0,
-    "change_rel": 0.0,
-    "wall_every_s": 5.3,
-    "wall_second_s": 5.16,
-    "psi_every_s": 0.06,
-    "psi_second_s": 0.05,
-    "remesh_every_s": 0.231,
-    "remesh_second_s": 0.242,
+    "recession_every_mm": 2.7187500000000004,
+    "recession_second_mm": 2.7187499999999996,
+    "change_mm": -8.881784197001252e-16,
+    "change_rel": -3.3306690738754696e-16,
+    "wall_every_s": 2.21,
+    "wall_second_s": 2.08,
+    "psi_every_s": 0.025,
+    "psi_second_s": 0.024,
+    "remesh_every_s": 0.11,
+    "remesh_second_s": 0.106,
     "cells_every": 3896,
     "cells_second": 3896
    },
    "2.0": {
-    "recession_every_mm": 5.257859750955542,
-    "recession_second_mm": 5.257742807048355,
-    "change_mm": -0.00011694390718730574,
-    "change_rel": -2.2241731945427112e-05,
-    "wall_every_s": 3.18,
-    "wall_second_s": 2.82,
-    "psi_every_s": 0.047,
+    "recession_every_mm": 5.201806640625005,
+    "recession_second_mm": 5.201806640625003,
+    "change_mm": -1.7763568394002505e-15,
+    "change_rel": -3.3306690738754696e-16,
+    "wall_every_s": 2.31,
+    "wall_second_s": 2.23,
+    "psi_every_s": 0.021,
     "psi_second_s": 0.0,
-    "remesh_every_s": 0.054,
+    "remesh_every_s": 0.021,
     "remesh_second_s": 0.0,
     "cells_every": 3896,
     "cells_second": 3896
