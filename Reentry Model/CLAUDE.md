@@ -51,7 +51,7 @@ Those two files are the contract with the thesis; keep them true when you change
   Moved to main on 2026-11-14 from branch `wake-residence`, where it was named `parent_follower_separation_interactions`;
   its outputs go to `output/wake_residence_output/` (`wake_residence.OUTPUT`). Not yet finished: the wake-gas decision,
   the plan's Task 11 (its README, assumptions and CLAUDE.md sections) and the final review.
-- `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot; the Step 3 scripts (`melt_verification.py`, `melt_sensitivity.py`, `girin_reference.py`, `flow_wavelengths.py`, `skin_plate.py`, `skin_timing.py`, `ablation_1d.py`, `movemesh_recession.py`); `analysis/skyscrapers_port/`, the port's own tools (path map, checks, three-way resolver, `same_results.py`) with its README; and `analysis/flights/`, the launcher of long flights (`fly.py`, `launch.sh`, which keep a flight's history rows as they are made) with its README.
+- `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot; the Step 3 scripts (`melt_verification.py`, `melt_sensitivity.py`, `girin_reference.py`, `flow_wavelengths.py`, `skin_plate.py`, `skin_timing.py`, `ablation_1d.py`, `movemesh_recession.py`); `analysis/skyscrapers_port/`, the port's own tools (path map, checks, three-way resolver, `same_results.py`) with its README; and `analysis/flights/`, the launcher of long flights (`fly.py`, `launch.sh`, which keep a flight's history rows as they are made) with its README; and `analysis/skin_base_cells/`, the single-column test of a thick skin's base (`column.py`, `compare.py`).
 - `tests/` — the package's tests (`conftest.py` puts this folder on `sys.path` and holds the session
   mesh fixtures). `pytest.ini` also collects `reentry_model/droplet_reentry/tests/`,
   `reentry_model/wake_column/tests/` and `reentry_model/wake_residence/tests/`.
@@ -97,14 +97,17 @@ After the low-Mach pressure, the one-solve-per-`--dt` hold and the solve skip we
 1079 pass and 1 is skipped, in 57 minutes on four processes, run once with one-minute load averages of 2 to 14. With
 the fitted-sphere loads merged in (branch `fitted-sphere-loads`, 2026-11-15) it has 1110 tests: 1109 pass and 1 is
 skipped, in 70 minutes on four processes, run once with one-minute load averages of about 6 to 17 and other runs on the
-machine (main had 1080 and the branch alone 1022; the merge adds two tests of its own). The
+machine (main had 1080 and the branch alone 1022; the merge adds two tests of its own). With the base cells and the
+split of a refused mesh move (branches `skin-base-cells` and `refused-move-split`, 2026-11-15) it has 1128 tests: 1127
+pass and 1 is skipped, in 150 minutes on four processes, run once with other runs on the machine. The spraying test
+sphere in the slip band now runs to its end and is the longest test, about 49 minutes when run alone under load. The
 droplet tests, `pytest reentry_model/droplet_reentry/tests`, are 35 and pass (40 s on 2026-11-15, 74 s before). The port's own tools have their tests in `analysis/skyscrapers_port/`, run
 explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 1110 tests, 1 skipped, ~35-71 min on four
+                                                          # the package's unit tier: 1128 tests, 1 skipped, ~35-150 min on four
                                                           # processes (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
@@ -172,6 +175,8 @@ under either loads.
 
 The melting skins' slurry viscosity is chosen by `--rheology composite|bridge` (`run` and `resume`). Since 2026-11-12 the default for a melting skin run is `composite` (`shared/rheology.py`: a function of the solid fraction alone; a suspension law below 10 % solid, assumed, then Li et al.'s fit at 489.88 1/s up to half solid; the jump at 10 % solid is unresolved). `--rheology bridge` is the earlier law and marks the run name with `_rheology-bridge`; `SkinSettings.rheology` defaults to `"composite"` in the library too; a state saved before the option existed flew the bridge law and keeps it on resume (`SkinSettings.__setstate__`). `--slurry-spray` stays off by default. Read `docs/model_assumptions.md` section 13 for the law's sources and what is assumed before quoting a result under it.
 
+`--skin-base-cell MM` (`run` and `resume`; 0.2 mm by default since 2026-11-14) keeps a thick skin's cells fine at its base as well as its top: a cell's target is the smaller of the one graded down from the top and one graded up from the base. `0` is the grading from the top alone (named `_skinbase-off`), which a state saved before the option keeps on resume. Graded from the top alone a 28 mm skin's bottom cell was 2-4 mm and put the rigid front 17-64 % too far on the single-column test (`analysis/skin_base_cells/`). On the 50 mm flight from 178.5 to 186.5 s (Mac Studio, 2026-11-15) the base cell took the jump faults from 25,364 to 4, and without it the thickest skin grew to 46 mm against 31 mm in the last second; read `docs/model_assumptions.md` section 16.
+
 Exit codes are part of the interface: 0 ok (the geometry stop included), 1 a model/integration failure (message printed,
 including a Newton non-convergence from either thermal backend) or an escape, 2 bad arguments or a missing optional
 library, 143 and 130 a flight stopped by SIGTERM (as `kill` sends) or Control-C (128 plus the signal, as the shell
@@ -226,9 +231,9 @@ example a Mac Studio checkout behind main) does not have, so that checkout fails
 The level set has no run driver yet (the flag above exits 2); its stages are built and tested as library code driven by
 tests and scripts. Stage 1 is the geometry (`boxmesh`, `criteria`, `cutcell`, `levelset`, `shadow`, `surfaces`, `thin`,
 `transfer`; `docs/model_assumptions.md` section 10), stage 2 the cut-cell heat solve (`cutthermal`, section 11), and
-stage 3 the skins (section 16), first with two skin modes (plan `docs/superpowers/plans/levelset/03-stage3-skins.md`)
+stage 3 the skins (section 18), first with two skin modes (plan `docs/superpowers/plans/levelset/03-stage3-skins.md`)
 and then rebuilt on the design's section 21 by plan `03b-stage3-one-skin-depth.md` on the branch `levelset-stage3`
-(2026-11-14 to 2026-11-15, not yet on `main`). Read section 16 before changing stage 3 or quoting a result from it, and
+(2026-11-14 to 2026-11-15, not yet on `main`). Read section 18 before changing stage 3 or quoting a result from it, and
 the design's §21 (it governs where it and §20 disagree). What to know before touching it:
 
 - **One skin depth, φ evolved, β derived.** Every skin is H = `SkinSettings.depth` = 1.2 mm deep, with no modes (the old
@@ -260,16 +265,16 @@ the design's §21 (it governs where it and §20 disagree). What to know before t
   expected failures (`xfail(strict=True)`, with their measured reasons in `BOX_FAILS`, `SHOULDER_FAILS` and
   `EDGE_FAILS`): a pass there fails the test run and means the reason has changed, so re-measure and re-word the reason
   rather than drop the mark. The rounded spraying cube (`sprayed` in `test_levelset_skinbody.py`) runs on the bridge law
-  and has 2 mm rounded edges on purpose (section 16.6 and 16.8).
+  and has 2 mm rounded edges on purpose (section 18.6 and 18.8).
 - **The cases and their record.** `analysis/levelset/stage3_cases.py` runs the plates, the box, the shoulder and the
   costs (its docstring lists the commands); each writes `output/levelset/stage3_<case>[_<preset>].json` with a `code`
   stamp. `analysis/levelset/stage3_cases.py record` rebuilds the committed record,
   `analysis/levelset/stage3_recorded.json`, from those output files alone, so it would drop the comparison blocks
   (`against_task7`, `against_offset_0`) and the box's `record_note`, which were added after gathering, and re-stamp
   entries from later runs; to update one entry, replace that key only and keep the rest.
-- **Rulings.** The decisions taken during stage 3's build are cited by id (P1 to P5, T1-a onward) in section 16 and the
-  design's §21.8; the plan's ledger that records them in full is kept outside the repository, so section 16 states each
-  in its own words. Questions still open for Asha are listed in section 16.11; do not settle them in code.
+- **Rulings.** The decisions taken during stage 3's build are cited by id (P1 to P5, T1-a onward) in section 18 and the
+  design's §21.8; the plan's ledger that records them in full is kept outside the repository, so section 18 states each
+  in its own words. Questions still open for Asha are listed in section 18.11; do not settle them in code.
 
 ## Architecture of `reentry_model`
 
@@ -308,7 +313,9 @@ described from its own docstring. The layered-skin design (the "skyscrapers" arc
   The skins' windward loads (heating, surface flow, spray plan) follow `--windward-loads sphere|normals` on `run` and `resume`, `sphere` by default (Asha, 2026-11-13; branch `fitted-sphere-loads`, merged with the interim gas loads on 2026-11-15). Under `sphere`, `skyscrapers/shelter.py` (`upstream_hits`, on a grid; `upstream_hits_plain` is the reference) shelters each corner ahead of the centroid plane whose ray up the flow crosses the tops; `SkinBody.sphere_fit` fits one sphere to the exposed corners, `load_angles()` gives each the angle of the ray from its centre, the radius is capped at `NOSE_CAP_FACTOR` times the windward transverse radius, and `load_meridian()` points the push along the fitted meridian. `normals` is the earlier rule exactly (named `_windward-normals`; a state saved before the option resumes on it); under `sphere` `--leeward-test` and `--size-feedback` are refused (exit 2), and the element model refuses `--windward-loads` as it refuses `--geometry-stop`. The history gains `sheltered_corners`, `sphere_centre_mm` and `sphere_fit_rms_mm`, the frames `load_angle_deg` and `sheltered`. On the default `--gas-loads similarity` a corner the ray test shelters reads pi (`SHELTER_WAKE`) whichever way it faces, a corner behind the centroid plane reads its own `theta` where it faces away (past 90 degrees) and pi where it faces the flow, and an exposed corner keeps its ray angle even past 90 degrees; on `classic` the rule is as before the merge, bit for bit. `analysis/fitted_sphere_check.py` measures the rule on the saved 100 mm and 50 mm states. Assumptions and limits: `docs/model_assumptions.md` section 15.
 - `columns` — the corner columns, each owning the dual cell of one corner of the surface triangulation.
 - `movemesh` — the moving 3D mesh: surface corners move by the metal crossing the rigid front, nodes in a deforming
-  zone beneath follow, and the temperature field is remapped with the energy books closed exactly.
+  zone beneath follow, and the temperature field is remapped with the energy books closed exactly. A move refused even
+  on a freshly rebuilt mesh is made in pieces (halves, down to a sixteenth, `SPLIT_LEVELS`) before it stops the flight
+  with "degrades the mesh even after a rebuild" (exit 1; Asha, 2026-11-15; `docs/model_assumptions.md` section 17).
 - `spreading` — spreading the re-frozen deposit where the base would fold.
 - `restart` — saving a flight's whole state to disk and resuming from it.
 

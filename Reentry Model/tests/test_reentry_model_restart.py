@@ -626,6 +626,44 @@ def test_resume_rheology(flown, tmp_path, capsys):
     assert exc.value.code == 2 and "--rheology needs a saved flight of skins" in capsys.readouterr().err
 
 
+def test_resume_skin_base_cell(flown, tmp_path, capsys):
+    """`--skin-base-cell` on a resume (open item 7, 2026-11-14). The test flight has the default 0.2 mm base cell. A state
+    saved before the option has no `base_cell` on its skins' settings and resumes with the grading from the top alone,
+    named off in the line before the flight and recorded as 0; `--skin-base-cell 0.2` switches the base rule on, which is
+    recorded in what was changed, in the settings and in the state it saves. A base cell below the fine cell is refused,
+    and the element model's saved flight refuses the option (exit 2)."""
+    out, flight, records, state_path = flown
+    state = restart.load(state_path)
+    settings = state["run"].body.settings
+    assert settings is state["run"].body.skins.settings and settings.base_cell == pytest.approx(0.2e-3, rel=1e-12)
+    del vars(settings)["base_cell"]                                 # a state saved before the option
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert restart.load(old)["run"].body.settings.base_cell is None
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "keep"]) == 0
+    assert "skin base cell off" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "keep.json")))
+    assert doc["settings"]["skin_base_cell_mm"] == 0.0 and "--skin-base-cell" not in doc["resumed_from"]["changed"]
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "on", "--skin-base-cell", "0.2",
+                     "--save-state-at", "0.2"]) == 0
+    assert "skin base cell 0.2 mm" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "on.json")))
+    assert doc["resumed_from"]["changed"] == {"--skin-base-cell": 0.2, "--save-state-at": 0.2}
+    assert doc["settings"]["skin_base_cell_mm"] == 0.2
+    assert restart.load(str(tmp_path / "on.state.pkl"))["run"].body.settings.base_cell == pytest.approx(0.2e-3, rel=1e-12)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", old, "--outdir", str(tmp_path / "o"), "--name", "r", "--skin-base-cell", "0.001"])
+    assert exc.value.code == 2 and "--skin-base-cell must be 0" in capsys.readouterr().err
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
+                  "--skin-base-cell", "0.2"])
+    assert exc.value.code == 2 and "--skin-base-cell needs a saved flight of skins" in capsys.readouterr().err
+
+
 def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_an_old_state_as_facing(flown_normals, tmp_path, capsys):
     """`--leeward-test` on a resume (sub-plan 22 Task 5j, Asha 2026-11-10). The test flight is `centroid` by default; a resume
     keeps it, names it in the line before the flight and records it in the settings, and `facing` asked of it is recorded in

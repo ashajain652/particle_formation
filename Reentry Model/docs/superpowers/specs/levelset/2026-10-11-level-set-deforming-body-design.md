@@ -1289,7 +1289,7 @@ and sets out the two pieces that follow it (§21.9, §21.10).
 2026-11-15).* Under each item, **Built** names the test that pins it and its measured result; a test marked
 `xfail(strict=True)` (a *strict expected failure*: the tolerance kept, the failure recorded with its measured reason) is
 built and judged but does not pass, and is said so. Rulings are cited by their ids (the plan's working ledger, kept
-outside the repository; each decision is stated in `docs/model_assumptions.md` section 16, which this list follows).
+outside the repository; each decision is stated in `docs/model_assumptions.md` section 18, which this list follows).
 Numbers measured once are said to be once. The cases' values are in `analysis/levelset/stage3_recorded.json` (the
 record), gathered on e57945f under the composite law (plan 03b Task 11).
 

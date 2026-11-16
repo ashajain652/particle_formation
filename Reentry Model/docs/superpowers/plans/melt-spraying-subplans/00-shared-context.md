@@ -3458,3 +3458,58 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
      need it: under the composite law the hottest top cell of that test sphere reaches 905.25 K, not the liquidus, so a
      release of liquid finds none); after the pins those tests and their two files pass. `model_assumptions.md` section
      13 holds the law (section 12 is the profile path's).
+
+198. **The skins' base cells (2026-11-14, branch `skin-base-cells`, off `main` 4e857e1; open item 7; Asha: "Go with
+     option 1, test it on the column first"; numbered 198 because branch `kink-depth-column` adds fact 197).**
+     *Why.* The jump-fault probe re-run on the laptop (Asha's one-time exception to the Mac Studio rule;
+     `output/jump_probe_5k/`, git-ignored) reproduced the first probe exactly (562 rows, 588 fault checks) and counted
+     30,848 faulted column-checks under the old rule and 25,620 under Task 5k's. Every fault was a bottom cell about 10 K
+     above the rigid-front metal (895.1 K) crossing its base, the skin's bottom two cells within 0.07 K of each other, in
+     skins 24-32 mm thick whose bottom cell was 2-4 mm: not a gradient across a thick cell, which Task 5k's extrapolation
+     corrects, but the whole drop to the rigid front falling across the bottom half-cell. *The test.* A single skin column
+     (the model's own code, coupled by `skinbody`'s damped rule) holding a 28 mm pool on rigid metal, against a
+     one-dimensional reference on 5 um cells: graded from the top alone the rigid front is 17-64 % too far (case A) or
+     stuck and then 28 % too far (case B, heated); with 10 um cells throughout it matches; with a 0.2 mm base cell it is
+     within 1.2 % from 0.5 s on (`docs/model_assumptions.md` section 16 has every number). *The change.* `SkinSettings
+     .base_cell` (0.2 mm by default; None for none): a cell's target is the smaller of the target from the top and
+     `base_cell + (growth - 1) x` its height above the base (`Skins.targets`). `run --skin-base-cell MM` (0: none, named
+     `_skinbase-off`; another value `_skinbase<mm>mm`; below the fine cell refused, exit 2) and `resume --skin-base-cell`;
+     a state saved before the field resumes with None (`SkinSettings.__setstate__`). The run JSON records
+     `skin.base_cell_mm`, a resumed one `settings.skin_base_cell_mm`. The test is `analysis/skin_base_cells/` with
+     `tests/test_skin_base_cells_column.py`. *The flight (2026-11-15).* The 50 mm state at 178.5 s resumed to 186.5 s
+     twice on the Mac Studio (runbook `2026-11-14-skin-base-cells-flights-macstudio.md`; results on the branch
+     `skin-base-cells-flights-macstudio`, c75fe87), base cell off and at 0.2 mm, the saved flight's settings otherwise:
+     jump faults 25,364 (Task 5k's rule) and 30,768 (bottom cell alone) off, 4 and 60 at 0.2 mm; the flights agree within
+     about 1 % to 185.0 s, then off grows the thickest skin to 46 against 31 mm and takes 12 g more metal into the skins
+     (0.1342 against 0.1222 kg drawn plus absorbed, 6.5 % of the sphere), with a thinner liquid layer (0.18 against
+     0.89 mm) and a mean surface 29 K cooler at the end; at 0.2 mm the first droplets, 0.22 g in the last 0.04 s. Wall
+     time 14.0 against 10.9 h, the difference the continuum step's switch at the first liquid (182.0 against 179.5 s;
+     open item 23), not the cells: on the same step the skins were 14 % cheaper at 0.2 mm with 4 to 7 % more cells
+     (`model_assumptions.md` section 16; Claude's comparison, `output/skin_base_cells_flights/comparison.md`,
+     git-ignored). *Not yet known:* the 3D model's 0.7 mm surface elements may be the next limit; the base cell with the
+     fitted-sphere loads, the interim gas loads, the composite law and the profile dispersion is not flown. *The
+     jump-fault test* stays as it was, with Task 5k's rule: it caught a real error. Merge after `near-wake-capture`
+     (Asha, 2026-11-15).
+
+199. **A mesh move refused even on a fresh mesh is made in pieces (2026-11-15, branch `refused-move-split`, off
+     `skin-base-cells` at 6663f4a; open item 24; Asha: "Go with option 1; test the split by branching from this
+     branch").** *Why.* The unit tier on the base cells merged with main at aa0525f had one failure,
+     `test_a_spraying_body_in_the_slip_band_keeps_the_three_books`: in its second step a move took one element of four
+     surface corners from a radius ratio of 0.25 on the freshly rebuilt mesh to 0.0486, under the 0.05 floor (a 5.0 mm
+     pool's base handed back 0.36 mm beside three corners with 0.87 mm skins drawn in by 0.08 to 0.44 mm). Main, the
+     branch with the base cell off, and the branch with the base cell under `--windward-loads normals` passed it; only the
+     base cell with the sphere rule failed. *The change.* `MovingMesh.move_with_policy` makes a move refused even on the
+     fresh mesh in pieces (`_move_in_pieces`): halves, and a half still refused halved again down to a sixteenth
+     (`SPLIT_LEVELS` = 4; `split_levels=0` is the rule before), each piece moved as a move is, with a rebuild before any
+     piece the mesh refuses if it has moved since its last rebuild. The pieces' swept volumes, enthalpies and corrections
+     are summed into one `MoveResult` (`pieces` counts them; `MovingMesh.split_moves` counts split moves), and a later
+     piece books the metal it sweeps inward at the slab of `h_inward`'s profile below the earlier pieces'. A piece refused
+     at a sixteenth raises "... even after a rebuild, and so does a piece of 1/16 of it" (exit 1). The skins' rebuild
+     wall time (`wall_rebuild_s`) now adds every rebuild a base move makes; before, a move that rebuilt twice (compression
+     then quality) counted only the second. A state saved before reads the class defaults and splits too. *Verified.* The
+     failing test passes with the move made in halves; on the 4 mm test sphere with a 4 mm zone, 3.5 mm inward needs
+     halves and 6 mm a half and two quarters, the corners end where the whole move puts them and the books close to
+     1e-12; the inward booking is within 0.46 % of one move's, against 9.7 % booked from the surface
+     (`tests/test_reentry_model_movemesh.py`, `docs/model_assumptions.md` section 17). The unit tier on be67361 passes,
+     run once: 1127 of 1128 tests, the FEniCSx module skipped. *Not yet known:* whether a flight splits; `split_moves`
+     is not in the history.

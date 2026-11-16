@@ -517,13 +517,79 @@ def test_a_refused_move_rebuilds_and_then_moves(coarse_sphere_mesh):
     assert r.rebuilt and not r.refused and moving.last_rebuild.reason == "quality"
 
 
-def test_a_move_refused_on_a_fresh_mesh_is_a_model_failure(coarse_sphere_mesh):
+SPLIT_SIZES = {"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05}
+
+
+def zone_4mm(coarse_sphere_mesh, T=300.0, **kw):
+    """The 4 mm test sphere with a 4 mm deforming zone, on which pressing most of the zone in one move is refused even on a
+    fresh mesh: 3.5 mm inward needs halves and 6 mm needs one half halved again (measured 2026-11-15)."""
     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
     mat = constant_material()
-    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=4e-3,
-                                 sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    return movemesh.MovingMesh(m, solver_on(m, mat, T), mat, depth=4e-3, sizes=SPLIT_SIZES, **kw)
+
+
+def test_without_splitting_a_move_refused_on_a_fresh_mesh_is_a_model_failure(coarse_sphere_mesh):
+    """The rule before 2026-11-15 (split_levels 0): a move refused on a fresh mesh stops the run."""
+    moving = zone_4mm(coarse_sphere_mesh, split_levels=0)
     with pytest.raises(RuntimeError, match="even after a rebuild"):
         moving.move_with_policy(inward(moving, 3.5e-3))   # most of the 4 mm zone in one step
+
+
+def test_a_move_refused_on_a_fresh_mesh_is_made_in_halves_and_keeps_its_books(coarse_sphere_mesh):
+    """Asha, 2026-11-15 (option 1): a move refused even on a fresh mesh is made in two halves with a rebuild between them;
+    the corners end where the whole move puts them, and the pieces' swept volumes and enthalpies are the move's."""
+    moving = zone_4mm(coarse_sphere_mesh, T=500.0)
+    solver, mat = moving.solver, moving.material
+    E0, V0, start = solver.energy(), moving.mesh.volume(), moving.mesh.points[moving.corners].copy()
+    u = inward(moving, 3.5e-3)
+    r = moving.move_with_policy(u)
+    assert not r.refused and r.rebuilt and r.pieces == 2 and moving.split_moves == 1
+    assert np.abs(moving.mesh.points[moving.corners] - (start + u)).max() < 1e-15
+    assert r.swept_volume.sum() == pytest.approx(V0 - moving.mesh.volume() - moving.rebuild_mass_residual_total / mat.rho,
+                                                 rel=1e-12)
+    assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+    # the rebuild before the move and the one between its halves are both in the summed rebuild time
+    assert moving.rebuilds == 2 and moving.rebuild_seconds > moving.last_rebuild.seconds > 0.0
+
+
+def test_the_pieces_of_a_split_move_take_the_metal_along_the_profile_below_each_corner(coarse_sphere_mesh):
+    """Metal a split move sweeps inward is booked as one move books it (`h_inward`, the profile's mean from the corner's
+    surface down to a depth, read at the swept volume over the corner's area): the second half takes the slab below the
+    first half's, not the top slab again. On a profile falling 100 kJ/kg per mm from 1 MJ/kg, 3.5 mm in (3.26 mm swept
+    over the starting area, the sphere's surface shrinking as it goes in), the booked mean is within 0.46 % of what one
+    move of the same swept volume books, 0.33 % below it at the median, the corners' areas shrinking between the halves;
+    each half booked from the surface would be 9.7 % above it (measured 2026-11-15)."""
+    moving = zone_4mm(coarse_sphere_mesh, T=500.0)
+    H0, G, depth = 1.0e6, 1.0e8, 3.5e-3
+    area = moving.frame()[1].copy()
+    r = moving.move_with_policy(inward(moving, depth), h_inward=lambda d: H0 - 0.5 * G * d)
+    assert r.pieces == 2
+    inward_corners = r.swept_volume > 0.0
+    assert inward_corners.all()
+    booked = r.swept_enthalpy / (moving.material.rho * r.swept_volume)
+    one_move = H0 - 0.5 * G * r.swept_volume / area
+    assert np.abs(booked / one_move - 1.0).max() < 0.006
+
+
+def test_a_half_still_refused_is_halved_again_down_to_the_last_level(coarse_sphere_mesh):
+    """6 mm in is made as one half and two quarters; allowed only one halving, the second half is still refused on a fresh
+    mesh and the run stops, its message naming the smallest piece tried."""
+    moving = zone_4mm(coarse_sphere_mesh)
+    r = moving.move_with_policy(inward(moving, 6e-3))
+    assert not r.refused and r.pieces == 3
+    once = zone_4mm(coarse_sphere_mesh, split_levels=1)
+    with pytest.raises(RuntimeError, match=r"even after a rebuild, and so does a piece of 1/2 of it"):
+        once.move_with_policy(inward(once, 6e-3))
+
+
+def test_a_moving_mesh_saved_before_the_split_splits_when_resumed(coarse_sphere_mesh):
+    """A state saved before 2026-11-15 has no `split_levels`, `split_moves` or `rebuild_seconds`: it reads the defaults."""
+    moving = zone_4mm(coarse_sphere_mesh)
+    for name in ("split_levels", "split_moves", "rebuild_seconds"):
+        moving.__dict__.pop(name, None)
+    assert moving.split_levels == movemesh.SPLIT_LEVELS == 4
+    assert moving.split_moves == 0 and moving.rebuild_seconds == 0.0
+    assert movemesh.MoveResult(False, np.zeros(1), np.zeros(1), 0.0, 1.0).pieces == 1
 
 
 # -- a moving front against an exact solution (Task 7) -------------------------------------------------------------

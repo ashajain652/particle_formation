@@ -163,7 +163,7 @@ metal; Girin's thick and thin branches with the conjugate depth; the slurry spra
   It brought the kinked-profile dispersion (08cca55, row 12), the near-liquidus composite viscosity law (69aba28, row
   11), the geometry stop and end state (4e857e1), the interim gas loads (70deee0), the fitted-sphere windward loads
   (bf81abe) and the wake-residence package (6ee6e1a, 593fde7).
-- **Recorded in.** Design §21.7; plan `03b-stage3-one-skin-depth.md` Task 8; `docs/model_assumptions.md` section 16.8.
+- **Recorded in.** Design §21.7; plan `03b-stage3-one-skin-depth.md` Task 8; `docs/model_assumptions.md` section 18.8.
 - **Route.** **Shared** for the physics both architectures use: the shared spray module takes the viscosity law and its
   rate cap as arguments (`slurry_modes(..., law=, rate_cap=)`, `slurry_properties(..., law=)`), so that the skyscrapers'
   slurry mode keeps following `--rheology` (rulings T8-a and T8-c: the skyscrapers reach the law through `law=`, and
@@ -200,7 +200,7 @@ metal; Girin's thick and thin branches with the conjugate depth; the slurry spra
 - **Skyscrapers change.** The skins' spraying is solved on each skin's own speed profile, fitted as straight segments
   (`--dispersion profile`, the default on a spraying skin run), with Girin's theory kept as `--dispersion table`.
 - **Recorded in.** `docs/superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md`; `docs/model_assumptions.md`
-  sections 12 and 16.8; design §21.7; plan 03b Task 10 (2d5f76b, 6e489ec).
+  sections 12 and 18.8; design §21.7; plan 03b Task 10 (2d5f76b, 6e489ec).
 - **Route: shared plus a skin amendment.** The profile fit, the broken-line solver, the floor test, the mode choice and
   the records' layout are shared (`melt_profile`, `dispersion`, `spray`). Reading each skin's cells as the shared
   `LayerColumns` and releasing the chosen run are the level set's own (`levelset/spraying.py`), mirroring the

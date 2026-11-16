@@ -618,24 +618,24 @@ outline outside the body, so they missed it.
 **Thin test.** A patch is thin when the molten depth is at most c_kappa times the smallest principal radius of curvature
 and the depth's slope along the surface is at most c_slope. The thresholds are starting values only, to be set by
 verification: c_kappa 0.1, c_slope 0.2, hysteresis hold of 3 consecutive opposite answers, and a connected group of at least 7 patches
-before a mode changes. The molten depth is the nearest distance from the patch to the zero contour of the molten-rigid surface, which is never more than the depth along the normal that the design names; the two agree where the surfaces are nearly parallel, and the approximation is revisited in stage 3. (Stage 3 as amended by the design's section 21 retired the thin test from the body, with the two skin modes it chose between; `thin.py` and its tests are kept as stage 1's unused geometry: section 16.1.) Where the metal is fully molten (no rigid metal, so the molten-rigid surface is plus infinity), the depth is infinite, the patch is thick, and the curvature comes from the outer surface alone.
+before a mode changes. The molten depth is the nearest distance from the patch to the zero contour of the molten-rigid surface, which is never more than the depth along the normal that the design names; the two agree where the surfaces are nearly parallel, and the approximation is revisited in stage 3. (Stage 3 as amended by the design's section 21 retired the thin test from the body, with the two skin modes it chose between; `thin.py` and its tests are kept as stage 1's unused geometry: section 18.1.) Where the metal is fully molten (no rigid metal, so the molten-rigid surface is plus infinity), the depth is infinite, the patch is thick, and the curvature comes from the outer surface alone.
 
 **Shared physics only.** The molten-rigid surface is the isotherm at the rigid temperature the caller passes, the shared material's `T_rigid` (895.1 K on AA7075_scheil, half liquid); until level-set stage 3 Task 1 (2026-11-11) the level-set package defined that number itself as `T_RIGID`, and its own copy of the Stefan-Boltzmann constant. Since then `reentry_model/levelset/` takes every physical law, property and constant from `reentry_model.shared`, which `tests/levelset/test_levelset_imports.py` checks by reading its imports and its module-level constants.
 
 **Accuracy and cost.** Cut-cell volume and area of a sphere converge at second order: errors of 2.6 per cent (volume)
 and 1.3 per cent (area) when the radius spans 4.4 cells, and 0.65 and 0.33 per cent at 8.8 cells; the P1 volume is
-always low. Costs are in the README; they were measured once, serially, on the laptop on 2026-11-11: about 63 s of geometry per macro step (every timed operation except the one-off first build, now including the outer-surface rebuild, the molten-rigid-surface rebuild and one motion of the skin base) for the 50 mm sphere and about 330 s, or 5.5 minutes, for the 100 mm sphere, at peaks of 1.56 and 3.30 gigabytes. The cost of cells at the 0.175 mm floor is not measured on the sphere, because the sphere has none; stage 3 measured it on a puck with rounded rims (section 16.10).
+always low. Costs are in the README; they were measured once, serially, on the laptop on 2026-11-11: about 63 s of geometry per macro step (every timed operation except the one-off first build, now including the outer-surface rebuild, the molten-rigid-surface rebuild and one motion of the skin base) for the 50 mm sphere and about 330 s, or 5.5 minutes, for the 100 mm sphere, at peaks of 1.56 and 3.30 gigabytes. The cost of cells at the 0.175 mm floor is not measured on the sphere, because the sphere has none; stage 3 measured it on a puck with rounded rims (section 18.10).
 
 **Not yet verified.** The thin-test thresholds; behaviour on moving, merging or splitting bodies (the tests move only
 prescribed spheres and boxes); correctness of the derived surfaces against real temperature fields; the shadow test on
-moving or melting shapes (the overhang test covers a stepped stem under a cap); and whether every operation must run every macro step, which is for stage 3 to measure (stage 3 measured only the skip of ψ and the remesh at every second step, on the cold plate: section 16.10).
+moving or melting shapes (the overhang test covers a stepped stem under a cap); and whether every operation must run every macro step, which is for stage 3 to measure (stage 3 measured only the skip of ψ and the remesh at every second step, on the cold plate: section 18.10).
 
 ## 11. Level-set architecture: the thermal solve (stage 2)
 
 This section describes the heat solve on cut cells, `CutThermal` in `reentry_model/levelset/cutthermal.py` (design
 file, §7 and §20.11 item 2), added on 2026-11-11. It solves heat conduction in the metal of a level-set mesh, with the
 boundary conditions applied on the surface pieces (patches) of the cells the surface crosses. It is built and tested but
-not coupled to the flight loop, and it has no skins (stage 3, section 16), no flow and no heat carried by a flow (stage 4). The
+not coupled to the flight loop, and it has no skins (stage 3, section 18), no flow and no heat carried by a flow (stage 4). The
 package's tests use test-only materials (constant properties, and a linear melting range); the plate comparisons that
 use the real Scheil alloy (AA7075, whose melting follows the Scheil solidification model, with a step of latent heat
 at the eutectic) were run outside the package, as described under "Plates" below.
@@ -756,7 +756,7 @@ wherever T is at or above T_feed = 910 K (the feed temperature); the reference r
   the hot plate 24.6, 15.1 and 11.9 per cent behind. The liquid stays on the plate through each long step and absorbs
   heat until the removal at the end of the step, where the reference removes it every millisecond. Stage 2 removes
   liquid only once a step; the skins, which take it continuously, are stage 3, so the judgement at 0.5 s steps moves
-  to stage 3 (plan Decision A), whose plates pass it (section 16.9).
+  to stage 3 (plan Decision A), whose plates pass it (section 18.9).
 - On the adaptive mesh with the fine margin (2.8 mm base cells, 0.7 mm where ψ > −d and above, with d = 4 mm, rebuilt
   after every step, walls on grid lines), the cold plate recedes 3.6, 4.0 and 4.2 per cent behind the reference at
   1.0, 1.5 and 2.0 s, inside the skyscrapers' 5 per cent acceptance; the hot plate is 9.6 per cent behind at 1.0 s (not
@@ -776,9 +776,9 @@ per macro step at 50 mm (stage 1), so it does not set the cost of a flight; the 
 of the 50 mm sphere (1 055 790 cells here, 1 290 192 for the geometry), so the ratio is approximate. The 100 mm sphere is
 *estimated* at about four times as much (about 30 s a step), against about 330 s of geometry a step; it was not measured.
 
-**Not yet verified.** The solve with skins on its patches (stage 3, built and judged on scripted bodies in section 16,
+**Not yet verified.** The solve with skins on its patches (stage 3, built and judged on scripted bodies in section 18,
 not in a flight), with a flow and advection (stage 4) and in a flight; the plates at 0.5 s steps (stage 3, now passed:
-section 16.9); fine-size convergence on a pool at 0.7, 0.5 and 0.35 mm (stage 4); the
+section 18.9); fine-size convergence on a pool at 0.7, 0.5 and 0.35 mm (stage 4); the
 cost at 100 mm.
 
 ## 12. The skins' spraying solved on their own speed profile (`--dispersion`)
@@ -1965,7 +1965,115 @@ pinned to `normals` for that reason. This was one coarse mesh, one gas state, tw
 spraying flight on the sphere default should be watched for refused rear moves; the short resumed flights of 15.4 are the
 only deformed-body flights on it so far, and none of them sprayed.
 
-## 16. Level-set architecture: the skins on one skin depth (stage 3, as amended by design section 21)
+## 16. The skins' cells at their base (`--skin-base-cell`, skyscrapers)
+
+A skin's cells are sized by a target: the fine cell (10 um in production) within the fine zone, the top 0.4 mm, growing
+by 10 % per cell below it (`--skin-growth 1.10`); a cell is split above 1.5 times its target and merged below half of it.
+Since 2026-11-14 (open item 7; Asha: "Go with option 1") the target is also at most the base cell, 0.2 mm by default, at
+the skin's base, growing by the same 10 % per cell above it (`Skins.targets`), so a thick skin is fine at both ends and
+coarse in its middle. A skin thinner than about 2.3 mm is unchanged, its targets from the top being the smaller
+throughout; a 28 mm skin has about a quarter more cells (120-126 against 100-103).
+
+*Why.* Graded from the top alone a 28 mm skin's bottom cell is 2-4 mm thick. The skin holds its base at the 3D model's
+temperature through its bottom half-cell (`skin._conduct`), so where a hot pool sits on rigid metal the whole drop to
+the rigid front (895.1 K) falls across that half-cell. The jump-fault probe of the 50 mm flight (178.5-186.5 s, hand-down
+off, re-run 2026-11-14) counted 30,848 faults, every one a bottom cell about 10 K above the metal crossing its base, in
+skins 24-32 mm thick; Task 5k's rule passed 5,228 of them, the marginal ones.
+
+*Verified, in one dimension (`analysis/skin_base_cells/`, pinned by `tests/test_skin_base_cells_column.py`).* One real skin
+column holding a 28 mm pool at 906 K on rigid metal, coupled as `skinbody` couples it (12.5 ms steps, the damped
+repeat), against the same column on one uniform grid with no skin; mass and energy close to rounding in every run. The
+reference converges: 5 and 10 um cells and 1 and 0.5 ms steps agree to 5 um. Case A, rigid metal at 894 K and no
+heating: graded from the top alone the rigid front is 17, 50, 64, 55, 31 and 25 % too far at 0.1, 0.2, 0.5, 1, 2 and 3 s,
+the step from the bottom cell to the base 7.1 K at 0.1 s; a 2.5 ms coupling step gives the same (24.4 against 24.8 % at
+3 s), so the error is the cell's; with uniform 10 um cells the skins reproduce the reference to its grid; with the 0.2 mm
+base cell the front is 5.9 % too far at 0.1 s and within 1.2 % from 0.5 s on, the step at most 0.26 K. Case B, rigid metal
+at 885 K and the pool heated at 2 MW/m2: graded from the top alone the front does not move for 0.1 s (the reference's
+moves 0.30 mm), is 17 % short at 0.5 s and 28 % too far at 2 s, the step 11.1 K at 0.1 s falling to 1.9 K at 3 s; with the
+0.2 mm base cell it is 3.4 % short at 0.1 s and within 0.8 % from 0.5 s on. Base cells of 0.1, 0.3 and 0.5 mm put the
+front within 0.3, 2.3 and 6.2 % from 0.5 s on in case A, with 130-137, 114-123 and 110-115 cells; 0.2 mm was chosen as
+within about 1 % for about 20 cells more than the grading from the top (Claude's choice, 2026-11-14).
+
+*Assumed, and not tested.* The test is one-dimensional: no flow, no sideways heat, one density (the skins' swelling
+off). Its rigid metal is on 5 um cells where a flight's 3D model has 0.7 mm elements at its surface, so with a fine skin
+base the 3D model's elements may be the next limit. Its two pools were chosen to resemble the faulted columns, not taken
+from the flight. That the flight with the base cell (below) is the more accurate of the two rests on this test, not on
+any reference for the flight itself. The sideways exchange's depth grid (`skin.depth_grid`,
+`--sideways-heat depth`) is still spaced by the targets from the top. A state saved before the option resumes with the
+grading from the top alone unless `resume --skin-base-cell 0.2` is given.
+
+*Verified on one flight (2026-11-15).* The 50 mm sphere's state at 178.5 s was resumed to 186.5 s twice on the Mac
+Studio, side by side, with the base cell off and at 0.2 mm, on this branch's code at 36227a2 and the saved flight's own
+settings (the bridge viscosity law, the table dispersion, the windward loads it was saved with, hand-down off, sideways
+heat by height); both ended normally and closed their energy books (residuals -1.3e-10 and -9.9e-11). The results are on
+the branch `skin-base-cells-flights-macstudio` (c75fe87). Jump faults, cumulative over column-steps: 25,364 under Task
+5k's rule and 30,768 by the bottom cell alone with the base cell off (the laptop probe on older code: 25,620 and
+30,848), 4 and 60 at 0.2 mm. The two flights agree within about 1 % until 185.0 s; then, with the base cell off, the
+thickest skin grows from 28 to 46 mm by 186.5 s against 31 mm, the mean depth of metal above the rigid front reaches
+14.06 mm against 9.23 mm, the metal taken into the skins from the 3D model (drawn plus absorbed) reaches 0.1342 kg
+against 0.1222 kg (12 g, 6.5 % of the sphere's 0.1837 kg), the liquid layer above the liquidus thins to 0.18 mm on
+average against 0.89 mm, and the mean surface temperature falls 31 K in the last quarter second while the base cell's
+keeps rising (916.7 against 945.3 K at 186.5 s): the direction the single-column test predicts. With the base cell the
+flight released its first droplets, 0.22 g in two releases in the last 0.04 s. Cost: 14.0 h against 10.9 h, but the
+difference is the continuum step's switch (open item 23), which latched at 179.5 s with the base cell off and at 182.0
+s at 0.2 mm, so the latter flew 2.5 s more on 0.5 s steps at about 4.6 times the skins' wall time per second of flight;
+from 182.5 to 186.5 s, on the same step, the skins took 24,813 s at 0.2 mm against 28,928 s with it off, with 4 to 7 %
+more cells. Not known: the flight after 186.5 s, and the base cell with the fitted-sphere windward loads, the interim gas
+loads, the composite viscosity law and the kinked dispersion profile, none of which these flights used.
+
+*With the fitted-sphere loads (2026-11-15).* Merged with main, the base cell under the sphere rule stopped one unit test,
+the spraying test sphere in the slip band, on a mesh move refused even on a freshly rebuilt mesh; with either change
+alone it passed. Such a move is now made in pieces, and the test passes (section 17).
+
+## 17. A mesh move refused even on a fresh mesh is made in pieces (skyscrapers, `movemesh`)
+
+The skins move the 3D mesh's surface corners by the metal crossing the rigid front each part of a macro step, and the
+nodes of the deforming zone beneath follow. A move is refused, changing nothing, if any element it touches would invert
+or fall below a radius ratio of 0.05 (`RATIO_MIN`; the radius ratio is 1 for a regular tetrahedron and 0 for a flat
+one). A refused move is made again on a mesh rebuilt inside the same surface, and until 2026-11-15 a move refused on
+that fresh mesh stopped the flight (exit 1). Since then (Asha, 2026-11-15, option 1; branch `refused-move-split`) it is
+first made in pieces (`MovingMesh._move_in_pieces`): two halves in turn, a half still refused halved again, down to
+pieces of a sixteenth of the move (`SPLIT_LEVELS` = 4), with a rebuild before any piece the mesh refuses if the mesh
+has moved since its last rebuild. Only a piece refused at a sixteenth stops the flight, its message naming the size.
+`MoveResult.pieces` and `MovingMesh.split_moves` count the pieces and the split moves; neither is in the history yet.
+A state saved before the change splits too when resumed.
+
+*Why.* On the merged tree of the base cells (section 16) and main at aa0525f, the unit test
+`test_a_spraying_body_in_the_slip_band_keeps_the_three_books` (the 4 mm test sphere at 3 MW/m2 from 890 K, two 0.25 s
+steps, spraying in the slip band) stopped in its second step: one element of four surface corners went from a radius
+ratio of 0.25 on the rebuilt mesh to 0.0486. One of its corners held a 5.0 mm pool whose base moved 0.36 mm outward as
+metal froze back onto the 3D model; the other three, with 0.87 mm skins, were drawn 0.08 to 0.44 mm inward. It failed
+only with both the base cell and the fitted-sphere windward loads: main, the branch with the base cell off, and the
+branch with the base cell under the normals rule all passed it. A fresh mesh is meshed from the surface it is given,
+so the surface half-way there, meshed afresh, need not contain that element.
+
+*Verified.* With the split the test passes on the branch (be67361, within its limits of 1e-12 of the mass, 1e-8 of
+the heat absorbed and 1e-12 of the impulses). A run of its body with the same split patched in from outside, before it
+was built, made the refused move in two halves and gave the mass to 1e-16, an energy residual of 5e-12 and a momentum
+residual of 2e-17. On the 4 mm test sphere with a 4 mm deforming zone, pressing the whole surface 3.5 mm inward is refused
+even on a fresh mesh and goes through in two halves; 6 mm goes through as a half and two quarters, and fails when
+only one halving is allowed (`tests/test_reentry_model_movemesh.py`). The corners end where the whole move puts them
+(to 1e-15 m), and the books close as for one move: the swept volumes sum to the change of the mesh's volume and the
+energy left plus the swept enthalpy is the starting energy, each to 1e-12. Metal a later piece sweeps inward is booked
+at the slab of the profile below what the earlier pieces swept, from the move's own profile enthalpy (`h_inward`, read
+as the profile's mean from the corner's surface to a depth): on a profile falling 100 kJ/kg per mm, 3.5 mm in, the
+split books within 0.46 % of what one move of the same swept volume books, the corners' areas shrinking between the
+halves on the sphere, where booking each half from the surface would be 9.7 % off. The whole unit tier on be67361
+passes, run once (1127 of its 1128 tests, the FEniCSx module skipped for want of `dolfinx`), and so do the 211
+wake-residence tests.
+
+*Assumed, and not tested.* That a move the mesh can take in pieces is the move the physics asked for: the split
+changes how the mesh follows the surface, not where the surface goes, but the pieces share one macro step's part, so
+no conduction happens between them. That a sixteenth is a sensible floor: it was chosen as a limit on the rebuilds a
+split can make (at most 16 pieces and their rebuilds; on the 50 mm flight with the base cell, 13 rebuilds took 84.5 s
+of wall time, about 6.5 s each, from the flight's history, which counted only the last rebuild of a move that made two),
+not measured.
+The split was tried only on the 4 mm test sphere; no flight has used it, and whether real flights refuse moves this way
+is not known. A move that flattens an element across a sharp fold of the surface itself (the shoulder failure of
+sub-plan 19, recorded in the module's docstring) is not cured by any rebuild inside the same surface, and pieces do
+not change that.
+
+## 18. Level-set architecture: the skins on one skin depth (stage 3, as amended by design section 21)
 
 This section describes stage 3 of the level-set architecture as it was built on the branch `levelset-stage3` by plan
 `docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md` (2026-11-14 to 2026-11-15), which builds the design's
@@ -1984,7 +2092,7 @@ decision that changed behaviour or a tolerance is stated here in its own words. 
 in `analysis/levelset/stage3_recorded.json` (the record), each entry stamped with the commit it ran on; the cases'
 script is `analysis/levelset/stage3_cases.py` and their tests `tests/levelset/test_levelset_stage3_cases.py`.
 
-### 16.1 One skin depth, and the three surfaces
+### 18.1 One skin depth, and the three surfaces
 
 **One depth, no modes.** Every marker's skin is H deep, H = `SkinSettings.depth` = 1.2 mm by default, recorded with
 every run. **(assumed)** The default is Claude's call, for Asha to check (design 21.3): it is the old starting depth
@@ -2020,7 +2128,7 @@ from the skins' cell profiles and the volume's temperatures as before (section 1
 0.175 mm cells, the edges read rounding radii of 0.07 to 0.19 mm at the start (record `box_dev`,
 `edge_radius_mm_at_start`).
 
-### 16.2 The division of the layer
+### 18.2 The division of the layer
 
 Every point of the layer between φ and β belongs to the marker that owns the point of φ nearest it; column i is what
 marker i owns, its cross-section A_i(z) is that column's area at depth z below φ, and two columns are neighbours
@@ -2072,7 +2180,7 @@ departure from one is the closure measure of design 21.8 item 5.
   sphere's factor is 1 − 2.84e-5 (the same run). Also `test_a_flat_slab_divides_into_prisms`,
   `test_a_concave_corner_column_widens_with_depth` and `test_a_measured_profile_holds_a_spherical_shell`.
 
-### 16.3 Moving the gas surface by exact volumes
+### 18.3 Moving the gas surface by exact volumes
 
 In each part of a step, each column's net volume change at its top (metal sprayed or fed away, runoff in and out, its
 cells' change of density on melting or freezing) moves φ over the column's owned area by the displacement whose swept
@@ -2082,7 +2190,7 @@ T2-c: whole cells disagreed with the division's columns by −21 to +14 per cent
 per cent); the offsets are found by Newton's method with the exact Jacobian and step halving (ruling T2-d), started from
 each group's own volume profile at eight offsets (ruling T2-f), to a relative miss of `MOVE_RTOL` = 1e-6, a group asked
 for less than `MOVE_FLOOR` = 1e-3 of the move's largest change being judged on that scale (ruling T2-g). φ is then reset
-(keeping the cut cells, 16.1) and corrected per piece to the piece's metal volume (the skins' cells at their own
+(keeping the cut cells, 18.1) and corrected per piece to the piece's metal volume (the skins' cells at their own
 densities and the volume's metal at the solid's). The groups' swept volumes must sum to φ's total change to
 `MOVE_SUM_RTOL`, or the step stops. A speck of φ that a move parts off with no marker and none of the volume's metal is
 lifted out of the metal, and its nodes are held fixed in the volume correction, so it cannot return (ruling T7-f); the
@@ -2118,7 +2226,7 @@ each):
   the last four steps; Task 7, once). It is judged a grid limit, not a defect: the box's sharp edges already read 0.07
   to 0.19 mm on that mesh.
 
-### 16.4 Keeping every column full: the fill, the base's exchange and re-partition
+### 18.4 Keeping every column full: the fill, the base's exchange and re-partition
 
 After every accepted part each column is exactly full: its cells' volume at their own densities equals its column's
 volume (design 21.5; planning ruling 3 gives the order: the cells' change, the move of φ, the per-piece correction, β,
@@ -2171,7 +2279,7 @@ T6-c: by mass, a merge had moved depths by 0.63 H; planning ruling 6).
   kg/m³) and moved φ out by 6.9 mm³ over twelve steps (plan 03b Task 5's report, section 12). The volume's own melt does
   not swell; a density per volume cell belongs with the volume flow (design 21.9).
 
-### 16.5 Heat: through the depth, sideways, and across the base
+### 18.5 Heat: through the depth, sideways, and across the base
 
 Each skin's heat sub-step (`Skins.conduct`, 10 ms) is implicit through its depth on the measured cross-sections, the gas
 heat and radiation on its top area, and its base held at the temperature the volume's solve gives its patch group. The
@@ -2200,17 +2308,17 @@ solver watch).
   sits in a column that straddles the edge, owned by a side-face marker, and its one temperature per depth cannot follow
   the steep fall across the edge; with markers 1 mm apart the probe falls in a heated-face column and is 6.0 per cent
   under (28.87 against 30.73 K), still beyond the tolerance (Task 7b, once each). Design 21.10's finer markers near
-  edges are the planned remedy; when to build them is open (16.11).
+  edges are the planned remedy; when to build them is open (18.11).
 - **The top flux (rulings T7-i and T7b-a):** each marker's top flux is the mean of the flux over the pieces of φ's
   patches it owns, taken again on the moved φ before every part from the same loads state; on the box this brought the
   heat in from up to 25 per cent over the beam's power in a part (+5.5 per cent a step) to +0.5 per cent (diagnosis D1).
   The runoff's forcing is taken at the step's start and held over the step, because re-taking it folded a sheet of
   liquid under the spraying cube's bottom face on its first step while the flux alone completed (measured once), and the
-  markers that would own a re-taken forcing may stand up to 2 mm off φ within a step (16.11). **(verified)**
+  markers that would own a re-taken forcing may stand up to 2 mm off φ within a step (18.11). **(verified)**
   `test_each_markers_heat_is_retaken_on_the_moved_surface_every_part`,
   `test_a_flight_takes_its_loads_once_per_part_under_the_part_s_ownership`.
 
-### 16.6 Runoff on the division's boundaries
+### 18.6 Runoff on the division's boundaries
 
 Runoff exchanges metal between every pair of columns that share a boundary in the layer, at the depth where they meet,
 by the arrival rule, upwind and implicit (design 21.5 and 20.6): the rate of cell k is (u_k · n_ij)⁺ L_ij(z_k) /
@@ -2231,9 +2339,9 @@ pressure gradient of 3.8e4 N/m³) and raises a ridge of liquid 1.0 mm high withi
 parts, so the ridge is converged in the part count and is not a part-length artefact (ruling T6-a, scratch, once). With
 the edges rounded to 2 mm the same step completes. The spraying fixture's cube therefore has 2 mm rounded edges (ruling
 T6-d, provisional): it tests the spraying and the books, not sharp-edge capillarity, which stays Asha's question
-(16.11).
+(18.11).
 
-### 16.7 The thin-metal stop (design 21.11)
+### 18.7 The thin-metal stop (design 21.11)
 
 Where two columns whose normals oppose (n_i · n_j < −0.5) share a boundary in the layer, the metal there is thinner than
 2H or an edge is sharper than about 60 degrees, and the step stops with a RuntimeError naming the place
@@ -2251,9 +2359,9 @@ markers 10 mm away) and on the rounded cube (a lip with at least 2.49 mm of meta
 a 1.4 mm plate (82 pairs), a 2.0 mm plate (66), a 45 degree wedge (9) and a 55 degree wedge (12) (Task 7c's review,
 once). **(assumed)** A sharp concave notch of gas in thick metal does not stop the run (ruling T7c-d, a reading of 21.11
 for Asha to confirm): its columns meet on its bisector at every level, as at any shared boundary, and the metal there is
-not thin. The stop can still fire on a spurious pair (16.11, ruling T11-c).
+not thin. The stop can still fire on a spurious pair (18.11, ruling T11-c).
 
-### 16.8 Spraying and the slurry's viscosity
+### 18.8 Spraying and the slurry's viscosity
 
 **Spraying through the shared model** (design 21.7; `levelset/spraying.py`). Girin's plan per marker goes through the
 shared `SprayModel`, b being always the skin's flowing depth and the wave's region the division's boundaries at φ. On
@@ -2296,9 +2404,9 @@ measured once, so that comparison is pinned at 1e-9). The skyscrapers' slurry mo
 shared `spray.slurry_properties` (rulings T8-a and T8-c, pinned by
 `test_shared_slurry_viscosity_is_the_skins_viscosity_of_under_both_laws` in `tests/test_reentry_model_shared.py`). The
 rounded spraying cube's two tests run on the bridge law (ruling T9-a), because under the composite law the cube stops on
-a spurious thin-metal pair (16.11).
+a spurious thin-metal pair (18.11).
 
-### 16.9 The verification cases (design 21.8 items 9 and 10)
+### 18.9 The verification cases (design 21.8 items 9 and 10)
 
 All four plates, the box and the shoulder were run on e57945f (plan 03b Task 11) under the composite law; the box and
 the shoulder were also re-run under the bridge law on the same code, which reproduced Task 7d's numbers (73b5a9a)
@@ -2365,7 +2473,7 @@ Task 7d's code the third step stopped after 23 parts on the move's volume-sum ch
 m³ where φ's volume changed by 2.67e-10 m³, a 60 per cent miss described as a defect in φ's move at the sharp edge
 (ruling T7d-c as amended). The deposit at 2.0 s, which the test judges, is not reached under either law.
 
-### 16.10 Cost (design 21.12, measured)
+### 18.10 Cost (design 21.12, measured)
 
 Every figure here was measured once, on the laptop (8 cores), with the machine's load stated, so each carries the
 scatter of a shared machine.
@@ -2415,7 +2523,7 @@ scatter of a shared machine.
   run was stopped. No step of it is measured, and by ruling T11-d a measurement of the profile path on it needs at least
   two steps.
 
-### 16.11 Open questions (Asha's to decide)
+### 18.11 Open questions (Asha's to decide)
 
 These are not decided; each is stated with what was measured.
 
@@ -2449,20 +2557,20 @@ These are not decided; each is stated with what was measured.
 - **Markers drift within a step** (diagnosis D2, section 3.5; ruling T7b-a): markers stood up to 2.08 mm (1.7 H) off φ
   within one 50 ms step, and they own the re-taken top flux within the step; they are back on φ at the step's end
   (1.4e-14 m, Task 7c). Whether they should settle within a step is open.
-- **Concave notches** (ruling T7c-d, 16.7): a sharp concave notch of gas in thick metal does not stop the run; a reading
+- **Concave notches** (ruling T7c-d, 18.7): a sharp concave notch of gas in thick metal does not stop the run; a reading
   of 21.11 to confirm.
-- **Swelling** (ruling T5-n, 16.4): the volume holds its metal at the solid's density, so φ sits low by the volume's
+- **Swelling** (ruling T5-n, 18.4): the volume holds its metal at the solid's density, so φ sits low by the volume's
   unrealised swelling (up to about 15 per cent of the molten depth below β, liquid 2,400 against 2,813 kg/m³) and rises
   unevenly as metal is drawn.
-- **Sharp-edge capillarity** (rulings T6-a and T6-d, 16.6): φ's recovered curvature at a sharp edge pushes a ridge of
+- **Sharp-edge capillarity** (rulings T6-a and T6-d, 18.6): φ's recovered curvature at a sharp edge pushes a ridge of
   liquid 1.5 mm high; whether to cap or smooth the curvature, or leave it to 21.10 and 21.11, is design section 17 item
   8's question.
 - **The skyscrapers' regrid ties** (Task 7d's review): the skyscrapers' regrid keeps the plain comparisons; if its fill
   also makes equal fine cells, round-off decides the same tie cells there. Not checked.
 - **Also marked for Asha to check in design section 21:** the default depth of 1.2 mm, the superseded hand-down rule,
-  the volume's one density and the base as the spraying floor (16.1, 16.4, 16.8).
+  the volume's one density and the base as the spraying floor (18.1, 18.4, 18.8).
 
-### 16.12 Not yet verified
+### 18.12 Not yet verified
 
 A level-set flight (no run driver; the cases are scripted bodies with prescribed or analytical loads); the box past 1.0
 s and the shoulder's deposit at 2.0 s; heat across a sharp edge within 5 per cent; sharp edges at 0.4 mm spacing (design

@@ -94,6 +94,61 @@ def test_cells_below_the_fine_zone_grow_by_the_growth_factor():
     assert np.all(np.diff(dz) >= -1e-15)                             # never a thick cell above a thinner one
 
 
+def test_a_thick_skin_keeps_fine_cells_at_its_base_as_well_as_its_top():
+    """The base's fine cells (open item 7, 2026-11-14; Asha: "Go with option 1"): a cell's target is the smaller of the
+    target graded down from the top and one graded up from the base, `base_cell` at the base growing by (growth - 1) per
+    unit height above it, so a thick skin's bottom cell is within the split-and-merge bounds of `base_cell` and the cells
+    grow from both ends towards the middle. Without it (`base_cell` None) the bottom cell of a 28 mm skin is the top
+    rule's, more than five times thicker. The top's fine cells are the same either way."""
+    mat = scheil()
+    bottoms = {}
+    for base in (None, 0.3e-3):
+        sk = filled(mat, n=1, settings=skin.SkinSettings(base_cell=base, **CELLS_04))
+        sk.add_bottom(np.array([mat.rho * 4e-6 * 27.6e-3]), float(mat.enthalpy(700.0)))   # 28 mm in all
+        sk.regrid()
+        dz = sk.dz()[0, :sk.count[0]]
+        assert sk.thickness()[0] == pytest.approx(28.0e-3, rel=1e-12)
+        assert np.allclose(dz[:39], 10e-6)
+        bottoms[base] = dz[-1]
+        if base is not None:
+            assert skin.MERGE_BELOW * base <= dz[-1] <= skin.SPLIT_ABOVE * base
+            i = int(np.argmax(dz))
+            assert dz[i] > 1.0e-3                                       # coarse in the middle
+            assert np.all(np.diff(dz[:i + 1]) >= -1e-15) and np.all(np.diff(dz[i:]) <= 1e-15)
+    assert bottoms[None] > 5.0 * bottoms[0.3e-3]
+
+
+def test_the_base_cell_is_0_2_mm_by_default():
+    """The default base cell, 0.2 mm (2026-11-14): on the single-column test of a 28 mm pool on rigid metal it put the
+    rigid front within 1.2 % of the 5 um reference from 0.5 s on, against 17-64 % too far without it."""
+    assert skin.SkinSettings().base_cell == pytest.approx(0.2e-3, rel=1e-12)
+
+
+def test_the_base_s_fine_cells_leave_a_thin_skin_as_it_was():
+    """Where the target graded from the top is already the smaller at the base -- a skin thinner than about 3 mm with a
+    0.3 mm base cell -- the base rule changes nothing: the same cells, bit for bit."""
+    mat = scheil()
+    cells = []
+    for base in (None, 0.3e-3):
+        sk = filled(mat, n=1, settings=skin.SkinSettings(base_cell=base, **CELLS_04))
+        sk.add_bottom(np.array([mat.rho * 4e-6 * 2.6e-3]), float(mat.enthalpy(700.0)))    # 3 mm in all
+        sk.regrid()
+        cells.append((sk.m.copy(), sk.H.copy(), sk.count.copy()))
+    for a, b in zip(*cells):
+        assert np.array_equal(a, b)
+
+
+def test_base_cell_settings_are_checked_and_an_old_state_keeps_the_old_grading():
+    """`base_cell` is None (no base rule) or at least the fine cell; settings pickled before the field existed come back
+    with None, so that resuming an old flight does not change its cells unasked."""
+    for bad in (0.0, -1e-4, 5e-6):                                      # 5 um: below the 10 um fine cell
+        with pytest.raises(ValueError):
+            skin.SkinSettings(base_cell=bad)
+    old = skin.SkinSettings(base_cell=0.3e-3)
+    del old.__dict__["base_cell"]                                       # as a state saved before the field existed
+    assert pickle.loads(pickle.dumps(old)).base_cell is None
+
+
 def test_taking_and_exchanging_at_the_bottom_and_top_are_exact():
     mat = scheil()
     sk = filled(mat)

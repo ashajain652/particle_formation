@@ -5,7 +5,7 @@
 > stand as built; **Tasks 10 to 12 are superseded** by `03b-stage3-one-skin-depth.md`: Task 10 (the two modes) is
 > retired by that plan's Tasks 5 and 6, and Tasks 11 (the verification cases and cost) and 12 (the documents and the
 > ledger) are redone as its Tasks 7, 11 and 12. What stage 3 is as built is recorded in `docs/model_assumptions.md`
-> section 16 and in the design's §21.8 and §21.12. This plan is kept as the record and is not edited further.
+> section 18 and in the design's §21.8 and §21.12. This plan is kept as the record and is not edited further.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

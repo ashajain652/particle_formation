@@ -1424,13 +1424,12 @@ class SkinBody(ThermalBody):
         depth = self._absorb_depth(np.maximum(MOVE_MAX * col.edge_length.mean() - moved, 0.0))
         inward = book.drawn / mat.rho + depth * col.area - handed_s / mat.rho        # m3 per corner
         u = -col.normal * (inward / col.area)[:, None] + mm.neutral_smoothing(col.normal, col.area)
-        rebuilds = mm.rebuilds
+        rebuild_seconds = mm.rebuild_seconds
         h_inward = lambda d: skin_mod.profile_enthalpy(mat, T_node, g0, 0.0, d)
         # nan where nothing lands, as where a donor gave away all it handed down: any sweep there is at the corner's own enthalpy
         h_outward = np.where(handed_s > 0.0, landed_H / np.where(handed_s > 0.0, handed_s, 1.0), np.nan)
         r = mm.move_with_policy(u, h_inward, h_outward)
-        if mm.rebuilds > rebuilds:
-            self.wall["rebuild"] += mm.last_rebuild.seconds
+        self.wall["rebuild"] += mm.rebuild_seconds - rebuild_seconds      # every rebuild the move made (a split's too)
         sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed_s), r.swept_enthalpy - (book.drawn_H - landed_H))
         if excess is not None:
             self.pending = self.pending + excess

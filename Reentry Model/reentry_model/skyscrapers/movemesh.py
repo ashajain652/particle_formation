@@ -51,6 +51,15 @@ rebuild's new volume misses against the old (`RebuildResult.mass_residual`, `reb
 sub-plan 22 Task 4): the surface is kept, so it is round-off. The validity gate stops on a non-manifold surface, more
 than one connected body, or a non-positive enclosed volume.
 
+The policy (`move_with_policy`): a rebuild before a move when the zone is compressed to half its depth (no sooner than
+`min_gap` moves after the last); a move refused (an element inverted or below the radius ratio `ratio_min`) is made again
+on a rebuilt mesh; and since 2026-11-15 (Asha, option 1) a move refused even on that fresh mesh is made in pieces,
+halves and then halves of halves down to 1/2**`split_levels` of it, with a rebuild before any piece the mesh refuses
+(`_move_in_pieces`), before it is a model failure. A fresh mesh is meshed from the surface it is given, so a move that
+would take an element of four surface corners from a healthy shape to a sliver in one step -- a thick pool's base handed
+back next to thin skins drawn in, on the 4 mm test sphere under the base cells and the fitted-sphere loads -- can go
+through when the surface half-way there is meshed afresh. The pieces' books are the move's (`_move_in_pieces`).
+
 The fine band (Asha, 2026-10-14, option 1): on 2 mm elements the 3D model cannot follow the temperature just below the
 rigid front -- the layer ahead of the front is 2-3 mm thick on the hot plate -- and the plates melt 2-6 % late; 1 mm
 elements remove the cold plate's onset delay. So a mesh may be finer to `fine_depth` below its surface (elements of
@@ -71,6 +80,7 @@ from . import mesh as mesh_mod
 DEFORM_DEPTH = 15.0e-3       # m, depth D of the deforming zone: the dense band's depth (mesh.DEFAULT_BAND)
 RATIO_MIN = 0.05             # radius ratio below which a move is refused and the mesh rebuilt (2026-09-27 design §7.1)
 MIN_GAP = 20                 # macro steps between rebuilds triggered by compression (a refused move ignores it)
+SPLIT_LEVELS = 4             # halvings of a move refused even on a fresh mesh: pieces down to 1/16 of it (2026-11-15)
 ZONE_NEIGHBOURS = 12         # surface nodes averaged for each interior node of the zone
 SMOOTH_LAMBDA = 0.5          # tangential smoothing: share of the way to the neighbours' mean per move
 SMOOTH_CLAMP = 0.35          # of the mean surface edge: the most a corner is nudged per move (2026-09-27 design)
@@ -301,6 +311,7 @@ class MoveResult:
     correction: float                   # J, the uniform offset that closed the books (pre-correction residual)
     worst_ratio: float                  # smallest radius ratio among the elements the move touched
     rebuilt: bool = False               # move_with_policy rebuilt the mesh before (or to make) this move
+    pieces: int = 1                     # the pieces move_with_policy made it in (more than one: a split move)
 
 
 class MovingMesh:
@@ -308,10 +319,17 @@ class MovingMesh:
     survives rebuilds) and rebuilt when needed. `mesh` and the solver's mesh are replaced at every rebuild; callers
     read `self.mesh` afresh. `corners` holds the current node id of each corner."""
 
+    # class defaults, which a mesh saved before the split of a refused move (2026-11-15) reads when it is resumed: it
+    # splits too, and its counts start from zero
+    split_levels = SPLIT_LEVELS
+    split_moves = 0                     # moves made in pieces
+    rebuild_seconds = 0.0               # s, summed wall time of all rebuilds
+
     def __init__(self, mesh, solver, material, depth=DEFORM_DEPTH, ratio_min=RATIO_MIN, min_gap=MIN_GAP,
-                 sizes=None):
+                 sizes=None, split_levels=SPLIT_LEVELS):
         self.mesh, self.solver, self.material = mesh, solver, material
         self.depth, self.ratio_min, self.min_gap = float(depth), float(ratio_min), int(min_gap)
+        self.split_levels = int(split_levels)
         self.sizes = sizes if sizes is not None else default_sizes(mesh)
         s = mesh.surface()
         self.corners = np.unique(s.faces)
@@ -457,6 +475,7 @@ class MovingMesh:
         self.rebuilds += 1
         self.last_rebuild = RebuildResult(float(residual), float(residual / E_old) if E_old else 0.0, new_mesh.n_nodes,
                                           new_mesh.n_elements, time.perf_counter() - t0, reason, mass_residual)
+        self.rebuild_seconds += self.last_rebuild.seconds
         return self.last_rebuild
 
     def needs_rebuild(self):
@@ -467,7 +486,9 @@ class MovingMesh:
 
     def move_with_policy(self, u_corners, h_inward=None, h_outward=None):
         """Rebuild first if compression calls for it; move; if the move is refused, rebuild and move again. A move
-        refused on a fresh mesh is a model failure (RuntimeError, exit code 1)."""
+        refused even on the fresh mesh is made in pieces (`_move_in_pieces`; Asha, 2026-11-15); one that cannot be made
+        in pieces of 1/2**split_levels of it, or any move refused on a fresh mesh with `split_levels` 0, is a model
+        failure (RuntimeError, exit code 1)."""
         rebuilt = False
         reason = self.needs_rebuild()
         if reason:
@@ -479,10 +500,61 @@ class MovingMesh:
             rebuilt = True
             result = self.move(u_corners, h_inward, h_outward)
             if result.refused:
-                raise RuntimeError("a corner move of up to {:.3g} m degrades the mesh even after a rebuild".format(
-                    float(np.linalg.norm(u_corners, axis=1).max())))
+                result = self._move_in_pieces(np.asarray(u_corners, dtype=float), h_inward, h_outward)
         result.rebuilt = rebuilt
         return result
+
+    def _move_in_pieces(self, u, h_inward, h_outward):
+        """Make the move `u`, refused even on a fresh mesh, in pieces: two halves in turn, each moved as `move_with_policy`
+        moves (refused, it is moved again on a mesh rebuilt for it, if the mesh has moved since its last rebuild), and a
+        half still refused halved again in the same way, down to pieces of 1/2**split_levels of the move. On the 4 mm
+        test sphere the base cells and the fitted-sphere loads together made a move that one rebuild could not take,
+        an element of four surface corners going from a radius ratio of 0.25 to 0.0486, and in halves it went through
+        (2026-11-15): the rebuild between them meshes the half-moved surface afresh.
+
+        The result is the pieces' together: their swept volumes, enthalpies and corrections summed, their worst radius
+        ratio, and `pieces`, how many. Metal a later piece sweeps inward lies below what the earlier pieces swept, so it is
+        booked at the slab of the profile between the depths swept so far and swept after it, from `h_inward` read as the
+        profile's mean from the corner's surface down to a depth (as `skin.profile_enthalpy` from 0 gives it): (D + d)
+        h(D + d) - D h(D), over d, for a piece d below the depth D already swept. The pieces' inward metal is then booked
+        as one move of the same depth books it, where the corners' areas do not change between the pieces. Metal swept
+        outward is booked at `h_outward` by every piece alike. The energy books close at every piece, as at every move.
+        A piece still refused at the last level raises a RuntimeError, with the pieces before it already made."""
+        if self.split_levels < 1:
+            raise RuntimeError("a corner move of up to {:.3g} m degrades the mesh even after a rebuild".format(
+                float(np.linalg.norm(u, axis=1).max())))
+        swept = np.zeros(len(self.corners))           # m, the depth each corner has swept inward so far, piece by piece
+        done = []
+
+        def deeper(D):
+            def h_slab(d):
+                d = np.asarray(d, dtype=float)
+                safe = np.where(d > 0.0, d, 1.0)
+                return np.where(d > 0.0, ((D + d) * h_inward(D + d) - D * h_inward(D)) / safe, h_inward(D))
+            return h_slab
+
+        def piece(v, level):
+            h_in = None if h_inward is None else deeper(swept.copy())
+            area = self.frame()[1]                     # a rebuild keeps the surface, and with it the corners' areas
+            r = self.move(v, h_in, h_outward)
+            if r.refused and self.steps_since_rebuild > 0:
+                self.rebuild("quality")
+                r = self.move(v, h_in, h_outward)
+            if not r.refused:
+                swept[:] += np.maximum(r.swept_volume, 0.0) / area
+                done.append(r)
+                return
+            if level >= self.split_levels:
+                raise RuntimeError("a corner move of up to {:.3g} m degrades the mesh even after a rebuild, and so does a "
+                                   "piece of 1/{} of it".format(float(np.linalg.norm(u, axis=1).max()), 2 ** level))
+            piece(0.5 * v, level + 1)
+            piece(0.5 * v, level + 1)
+
+        piece(0.5 * u, 1)
+        piece(0.5 * u, 1)
+        self.split_moves += 1
+        return MoveResult(False, sum(r.swept_volume for r in done), sum(r.swept_enthalpy for r in done),
+                          float(sum(r.correction for r in done)), min(r.worst_ratio for r in done), True, len(done))
 
 
 

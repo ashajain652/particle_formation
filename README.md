@@ -350,6 +350,8 @@ Holman and Boyd's DSMC are in `Reentry Model/docs/model_assumptions.md` section 
 
 `--rheology composite|bridge` chooses the slurry's viscosity law for a melting skin run (`--melt on` with the skins; accepted and ignored otherwise). Since 2026-11-12 the default is `composite`, a law of the solid fraction alone with no shear-rate dependence: a suspension law below 10 % solid (assumed, with an assumed internal solid fraction of 0.5; nothing is measured on aluminium there) and Li et al.'s (2014) fit at 489.88 1/s from 10 % to half solid (46.2 times the liquid's viscosity at 10 % solid, 168 times at 50 %). The jump between the two at 10 % solid (a factor of 24 at the default internal fraction) is unresolved. `--rheology bridge` is the earlier law, Li et al.'s averaged law held at 367 1/s with a log-linear bridge to the liquid between 906.4 K and 908 K; a melting skin run under it is named with the suffix `_rheology-bridge`, and a flight saved before the option existed keeps it when resumed unless `resume --rheology composite` is given. The run's JSON records `skin.rheology` and `skin.internal_solid_fraction`. `--slurry-spray` keeps its default, off. The sources, assumptions and uncertainties are in `Reentry Model/docs/model_assumptions.md` section 13.
 
+`--skin-base-cell MM` (`run` and `resume`; open item 7, 2026-11-14) sets the target of the cell at a skin's base, 0.2 mm by default, growing by `--skin-growth` per cell above it, so that a thick skin is fine at its base as well as its top; `0` turns it off, the grading from the top alone, and names the run `_skinbase-off` (another value `_skinbase<mm>mm`). On the single-column test (`Reentry Model/analysis/skin_base_cells/`: a 28 mm pool on rigid metal against a one-dimensional reference) it brings the rigid front from 17-64 % too far to within 1.2 % from 0.5 s on, for about a quarter more cells in such a skin; skins thinner than about 2.3 mm are unchanged. On the 50 mm sphere's flight from 178.5 s to 186.5 s (two flights on the Mac Studio, 2026-11-15, base cell off and at 0.2 mm) it took the jump faults from 25,364 to 4, and in the last second, where the grading from the top alone grew the thickest skin to 46 mm and took 12 g more metal into the skins, it held the thickest skin at 31 mm; on the same step it cost 4 to 7 % more cells and no measurable time. A flight saved before the option keeps the old grading when resumed unless `resume --skin-base-cell 0.2` is given. The run's JSON records `skin.base_cell_mm` (0 for none). The measurements and what is assumed are in `Reentry Model/docs/model_assumptions.md` section 16.
+
 Options (`--thermal fem`): `--heating physics|sesam`; `--gas-loads similarity|classic` (above); `--stagnation
 fay-riddell|sutton-graves|dkr` (classic loads only); `--bridging-heat matting|sesam-table` (sesam-table on the classic
 loads only); `--matting-n` (1); `--accommodation` (0.8); `--catalycity` (1, classic loads only); `--material` (packaged
@@ -806,7 +808,7 @@ or removed, and every column is filled exactly from the volume at its base after
 shared spray model, on Girin's table or on main's kinked profile of their own cell speeds (the spray model's
 `dispersion`, `table` or `profile`), and their slurry viscosity follows `SkinSettings.rheology`, the law main's
 `--rheology` chooses (composite by default). There is still no run driver: `--architecture levelset` exits with code 2,
-and the cases are bodies advanced by a script. `docs/model_assumptions.md` section 16 records every rule with its test
+and the cases are bodies advanced by a script. `docs/model_assumptions.md` section 18 records every rule with its test
 or marks it assumed, with the decisions taken during the build; the design's §21.8 marks each verification item with its
 test and result.
 
@@ -864,8 +866,8 @@ of five calls each way at one state of the box) and took 54 per cent of the box'
 layer took 39 per cent of the box's second step (204 s of 529.6 s, nine divisions). Cells at the 0.175 mm floor cost
 about 1,800 cells per mm of a 0.5 mm rim and made the cut-cell solve's step 4.8 times slower than without the floor. The
 50 mm sphere took 36 minutes to build and did not finish its first step in 39 minutes on a loaded laptop, a lower bound
-only. The details, the machine loads and the open questions for Asha are in `docs/model_assumptions.md` sections 16.10
-and 16.11.
+only. The details, the machine loads and the open questions for Asha are in `docs/model_assumptions.md` sections 18.10
+and 18.11.
 
 ## Tests
 
