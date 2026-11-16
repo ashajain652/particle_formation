@@ -597,8 +597,9 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     """The exposed slurry's own mode per column, the cascade of spec 8 (the 2026-10-07 design's 8.1-8.2; Asha, 2026-10-29,
     option i): (rate [kg/(m2 s)], the per-column dict of SprayPlan.slurry). Where a flowing cell that is not fully liquid
     lies beneath the liquid run on the windward face, its cell -- the slurry the release exposes first -- gives the
-    properties: the viscosity of the law the skins' settings select (`skin.viscosity_of`: Li et al.'s with the bridge to
-    the liquid, or the composite law) at the cell's solid fraction and the shear rate of the slurry's own sheared layer,
+    properties: the viscosity of the law the skins' settings select (`sk.settings.rheology`, passed to the shared
+    `spray.slurry_properties`, which makes the same `rheology.law_viscosity` call as `skin.viscosity_of`, as a test pins:
+    Li et al.'s with the bridge to the liquid, or the composite law) at the cell's solid fraction and the shear rate of the slurry's own sheared layer,
     V_s over delta_m or over the layer, found by fixed-point iteration from rest (at most skin.SHEAR_PASSES passes, until
     no viscosity moves by skin.SHEAR_TOL, the rate held at `rheology.rate_cap` of the law: GAMMA_MAX under the bridge law,
     no cap under the composite law, whose viscosity does not depend on the rate); the cell's mixture density;

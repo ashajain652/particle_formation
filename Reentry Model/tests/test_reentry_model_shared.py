@@ -305,6 +305,27 @@ def test_shared_slurry_properties_are_the_skins_old_arithmetic():
     assert np.array_equal(props.mu, old_mu) and np.array_equal(props.rho, rho) and props.sigma == spray.SLURRY_SIGMA
 
 
+def test_shared_slurry_viscosity_is_the_skins_viscosity_of_under_both_laws():
+    """The shared `spray.slurry_properties` and the skyscrapers' `skin.viscosity_of` each pass the law's name, the state,
+    the liquid's viscosity and the bridge's solid fraction to `rheology.law_viscosity`; this pins that the two agree
+    exactly (not approximately) under every law, at slurry states from T_rigid to the liquidus and at shear rates
+    that include zero and both sides of the bridge's rate cap, so a change to one that misses the other fails here."""
+    import numpy as np
+    from reentry_model.shared import rheology, spray
+    from reentry_model.shared.material import Material
+    from reentry_model.skyscrapers import skin
+    mat = Material.from_drama_json("AA7075_scheil")
+    T = np.array([mat.T_rigid, 900.0, 905.0, rheology.BRIDGE_LOW, 907.0, 907.5, rheology.BRIDGE_HIGH, 912.0, 935.0])   # the bridge runs from BRIDGE_LOW to BRIDGE_HIGH
+    f_s = 1.0 - mat.liquid_fraction(T)
+    rho = np.full(T.shape, 2600.0)
+    for law in rheology.LAWS:
+        sk = skin.Skins(mat, np.array([1e-6]), skin.SkinSettings(rheology=law))
+        for g in (0.0, 10.0, rheology.GAMMA_MAX / 2, rheology.GAMMA_MAX, rheology.GAMMA_MAX * 3, 1e5):
+            gamma = np.full(T.shape, g)
+            shared_mu = spray.slurry_properties(mat, T, f_s, gamma, rho, law).mu
+            assert np.array_equal(shared_mu, skin.viscosity_of(sk, T, f_s, gamma)), (law, g)
+
+
 def test_size_feedback_names_is_the_shared_tuple():
     from reentry_model import body
     from reentry_model.shared import nose
