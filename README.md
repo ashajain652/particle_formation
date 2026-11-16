@@ -712,10 +712,11 @@ Stage 1's nine files are (stage 2 adds a tenth, `cutthermal.py`, below):
 - `thin.py` measures molten depth and curvature per patch and applies the thin test with hysteresis.
 - `transfer.py` interpolates and conservatively transfers fields between two meshes built from the same base grid.
 
-Run the tests (43 from stage 1; 60 since stage 2, below) with
+Run the tests (43 from stage 1; 60 since stage 2; 258 unit tests and 7 reference tests since stage 3, both below) with
 
 ```bash
-"$PY" -m pytest tests/levelset -q                            # 60 tests, 93 to 148 s (43 tests and about 40 s at stage 1)
+"$PY" -m pytest tests/levelset -q                            # every level-set test, the reference ones too (stage 3 below);
+                                                             # 60 tests and 93 to 148 s at stage 2, 43 and about 40 s at stage 1
 "$PY" analysis/levelset/measure_geometry.py 100              # sphere diameter in mm; optional base and fine sizes in mm
 ```
 
@@ -736,7 +737,7 @@ because anything got slower. In the 100 mm run the single largest operations are
 makes two distance resets) and the rebuild of the mesh from fields (51 s). The sphere's volume before correction is
 within 0.053 per cent (50 mm) and 0.013 per cent (100 mm) of exact, and its area within 0.030 and 0.0074 per cent.
 The sphere has no cells at the 0.175 mm floor (its curvature target is about 12.5 mm at 50 mm radius), so the cost of
-cells at the floor is not yet measured; stage 3 will measure it with a rim or wire.
+cells at the floor is not measured on it; stage 3 measured it on a puck with rounded rims (below).
 
 ### Stage 2: the thermal solve on cut cells
 
@@ -757,7 +758,7 @@ of them checks that the molten-rigid surface ψ (the isotherm at the test materi
 one-phase Stefan melting front on 0.7 mm cells: the front was within 0.119, 0.055, 0.013 and 0.001 mm of the exact depth
 at 0.25, 0.5, 1.0 and 2.0 s, against a bound of one 0.7 mm cell (re-measured on 2026-11-11 when the rigid temperature
 became a required argument that callers take from their material, level-set stage 3 Task 1; at 895.1 K, the value the
-level-set code used to define itself, the errors were 0.112, 0.049, 0.006 and 0.010 mm). There are still no skins, no flow and no coupling to the flight loop;
+level-set code used to define itself, the errors were 0.112, 0.049, 0.006 and 0.010 mm). Stage 2 has no skins (stage 3 adds them, below), no flow and no coupling to the flight loop;
 `docs/model_assumptions.md` §11 records the choices and the measured accuracy.
 
 The comparisons with the skyscrapers' level-2 plates were run on 2026-11-11 in the prototype folder
@@ -768,7 +769,8 @@ In short, at 0.05 s steps on uniform 0.7 mm cells the recession of both plates a
 1.6 per cent at 1.0, 1.5 and 2.0 s, and the adaptive mesh with its 4 mm fine margin passes the skyscrapers' acceptance
 (5 per cent on recession, 10 per cent on the non-rigid depth), except that the hot plate's recession at 1.0 s, 9.6 per
 cent behind, is not judged; at 0.5 s steps the solve lags by up to 25 per cent, because the liquid is removed only at
-the end of each step, and that judgement moves to stage 3, whose skins take the liquid continuously.
+the end of each step, and that judgement moves to stage 3, whose skins take the liquid continuously (its plates pass,
+below).
 
 ```bash
 "$PY" analysis/levelset/measure_thermal.py 50                # sphere diameter in mm; optional number of 0.5 s steps (default 3)
@@ -787,6 +789,82 @@ flight; the geometry was measured on a different mesh of the same sphere (1 290 
 approximate. The 100 mm
 sphere is *estimated* at about four times as much, about 30 s a step, against about 330 s of geometry; it has not been
 measured.
+
+### Stage 3: the skins on one skin depth (design section 21)
+
+Stage 3 gives the level-set body its skins. It was first built with two skin modes (plan
+`docs/superpowers/plans/levelset/03-stage3-skins.md`, Tasks 1 to 9 and 9b) and then rebuilt on the design's amendment of
+2026-11-13, section 21, "one skin depth everywhere, and the gas surface evolved", by plan
+`docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md` (2026-11-14 to 2026-11-15, on the branch
+`levelset-stage3`, not yet on `main`). Every marker on the gas surface φ carries a skin 1.2 mm deep (H,
+`SkinSettings.depth`), with no modes; φ is the evolved level set and the skin base β is derived one skin depth inside
+it, so the volume solve of stage 2 owns the metal inside β and the skins own the layer between. The layer is divided
+among the markers by nearest points of φ (`division.py`), and that one division gives each skin its cross-section
+through the depth, its neighbours for runoff and for sideways heat, and its group of β's patches for the base coupling.
+φ moves by each column's exact volume change (`levelset.move_by_volumes`), so an edge rounds only where metal is added
+or removed, and every column is filled exactly from the volume at its base after every part. The skins spray through the
+shared spray model, on Girin's table or on main's kinked profile of their own cell speeds (the spray model's
+`dispersion`, `table` or `profile`), and their slurry viscosity follows `SkinSettings.rheology`, the law main's
+`--rheology` chooses (composite by default). There is still no run driver: `--architecture levelset` exits with code 2,
+and the cases are bodies advanced by a script. `docs/model_assumptions.md` section 16 records every rule with its test
+or marks it assumed, with the decisions taken during the build; the design's §21.8 marks each verification item with its
+test and result.
+
+The files stage 3 adds to `reentry_model/levelset/` are `division.py` (the division of the layer), `skin.py` (the cell
+columns: grading, the measured cross-sections, depth and sideways conduction, the layered flow, the base exchange),
+`markers.py` (markers on φ, their owned areas, snapping, splitting, merging and release), `runoff.py` (runoff across the
+division's boundaries and the pushes), `loads.py` (each marker's gas loads from the shared laws, its fitted nose and its
+leeward test), `spraying.py` (each marker's spray plan through the shared `SprayModel`), `repartition.py` (metal moved
+to its new column at its depth when the division changes), `properties.py` (the property table of the shared material),
+`stepend.py` (the layer's settle at a part's acceptance and at the step end: the move of φ, β, the fill, the remesh, the
+thin-metal stop) and `skinbody.py` (`LevelSetSkinBody`, one macro step). `surfaces.py` now derives β from φ
+(`skin_base`), and `thin.py` with its tests stays as stage 1's geometry, no longer used by the body. Since stage 3's
+first task the package takes every physical law, property and constant from `reentry_model.shared`
+(`tests/levelset/test_levelset_imports.py`).
+
+```bash
+"$PY" -m pytest tests/levelset -m "not reference" -q -n 4   # the level set's unit tier: 258 tests, 12 to 15 min
+"$PY" -m pytest tests/levelset -m reference -q -n 4 -k "not q6p_box"   # plates, shoulder, box edge: 4 to 7 min
+"$PY" analysis/levelset/stage3_cases.py plate-cold --preset dev     # also plate-hot, --preset production, --offset-mm 0.27
+"$PY" analysis/levelset/stage3_cases.py box --steps 2               # the q6p box to 1.0 s; shoulder likewise
+"$PY" analysis/levelset/stage3_cases.py cost --what rim             # also --what skip, --what sphere --steps 2
+```
+
+Each case writes its summary to `output/levelset/stage3_<case>[_<preset>].json`, stamped with the commit it ran on, and
+the committed record of the judged runs is `analysis/levelset/stage3_recorded.json`. The box's full-length reference
+test (`test_q6p_box`) is kept off the laptop: on the earlier code its third step had not ended after 115 minutes.
+
+**Verification (design §21.8).** The table lists each item of the design's verification with the test that pins it and
+its measured result; the geometry, the books, the plates, the spraying and the rheology pass, while the box, the
+shoulder and heat across the box's sharp edge are strict expected failures (each test is kept with its tolerance and
+marked `xfail(strict=True)` with the measured reason), all three caused by the 2 mm marker spacing not resolving a sharp
+heated edge or, for the shoulder, by metal thinner than twice the skin depth, which design 21.11 leaves to a later
+piece. Each value was measured once on the laptop unless said otherwise.
+
+| item | test | measured result |
+|---|---|---|
+| 1 sharp box at rest | `test_the_skin_base_of_a_box_is_the_box_shrunk_by_the_depth_with_sharp_edges`, `test_a_cold_box_keeps_its_edges_and_columns` | passes: β within 0.077 mm³ of the sharp shrunk box (tolerance 2.571 mm³); a cold step moves φ by 0.0 m |
+| 2 equal recession | `test_an_equal_recession_keeps_a_box_s_edges_sharp` | passes: 0.279 mm³ from the sharp receded box (tolerance 1.889 mm³), worst group 8.7e-7 off its loss |
+| 3 loss at an edge | `test_extra_loss_along_one_edge_rounds_it` | passes: the edge recedes 0.68 mm against 0.20 mm on the faces |
+| 4 deposit, concave corner | `test_a_deposit_on_a_convex_edge_rounds_it_by_the_depth_added`, `test_a_receding_concave_corner_rounds_by_the_depth_removed` | passes: swept volumes within 3.5e-8 and 1.8e-8 of the asks (the old offset overfilled by 16 to 23 %) |
+| 4b re-partition | `test_a_repartition_by_depth_moves_no_metal_through_the_base_and_keeps_each_depth` | passes: depths within 4.5e-16 of H, books 2.2e-16 |
+| 5 closure every step | `test_every_step_closes_the_layer_and_the_books`, the cases' books | passes: closure at most 6.43e-4 from one on the box (tolerance 1e-3), mass books at most 2.9e-15 |
+| 6 spherical shell | `test_a_spherical_shell_divides_by_the_shell_volume` | passes: closure 2.84e-5 from one |
+| 7 sideways heat | `test_a_lateral_temperature_step_relaxes_at_the_analytic_rate`; `test_heat_passes_a_box_edge_between_the_faces_columns` | a lateral step along a row of columns passes (0.079 K off on a 100 K step); across the box's edge a strict expected failure, 7.3 % under the reference against 5 % |
+| 8 runoff | `test_runoff_crosses_a_box_edge_through_the_body`, `test_no_metal_runs_across_a_slot`, `test_a_uniform_flow_over_a_flat_face_neither_gathers_nor_spreads` | passes |
+| 9 plates at 0.5 s steps | `test_cold_plate_at_half_second_steps`, `test_hot_plate_at_half_second_steps` (development and production) | passes: recession within 2.7 % of the one-dimensional reference at every judged time (tolerance 5 %), the hot plate's non-rigid depth within 0.8 % |
+| 10 box and shoulder | `test_q6p_box`, `test_shoulder_runoff_freezes_a_deposit` | strict expected failures: the box's face centre 12.1 % ahead at 1.0 s; the shoulder stops at 1.0 s on metal 1.39 mm thick, under 2H |
+| 11 spraying | `test_girin_cases_through_the_level_set_path`, `test_a_skin_flowing_to_its_base_takes_its_base_as_the_wall`, `test_the_table_path_is_unchanged` | passes: Girin's cases on both paths; the table path byte for byte as before |
+| 12 rheology | `test_composite_viscosity_ignores_the_shear_rate`, `test_the_same_column_gives_the_same_viscosities_in_both_architectures` | passes: equal to the shared law to 1e-15 under both laws |
+
+**Cost (design §21.12, each measured once).** The box's first 0.5 s step took 34.9 s on a quiet laptop (one-minute load
+averages 3.4 to 3.7), against 31.4 s for the old two-mode design; its first two steps took 128.5 s and 529.6 s in the
+record's run under load averages of about 9 to 20. Sideways heat made the same heat sub-step 11.6 times slower (median
+of five calls each way at one state of the box) and took 54 per cent of the box's quiet first step. The division of the
+layer took 33 per cent of the box's second step. Cells at the 0.175 mm floor cost about 1,800 cells per mm of a 0.5 mm
+rim and made the cut-cell solve's step 4.8 times slower than without the floor. The 50 mm sphere took 36 minutes to
+build and did not finish its first step in 39 minutes on a loaded laptop, a lower bound only. The details, the machine
+loads and the open questions for Asha are in `docs/model_assumptions.md` sections 16.10 and 16.11.
 
 ## Tests
 

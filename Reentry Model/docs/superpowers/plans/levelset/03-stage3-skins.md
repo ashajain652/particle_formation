@@ -1,5 +1,12 @@
 # Level-set stage 3 — skins on markers, both modes, flow solve off — Implementation Plan
 
+> **Superseded in part (2026-11-15).** The design's amendment of 2026-11-13 (§21, one skin depth everywhere, the gas
+> surface φ evolved and the skin base β derived) retired the two skin modes this plan builds. Its Tasks 1 to 9 and 9b
+> stand as built; **Tasks 10 to 12 are superseded** by `03b-stage3-one-skin-depth.md`: Task 10 (the two modes) is
+> retired by that plan's Tasks 5 and 6, and Tasks 11 (the verification cases and cost) and 12 (the documents and the
+> ledger) are redone as its Tasks 7, 11 and 12. What stage 3 is as built is recorded in `docs/model_assumptions.md`
+> section 16 and in the design's §21.8 and §21.12. This plan is kept as the record and is not edited further.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

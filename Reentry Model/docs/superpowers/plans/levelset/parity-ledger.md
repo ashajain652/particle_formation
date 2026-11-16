@@ -35,6 +35,10 @@ writer and Step 3's physics (rheology, dispersion, surface flow, spray, Girin's 
 Stages 1 and 2 of the level set were brought onto `main` after it. A row routed **shared** is closed once its module
 is in that package, which stage 3 builds on.
 
+*Updated 2026-11-15.* Stage 3, rebuilt on design §21 by plan `03b-stage3-one-skin-depth.md` on the branch
+`levelset-stage3`, merged main at aa0525f (6b65df8) and connected its rheology law and its kinked-profile spraying:
+rows 10 to 12.
+
 ## The ledger
 
 ### 1. The windward loads from a fitted sphere (sub-plan 22 Task 5g)
@@ -152,3 +156,61 @@ metal; Girin's thick and thin branches with the conjugate depth; the slurry spra
 - **Route.** Skin rules by amendment. Girin's spray model is shared.
 - **Stage.** 3.
 - **Status.** Pinned when stage 3's plan is written.
+
+### 10. The merge of main into stage 3 (plan 03b Task 8, 2026-11-15)
+
+- **Skyscrapers change.** Main at aa0525f was merged into `levelset-stage3` as 6b65df8 (not into main; nothing pushed).
+  It brought the kinked-profile dispersion (08cca55, row 12), the near-liquidus composite viscosity law (69aba28, row
+  11), the geometry stop and end state (4e857e1), the interim gas loads (70deee0), the fitted-sphere windward loads
+  (bf81abe) and the wake-residence package (6ee6e1a, 593fde7).
+- **Recorded in.** Design §21.7; plan `03b-stage3-one-skin-depth.md` Task 8; `docs/model_assumptions.md` section 16.8.
+- **Route.** **Shared** for the physics both architectures use: the shared spray module takes the viscosity law and its
+  rate cap as arguments (`slurry_modes(..., law=, rate_cap=)`, `slurry_properties(..., law=)`), so that the skyscrapers'
+  slurry mode keeps following `--rheology` (rulings T8-a and T8-c: the skyscrapers reach the law through `law=`, and
+  `test_shared_slurry_viscosity_is_the_skins_viscosity_of_under_both_laws` pins the shared viscosity to the skyscrapers'
+  `skin.viscosity_of` under both laws; ruling T8-b pins the moved-spray-plan test to the bridge law it was recorded
+  under). The skyscrapers' results were checked unchanged by the merge: `same_results.py compare` against main's
+  baseline said identical on the skins, element and non-melting cases (19 files). **Not connected to the level set:**
+  the interim gas loads and the fitted-sphere windward loads (the level set keeps its own `loads.py` on the shared
+  classic heating and surface flow, with its own fitted nose of row 1 and its shadow test), and the geometry stop (a
+  skyscrapers column rule; the level set stops on its own no-core and thin-metal checks). The wake-residence package is
+  **not applicable**.
+- **Stage.** 3.
+- **Status.** Built (the merge and the shared spray arguments). Open: whether and when the level set reads main's
+  interim gas-loads provider, and whether it needs a geometry stop of its own.
+
+### 11. The near-liquidus composite viscosity law (main 69aba28; plan 03b Task 9)
+
+- **Skyscrapers change.** The slurry's viscosity follows `--rheology composite|bridge`, the composite law (a function of
+  the solid fraction alone) the default since 2026-11-12.
+- **Recorded in.** `docs/model_assumptions.md` section 13; design §21.7; plan 03b Task 9 (964b415).
+- **Route: shared.** The law lives in `shared/rheology.py`; the level set's `SkinSettings` gains `rheology` (composite
+  by default, a pickle without the field loading as bridge), and its skins' viscosities come from
+  `rheology.law_viscosity`. Nothing is stored: the composite law ignores the shear rate, and under the bridge law the
+  rates come from the momentum step as before. Pinned by `test_composite_viscosity_ignores_the_shear_rate`,
+  `test_bridge_viscosity_is_unchanged` and
+  `test_the_same_column_gives_the_same_viscosities_in_both_architectures[composite|bridge]` (equal to 1e-15 at the same
+  temperatures and solid fractions). The rounded spraying cube's tests stay on the bridge law (ruling T9-a), because
+  under the composite law its thin-metal stop fires on a spurious pair (ruling T11-c, open for Asha).
+- **Stage.** 3.
+- **Status.** Built.
+
+### 12. The kinked-profile spraying (main 08cca55; plan 03b Task 10)
+
+- **Skyscrapers change.** The skins' spraying is solved on each skin's own speed profile, fitted as straight segments
+  (`--dispersion profile`, the default on a spraying skin run), with Girin's theory kept as `--dispersion table`.
+- **Recorded in.** `docs/superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md`; `docs/model_assumptions.md`
+  sections 12 and 16.8; design §21.7; plan 03b Task 10 (2d5f76b, 6e489ec).
+- **Route: shared plus a skin amendment.** The profile fit, the broken-line solver, the floor test, the mode choice and
+  the records' layout are shared (`melt_profile`, `dispersion`, `spray`). Reading each skin's cells as the shared
+  `LayerColumns` and releasing the chosen run are the level set's own (`levelset/spraying.py`), mirroring the
+  skyscrapers' code by amendment, never by import; the slurry rows' blanking of release depth and growth rate is written
+  again there with a comment naming the skyscrapers' lines (ruling T10-a), and the parity tests compare within 1e-9,
+  since each architecture keeps its own property table (ruling T10-c). Design §21.7 amends the spraying line: a skin
+  whose flowing layer reaches its base and has no kink of its own uses its base as the wall until the volume flow exists
+  (for Asha to check). The table path is unchanged byte for byte (`test_the_table_path_is_unchanged`, ruling P5).
+- **Stage.** 3.
+- **Status.** Built. Measured on a body only in scratch, once (ruling T11-d): the profile path resolves no column on a
+  body's first flowing step (the shared rule: the top cell must already move), and on the rounded cube's second spraying
+  step it resolved 43 columns and sprayed 69.9 mg by the gas-driven mode. The first whole body on the profile path (the
+  cost sphere, two steps) is unmeasured.

@@ -1285,36 +1285,124 @@ and sets out the two pieces that follow it (§21.9, §21.10).
 
 ### 21.8 Verification of this piece (replaces §20.11 item 3's mode tests)
 
+*Built on branch `levelset-stage3` by plan `docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md` (2026-11-14 to
+2026-11-15).* Under each item, **Built** names the test that pins it and its measured result; a test marked
+`xfail(strict=True)` (a *strict expected failure*: the tolerance kept, the failure recorded with its measured reason) is
+built and judged but does not pass, and is said so. Rulings are cited by their ids (the plan's working ledger, kept
+outside the repository; each decision is stated in `docs/model_assumptions.md` section 16, which this list follows).
+Numbers measured once are said to be once. The cases' values are in `analysis/levelset/stage3_recorded.json` (the
+record), gathered on e57945f under the composite law (plan 03b Task 11).
+
 1. **A sharp box at rest:** at t = 0, φ is the box to within the cell floor and β the box shrunk by H with sharp
    edges; cold steps (nothing melting) move φ by round-off only and change no column. At 2 mm spacing here; at 0.4 mm
    in §21.10.
+   **Built at 2 mm spacing, passing.** `test_the_skin_base_of_a_box_is_the_box_shrunk_by_the_depth_with_sharp_edges`:
+   on the stage 3 box's mesh β holds 322.500 mm³ against the sharp shrunk box's 322.423 mm³ sampled on the same nodes
+   (ruling P1) and 0.077 mm³ lies between them, against a tenth of the rounding volume, 2.571 mm³ (Task 12's run of the
+   test, once). `test_a_cold_box_keeps_its_edges_and_columns`: one cold 0.5 s step of the sharp 10 mm cube moved φ by
+   0.0 m within the band (bound 1e-12 m), changed no column and drew nothing (once). Every reset keeps the nodes of the
+   cut cells (rulings T2-b, T5-c). The 0.4 mm case waits for §21.10.
 2. **Equal recession** (a prescribed equal loss per unit area on every face): the edges stay sharp, every face recedes
    by the same depth, and each group's swept volume equals its loss.
+   **Built, passing.** `test_an_equal_recession_keeps_a_box_s_edges_sharp`: a 1.0 mm recession leaves 0.279 mm³
+   between φ and the sharp receded box (tolerance 1.889 mm³); the worst group's swept volume misses its loss by 8.7e-7
+   (bound `MOVE_RTOL` 1e-6). The move splits each cell exactly among the groups (ruling T2-c) and solves the offsets by
+   Newton with the exact Jacobian (rulings T2-d, T2-f, T2-g).
 3. **Loss at an edge** (extra loss prescribed on the columns along one edge): the edge rounds, with each group's swept
    volume equal to its loss.
+   **Built, passing.** `test_extra_loss_along_one_edge_rounds_it`: twice the loss (0.2 mm elsewhere) on the 7 groups
+   along one edge makes the surface recede 0.68 mm at the edge's midpoint (φ there rises by that much) against 0.20 mm
+   at the face centres; worst miss 6.4e-7.
 4. **A deposit on a convex edge:** the swept volume equals the added volume, where today's moves overfill by 16 to
    23 %, and the edge rounds to a radius equal to the depth added, within the cell floor. A concave corner receding
    rounds to the depth removed, likewise.
+   **Built, passing.** `test_a_deposit_on_a_convex_edge_rounds_it_by_the_depth_added`: a 0.5 mm deposit sweeps its
+   volume to 3.5e-8 and lands on the rounded offset (the sharp offset would hold 6.35 mm³ more, at least nine tenths of
+   the 6.01 mm³ rounding volume). `test_a_receding_concave_corner_rounds_by_the_depth_removed`: an L receding 0.5 mm
+   loses 125.586 mm³ against 125.549 mm³ analytic and 126.000 mm³ mitred; worst miss 1.8e-8. On repeated cold moves
+   the grid's own rounding saturates at about one edge cell (0.784 mm³ on the box case's own mesh, an edge radius of
+   about 0.21 mm against its 0.175 mm edge cells; rulings T5-m, T7-c; Task 7, once).
 4b. **Re-partition:** when the division changes (a move, a snap, a split, a merge), mass, enthalpy and momentum are
    exact, and no metal crosses β except where β moved.
+   **Built, passing.** `test_a_repartition_by_depth_moves_no_metal_through_the_base_and_keeps_each_depth`: cells' depths
+   within 4.5e-16 of H of their donors', metal within 1.8e-16, books −2.2e-16 (mass) and 2.2e-16 (enthalpy);
+   `test_a_merge_keeps_each_depth_s_metal_at_its_depth` (merges by depth, ruling T6-c),
+   `test_combining_by_depth_keeps_each_depth_s_metal`, `test_split_and_merge_conserve_mass_and_enthalpy`. The regrid
+   compares with a margin of 1e-9 so that a round-off change of a column does not change its cells (rulings T7d-b,
+   T7d-e; `test_a_regridded_column_moved_by_round_off_regrids_to_the_same_cells`).
 5. **Closure, every step of every case:** the columns' volumes sum to the layer's; the skins' metal volume equals the
    layer's after the draws; each piece's φ encloses its metal's volume. Tolerance from the division's integration,
    recorded.
+   **Built; the tolerance recorded.** The division's closure factor (each piece's columns' volumes over its layer's, by
+   `math.fsum`, ruling T7d-a) is recorded every step and checked against `DIVISION_TOL` = 1e-3 by the cases' books
+   (rulings T1-b, T7-e); a factor more than 0.1 from one stops the step (ruling T7-g). Measured: the plates at most
+   4.7e-15, the box at most 6.43e-4 (record), the shoulder built off the mesh's node planes at most 3.6e-5 (ruling
+   T7-h); a sphere 1 − 2.84e-5 and the box's test mesh 1 − 3.30e-4 (Task 12's run of the division tests, once). The fill
+   misses are at most 3.5e-16 of a column on every recorded step, and each step's mass books close within 2.9e-15
+   (`MASS_TOL` 1e-12). `test_the_columns_sum_to_the_layer_to_round_off`,
+   `test_every_step_closes_the_layer_and_the_books`, `test_a_macro_step_closes_mass_and_enthalpy`.
 6. **A spherical shell:** the columns' volumes against the analytic shell volume, as §20.11 item 3.
+   **Built, passing.** `test_a_spherical_shell_divides_by_the_shell_volume` (factor 1 − 2.84e-5, once) and
+   `test_a_measured_profile_holds_a_spherical_shell`.
 7. **Sideways heat:** a temperature step along a plate's skins relaxes at the analytic rate; across the box's edge,
    heat passes between the two faces' columns, against a reference that resolves the corner in the volume alone (the
    builder's reference).
+   **Built; the lateral step passes and the box's edge is a strict expected failure.**
+   `test_a_lateral_temperature_step_relaxes_at_the_analytic_rate`: 0.079 K from the exact finite-row solution on a 100 K
+   step (ruling P2; bound 1 per cent), and `test_sideways_conduction_closes_its_books`.
+   `test_heat_passes_a_box_edge_between_the_faces_columns` (`EDGE_FAILS`, ruling T6-e, marked `reference`) is a strict
+   expected failure: the probe's column rises 26.30 K, 7.3 per cent under the reference's 28.37 K column mean against
+   `EDGE_RTOL` 5 per cent, because at 2 mm spacing the probe's column straddles the edge (diagnosis D1); at 1 mm spacing
+   it is 6.0 per cent under (Task 7b, once each). The conductance divides by the columns' centroid distance over the
+   shared depth span (ruling T6-b).
 8. **Runoff:** every pair of columns that share a boundary exchanges metal; no pair exchanges across gas (a slot
    narrower than the marker spacing); a uniform flow over a flat face neither gathers nor spreads metal.
+   **Built, passing.** `test_runoff_crosses_a_box_edge` and `test_runoff_crosses_a_box_edge_through_the_body` (the
+   other face's columns gained 1.818e-7 kg, books 0 and −2.0e-16), `test_no_metal_runs_across_a_slot` (a 1.0 mm slot:
+   no shared boundary across the gap, 0 kg gained), `test_a_uniform_flow_over_a_flat_face_neither_gathers_nor_spreads`
+   (interior columns' largest change 7.8e-16); Task 12's run, once.
 9. **The plates at 0.5 s steps** (Task 11 Step 1's acceptance), with the melting front crossing the skin's base at H
    (the risk in §21.12).
+   **Built, passing** (`test_cold_plate_at_half_second_steps[dev|production]`,
+   `test_hot_plate_at_half_second_steps[dev|production]`, marked `reference`). The cold development plate recedes 0.800,
+   2.719 and 5.202 mm at 1.0, 1.5 and 2.0 s against the reference's 0.789, 2.712 and 5.219 mm (1.4 per cent ahead, 0.25
+   ahead, 0.33 behind; RECESSION_TOL 5 per cent); the hot development plate 1.795 and 2.894 mm at 1.5 and 2.0 s against
+   1.817 and 2.917 mm (1.2 and 0.8 per cent behind), its non-rigid depth within 0.1 to 0.8 per cent; production within
+   2.7 per cent at every judged time (record). The hot plate's non-rigid depth (1.49 to 1.68 mm) passes H, so its front
+   crosses the skin's base and the plate still passes; the old full-depth base criterion is reported, not judged (ruling
+   T7-d). Each run once per code version. At a second mesh offset (0.27 mm, ruling T7-m) the plate fails the 8 mm
+   references only because its slab is then 8.27 mm deep; against 8.27 mm references the offset moves it by at most 0.9
+   percentage points, under one skin cell (ruling T11-a).
 10. **The box and the shoulder** (Task 11 Steps 2 and 3) re-judged, and the box's cost per step at 2 mm against
     today's 31.4 s and 175.3 s.
+    **Built; both strict expected failures.** `test_q6p_box` (`BOX_FAILS`; its full length off the laptop by ruling
+    T7d-d, so run to 1.0 s): at 1.0 s the face centre has receded 0.884 mm against 0.789 mm, 12.1 per cent ahead,
+    because at 2 mm spacing side-face markers own the heated face's outer strip, which does not recede (diagnosis D1,
+    ruling T7-j; §21.10's finer markers are the planned remedy, and when to build them is Asha's question).
+    `test_shoulder_runoff_freezes_a_deposit` (`SHOULDER_FAILS`): it stops at 1.0 s on a real thin site (§21.11; a fin
+    0.6 to 0.7 mm wide, metal 1.39 mm through the cap's marker; ruling T11-b), made by the composite law's runoff. **The
+    box's cost per step:** 128.5 s and 529.6 s for the first two steps on e57945f with one-minute load averages of about
+    9 to 20 from other sessions (record `box_dev`); 48.5 s and 190.0 s on Task 7d's code (73b5a9a, bridge law, load not
+    recorded); the first step 34.9 s on 216296b's code at load averages of 3.4 to 3.7 (Task 12's scratch probe, once).
+    Against today's 31.4 s and 175.3 s, the first step therefore costs about 11 per cent more on a quiet machine (one
+    run each); the second was not timed on a quiet machine, and the third step had not ended after 115 minutes on
+    73b5a9a.
 11. **Spraying:** Girin's published cases through the shared spray model, unchanged; a skin whose flowing layer reaches
     its base uses its base as the floor until §21.9.
+    **Built, passing.** `test_girin_cases_through_the_level_set_path[table|profile]` (the three published cases on
+    both paths), `test_a_skin_flowing_to_its_base_takes_its_base_as_the_wall`, `test_the_table_path_is_unchanged` (byte
+    for byte against a fixture recorded before the profile path, ruling P5), and the profile path's parity tests with
+    the skyscrapers within 1e-9 (ruling T10-c). A body's first flowing step resolves no column on the profile path,
+    because the cells' speeds at a step's start are those left by the step before; on the rounded cube's second spraying
+    step it resolved 43 columns and sprayed 69.9 mg by the gas-driven mode (ruling T11-d, scratch, once).
 12. **Rheology:** under `composite` a level-set skin's cell viscosities equal the shared law's at the cells' solid
     fractions, whatever their shear rates, and the same column gives the same viscosities in both architectures; under
     `bridge` they are unchanged from today.
+    **Built, passing.** `test_composite_viscosity_ignores_the_shear_rate` and `test_bridge_viscosity_is_unchanged` (to
+    1e-15), `test_the_same_column_gives_the_same_viscosities_in_both_architectures[composite|bridge]` (1e-15 at the same
+    temperatures and solid fractions; 7.8e-11 through each skin's own inversion, once, pinned at 1e-9). The spraying
+    fixture's cube stays on the bridge law (ruling T9-a), because under the composite law the thin-metal stop fires on a
+    spurious pair there (ruling T11-c, open).
 
 ### 21.9 The next piece, set out: the volume melt flow
 
@@ -1339,22 +1427,48 @@ than 2H, or an edge is sharper than about 60 degrees — the step stops with a R
 step with no rigid metal left does (`stepend.NO_CORE`). Columns across an ordinary edge, whose normals do not oppose,
 meet on the halfway plane and exchange as any neighbours. The thin case is designed later.
 
-### 21.12 Costs and risks (estimated)
+### 21.12 Costs and risks (estimated; measured by plan 03b, 2026-11-15)
 
 - **Cells per skin:** about 37 in development and 63 in production (*estimated* from the grading), against up to about
   80 for today's full-depth skins and about 40 for top-zone ones (§20.13).
+  *Measured:* every column of the box held 42 cells at 0.25 s in development (Task 12's scratch probe, once), and a full
+  column holds 71 or 72 in production (Task 7d's regrid probe, once).
 - **The division** is rebuilt at every move: a nearest-point query for each integration point of the layer's cells.
   Its cost is unknown; it is measured on the box.
+  *Measured:* on the box, 20.9 s for the first step's one division (16 per cent of the step) and 174 s of the 529.6 s
+  second step (nine divisions, 22.7 s each on average, 33 per cent of the step; the tie rule's second nearest-marker
+  query 64.9 s of it), under one-minute load averages of about 9 to 20 (record `box_dev`, `division_cost`, once); 54 per
+  cent of the shoulder's 1012-part third step under the bridge law (Task 7b, once); one division of the box 1.6 s at
+  0.7 mm cells and 17.6 s at 0.175 mm cells (Task 1's fix round, once). The closure it reaches is §21.8 item 5's.
 - **Sideways heat** makes each heat sub-step one coupled solve over all skins instead of independent columns. §20.15's
   second layer (skins split across cores) must then exchange within each solve, not only between sub-steps.
+  *Measured like for like* (Task 12's scratch probe on 216296b's code, no package change, load averages 3.4 to 3.7,
+  once): the same `Skins.conduct` call at the middle sub-step of the box's first real pass took a median of 0.0278 s
+  with the box's side faces and 0.0024 s with none (five times each, the cells restored before each), 11.6 times; over
+  the whole first step its 600 heat sub-steps took 20.3 s with the side faces against 1.6 s for the same calls without,
+  so the sideways conduction was 18.8 s, 54 per cent of the step's 34.9 s. Task 7's earlier on/off figure (about nine
+  times a pass) was not like for like and is not cited.
 - **Risk: the melting front at the skin base.** The 0.8 mm stub kept the skin–volume interface in rigid metal: in the
   skyscrapers the cold plate melted 3.6 % slow with the interface on the front, and about half that with it 0.8 mm into
   rigid metal (§20.4). With one depth, the front crosses the base whenever the molten depth passes H. The plates
   (§21.8 item 9) test it; if they fail, a larger H is Asha's decision then.
+  *Measured:* the plates pass (§21.8 item 9); the hot plate's non-rigid depth exceeds H from 1.0 s (1.49 to 1.68 mm)
+  and its recession is within 1.2 per cent at 1.5 s and 0.8 per cent at 2.0 s, so no larger H is needed for them.
 - **Risk: a film deeper than H is split** between the skin's flow and the volume's, joined at β, and the volume
   resolves it at its 0.7 mm fine size (§20.4), coarser than the skin's cells (§21.9).
 - **Risk:** the division's accuracy along sharp edges sets how tight the closure (§21.8 item 5) can be.
+  *Measured:* the box's closure departed at most 6.43e-4 from one (record), inside `DIVISION_TOL` 1e-3; the shoulder's
+  3.7e-3 on the mesh's node planes was an artefact of faces lying on them, 4.3e-4 when built 0.13 mm off (ruling T7-h).
+  What 2 mm markers do not resolve at a sharp edge is the ownership, not the closure (§21.8 items 7 and 10).
 - **Gone:** the thin test chattering at its threshold and mode changes at a moving front (§20.13).
+- *Measured, not estimated before:* cells at the 0.175 mm floor (§20.13) on a puck of radius 12.5 mm whose rims are
+  rounded to 0.5 mm: 603,018 cells with the 0.25 mm floor against 152,762 without, about 1,800 cells at 0.175 mm per mm
+  of rim, the build, setup and one 0.5 s step 4.1, 4.8 and 4.8 times slower (11.4 s, 1.48 s, 2.25 s), a peak of 1.71 GB;
+  ψ and the remesh skipped at every second step end leave the cold plate's recession unchanged to 1.8e-15 mm and save
+  0.16 s of a 1.89 s step (record `cost_rim` and `cost_skip_dev`, re-measured on 216296b, ruling T12-b, once each).
+- *A lower bound only:* the 50 mm sphere on the profile spraying path took 2137 s to build (2,421 markers, 1,070,832
+  cells, 109,871 active nodes, 2.57 GB) and its first 0.5 s step had not finished after 39 minutes, on a loaded laptop,
+  once (plan 03b Task 11). No step of it is measured.
 
 ### 21.13 What this amendment supersedes
 

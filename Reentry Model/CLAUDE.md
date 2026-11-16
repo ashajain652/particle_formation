@@ -221,6 +221,56 @@ example a Mac Studio checkout behind main) does not have, so that checkout fails
 `__main__.py` and `thermal/` stay at the top level. The skins and the backends are never shared between the architectures. The refactor changed no model behaviour (see
 `docs/model_assumptions.md`).
 
+### The level set (`reentry_model/levelset/`), built through stage 3 on one skin depth
+
+The level set has no run driver yet (the flag above exits 2); its stages are built and tested as library code driven by
+tests and scripts. Stage 1 is the geometry (`boxmesh`, `criteria`, `cutcell`, `levelset`, `shadow`, `surfaces`, `thin`,
+`transfer`; `docs/model_assumptions.md` section 10), stage 2 the cut-cell heat solve (`cutthermal`, section 11), and
+stage 3 the skins (section 16), first with two skin modes (plan `docs/superpowers/plans/levelset/03-stage3-skins.md`)
+and then rebuilt on the design's section 21 by plan `03b-stage3-one-skin-depth.md` on the branch `levelset-stage3`
+(2026-11-14 to 2026-11-15, not yet on `main`). Read section 16 before changing stage 3 or quoting a result from it, and
+the design's §21 (it governs where it and §20 disagree). What to know before touching it:
+
+- **One skin depth, φ evolved, β derived.** Every skin is H = `SkinSettings.depth` = 1.2 mm deep, with no modes (the old
+  `modes.py` is deleted; `thin.py` is unused geometry). The gas surface φ is the evolved level set; the skin base β is
+  the zero contour of φ + H (`surfaces.skin_base`), rebuilt whenever φ moves; `CutThermal` runs on the metal inside β.
+  Every reset of φ or φ + H keeps the cut cells' nodes (`redistance(keep=True)`); a plain reset erodes sharp edges and
+  breaks the books.
+- **The division** (`division.divide`) gives every column its cross-section by depth (`Skins.set_profile`), its shared
+  boundaries (runoff and sideways heat, `runoff.Sheet.from_division`, `Sheet.side_faces`) and its group of β's patches.
+  The top fluxes act on the markers' owned areas of φ (`Skins.area`), not on the profile's A(0); the two differ by up to
+  about 10 % at edge columns, by design.
+- **The body** (`skinbody.LevelSetSkinBody`, with the layer's settle in `stepend.py`) moves φ by each column's exact
+  volume change (`levelset.move_by_volumes`) and fills every column exactly after every part. It stops on purpose, with
+  a RuntimeError naming the place, on metal thinner than 2H (`stepend.THIN_METAL`, design 21.11), a column the fill
+  cannot fill, a part split past `PARTS_MAX`, a closure factor more than `DIVISION_GROSS` from one, a move whose groups
+  miss φ's change (`MOVE_SUM_RTOL`), and a body with no rigid metal (`NO_CORE`). A case that stops on one of these is a
+  finding, not a crash to work around.
+- **Shared physics only; skins never shared.** `reentry_model/levelset/` takes every law, property and constant from
+  `reentry_model.shared` and defines only numerical settings (`tests/levelset/test_levelset_imports.py` checks it); it
+  never imports or copies the skyscrapers' skin modules, and only tests may import them to compare. The level set reads
+  the shared classic heating and surface flow through its own `loads.py` (its own fitted nose and shadow test), not
+  main's interim gas loads or the skyscrapers' fitted-sphere windward loads. Spraying goes through the shared
+  `SprayModel` (`dispersion` "table" or "profile"), and the skins' viscosity follows `SkinSettings.rheology`
+  ("composite" by default).
+- **Tests.** `PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests/levelset -m "not reference" -q -p no:cacheprovider -n 4`
+  is the level set's unit tier (258 tests; 12.2 and 14.5 minutes on four processes in the two runs of 2026-11-15 and 16,
+  each on a shared laptop). The 7 reference tests are the four plates, the box, the shoulder and the box-edge heat test;
+  on the laptop run them with `-k "not q6p_box"`, because the box's full length is not run there. Three are strict
+  expected failures (`xfail(strict=True)`, with their measured reasons in `BOX_FAILS`, `SHOULDER_FAILS` and
+  `EDGE_FAILS`): a pass there fails the test run and means the reason has changed, so re-measure and re-word the reason
+  rather than drop the mark. The rounded spraying cube (`sprayed` in `test_levelset_skinbody.py`) runs on the bridge law
+  and has 2 mm rounded edges on purpose (section 16.6 and 16.8).
+- **The cases and their record.** `analysis/levelset/stage3_cases.py` runs the plates, the box, the shoulder and the
+  costs (its docstring lists the commands); each writes `output/levelset/stage3_<case>[_<preset>].json` with a `code`
+  stamp. `analysis/levelset/stage3_cases.py record` rebuilds the committed record,
+  `analysis/levelset/stage3_recorded.json`, from those output files alone, so it would drop the comparison blocks
+  (`against_task7`, `against_offset_0`) and the box's `record_note`, which were added after gathering, and re-stamp
+  entries from later runs; to update one entry, replace that key only and keep the rest.
+- **Rulings.** The decisions taken during stage 3's build are cited by id (P1 to P5, T1-a onward) in section 16 and the
+  design's §21.8; the plan's ledger that records them in full is kept outside the repository, so section 16 states each
+  in its own words. Questions still open for Asha are listed in section 16.11; do not settle them in code.
+
 ## Architecture of `reentry_model`
 
 The run is a lockstep coupling, not a monolith. `cli.py` builds three things and hands them to

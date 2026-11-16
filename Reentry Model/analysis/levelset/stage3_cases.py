@@ -44,7 +44,10 @@ reported beside it. The face's place among the mesh's planes of nodes is set by 
 by that much on the same mesh box: phi0 = z - offset, the column holding 8 mm + offset of metal under 3.2 mm - offset of
 gas (the controller's ruling T7-m, plan 03b Task 11: the cold plate judged again 0.27 mm up, where diagnosis D1 measured
 its skin base cutting its 0.7 mm cells as the box's does, a 10 % sliver of metal against 71 %, and its recession 5 %
-slower at 1.0 s, measured once). A run with an offset is recorded apart (`plate_<case>_<preset>_offset_<mm>mm`).
+slower at 1.0 s, measured once; Task 11 measured that the 5 % is the deeper 8.27 mm slab, not the cut: against
+one-dimensional references for an 8.27 mm slab the offset moves the recession by at most 0.9 percentage points, under
+one skin cell, and the controller's ruling T11-a closed T7-m on it). A run with an offset is recorded apart
+(`plate_<case>_<preset>_offset_<mm>mm`).
 
 The q6p box (Ruling 5): 8 x 10 x 10 mm at 700 K, 6 MW/m2 by projection on its 10 x 10 face (flight along -x; each
 marker the mean projection of the patches of phi it owns, taken again on the moved phi before every part,
