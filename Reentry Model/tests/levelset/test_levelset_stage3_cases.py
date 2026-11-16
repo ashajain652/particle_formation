@@ -292,7 +292,10 @@ def test_cold_plate_at_half_second_steps(preset):
     2.724, 5.205), 1.4 and 0.25 % ahead of the first and 0.33 % behind it (production 2.7, 0.44 % ahead, 0.27 %
     behind), and 4.4, 1.9 and 1.8 % behind the second
     (production 3.2, 1.7, 1.8 %); books at most 5.4e-15 (mass) and 1.5e-14 (enthalpy). (2026-11-12, the old design:
-    0.820, 2.762, 5.258 mm.)"""
+    0.820, 2.762, 5.258 mm.) Re-measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology
+    and main's merged physics: every number as on Task 7d's code (73b5a9a) to every digit, the books at most 1.7e-15
+    (mass) and 1.4e-14 (enthalpy). The plate's face 0.27 mm higher on the same mesh (8.27 mm of metal; the controller's
+    ruling T7-m) is recorded, not tested here: plan 03b Task 11's report."""
     c = _cases()
     out = c.plate("cold", preset)
     assert out["failure"] is None and out["markers"] == 1
@@ -317,7 +320,8 @@ def test_hot_plate_at_half_second_steps(preset):
     bfb6344 (dev; production within 0.7 % of it): recession 0.760, 1.795, 2.894 mm against 0.789, 1.817, 2.917 (3.7 %
     behind, reported; 1.2 and 0.8 % behind); non-rigid depth 1.489, 1.583, 1.683 mm against 1.487, 1.570, 1.674 (0.1,
     0.8 and 0.5 % thicker); the base 1.75, 2.13 and 2.59 K above T_rigid (reported); books at most 1.6e-15 (mass) and
-    1.3e-14 (enthalpy)."""
+    1.3e-14 (enthalpy). Re-measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology and
+    main's merged physics: every number as on Task 7d's code (73b5a9a) to every digit."""
     c = _cases()
     out = c.plate("hot", preset)
     assert out["failure"] is None and out["markers"] == 1
@@ -332,14 +336,13 @@ def test_hot_plate_at_half_second_steps(preset):
 
 BOX_FAILS = ("the 2 mm markers do not resolve the sharp heated edge (diagnosis D1, the controller's ruling T7-j; design "
              "21.10's finer markers near edges are the remedy): markers on the side faces own the heated face's outer "
-             "strip, which does not recede. Measured 2026-11-15 on plan 03b Task 7d's code (73b5a9a), the division's "
-             "closure summed exactly (ruling T7d-a): the first step (0.5 s, nothing yet melting) keeps the face flat "
-             "and the books exact; the second now closes its books (mass -8.2e-15 of the stored mass, against MASS_TOL "
-             "1e-12), but the face centre has receded 0.889 mm at 1.0 s against the reference's 0.789 (12.7 % ahead, "
-             "past RECESSION_TOL); the third step, from 1.0 s, had not ended after 115 minutes, when its one run was "
-             "stopped at the two-hour limit on a laptop run (with the regrid's margin of ruling T7d-b off, the same "
-             "step accepted 13 parts in about 40 minutes and reached 0.44 s of its 0.5 s, its parts split down to 1/64 "
-             "of the step), so 1.5 and 2.0 s are not reached")
+             "strip, which does not recede. Measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the "
+             "composite rheology, to 1.0 s (ruling T7d-d): the first step (0.5 s, nothing yet melting) keeps the face "
+             "flat and the books exact; the second closes its books (mass 2.9e-15 of the stored mass, against MASS_TOL "
+             "1e-12), but the face centre has receded 0.884 mm at 1.0 s against the reference's 0.789 (12.1 % ahead, "
+             "past RECESSION_TOL; 0.889 mm and 12.7 % under the bridge law, which this code reproduces to every digit); "
+             "the third step, from 1.0 s, is not run on a laptop: on Task 7d's code (73b5a9a) it had not ended after "
+             "115 minutes, when its one run was stopped at the two-hour limit, so 1.5 and 2.0 s are not reached")
 
 
 @pytest.mark.reference
@@ -362,13 +365,16 @@ def test_q6p_box():
     assert out["passes"]
 
 
-SHOULDER_FAILS = ("measured 2026-11-15 on plan 03b Task 7d's code (73b5a9a), the segment built 0.13 mm off the mesh's "
-                  "planes of nodes (ruling T7-h): the steps to 1.0 s close their books (mass 8.3e-16, enthalpy 2.5e-16) "
-                  "and their divisions within DIVISION_TOL (closure 3.65e-5 and 4.68e-4), and at 1.0 s a deposit of "
-                  "7.8 mg lies past the heat's end, all of it rigid, its centroid 1.24 mm past (the pushed plate: 1.05 "
-                  "mm), 6.7 % of it past 5 mm (the pushed plate: 3.0 %); the step from 1.0 s accepts 23 parts in 384 s "
-                  "and then stops on the move's own check: its groups swept 4.27e-10 m3 where phi's volume changed by "
-                  "2.67e-10 m3, more than stepend.MOVE_SUM_RTOL (1e-12 of the body's volume) apart, so 2.0 s, where the "
+SHOULDER_FAILS = ("measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology, the "
+                  "segment built 0.13 mm off the mesh's planes of nodes (ruling T7-h): the first step (to 0.5 s) is "
+                  "Task 7d's to every digit; the second accepts its 8 parts and then stops at its end on the "
+                  "thin-metal check (stepend.THIN_METAL, design 21.11): two pairs of columns whose normals turn 146 "
+                  "and 142 degrees share a boundary in the layer at the heated cap's +y edge, between a marker on the "
+                  "cap, 0.37 mm inside the starting surface and facing back across the cap, and two on the +y cut "
+                  "face; the metal through the cap's marker along its normal is 1.39 mm thick and the thin test's "
+                  "measures at the pairs' edges are 0.84 to 2.06 mm, all under twice the skin depth (2.4 mm), so the "
+                  "site is really thin. Under the bridge law the same code reproduces Task 7d's steps to 1.0 s to "
+                  "every digit, so the runnier slurry of the composite law makes the thin site; 2.0 s, where the "
                   "deposit is judged, is not reached")
 
 
@@ -382,7 +388,9 @@ def test_shoulder_runoff_freezes_a_deposit():
     DEPOSIT_RIGID_SHARE of it is rigid at 2.0 s and at most the pushed plate's 3.0 % of it lies past DEPOSIT_FAR (the
     controller's ruling on the review's I2; the farthest reach of non-rigid metal is reported, not judged). The
     deposit's centroid past the heat's end is recorded against the skyscrapers' pushed plate's 1.05 mm. It fails
-    (SHOULDER_FAILS): measured 2026-11-15 on 73b5a9a, it stops in its third step."""
+    (SHOULDER_FAILS): measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology, it stops at
+    the end of its second step, on metal thinner than twice the skin depth at the heated cap's edge (on Task 7d's code,
+    73b5a9a, under the bridge law, it stopped in its third)."""
     c = _cases()
     out = c.shoulder("dev")
     assert out["failure"] is None

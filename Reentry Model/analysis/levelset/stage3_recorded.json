@@ -1,10 +1,9 @@
 {
  "box_dev": {
   "code": {
-   "commit": "73b5a9a6e548d00a170464c76580788babfa53e4",
+   "commit": "e57945f46d68009a411c6c06c106020fb231b140",
    "dirty": false
   },
-  "record_note": "plan 03b Task 7d round 2: this entry is a run to 1.0 s only (stage3_cases.py box --steps 2) on 73b5a9a, clean. The full run on the same commit, started first for the record, reproduced these two steps to every printed digit and was then stopped by the two-hour limit on a laptop run after 115 minutes in its third step (from 1.0 s), which had not ended, so it wrote no summary; see task-7d-report.md, round 2",
   "case": "box",
   "preset": "dev",
   "T0_K": 700.0,
@@ -34,7 +33,7 @@
   "markers_at_start": 132,
   "face_markers_at_start": 16,
   "heat_coverage_by_normals_at_start": 0.6734640025403196,
-  "build_s": 60.04,
+  "build_s": 151.43,
   "edges_at_start": {
    "heated +y": {
     "radius_mm": 0.13949501126267214,
@@ -115,24 +114,24 @@
   "markers_trapped": 0,
   "compare": {
    "1.0": {
-    "recession_mm": 0.8888203336796527,
+    "recession_mm": 0.8844390866020007,
     "ref_1d_mm": 0.789,
-    "rel_1d": 0.1265149983265561,
+    "rel_1d": 0.12096208694803634,
     "ref_liquidus_mm": 0.837,
-    "rel_liquidus": 0.061911987669835966,
-    "edge_recession_mm": -0.07824381425115606,
+    "rel_liquidus": 0.05667752282198402,
+    "edge_recession_mm": -0.08565925916014135,
     "edge_radius_mm": {
      "heated": {
-      "median_mm": -0.08525512454888394,
-      "max_mm": 0.08116800903112789
+      "median_mm": -0.02526667906935664,
+      "max_mm": 0.06878465107362121
      },
      "rear": {
-      "median_mm": 0.15669773645325652,
-      "max_mm": 0.19244173756156902
+      "median_mm": 0.15670924050532076,
+      "max_mm": 0.1924421220768416
      },
      "along x": {
-      "median_mm": 0.07068144073029003,
-      "max_mm": 0.13953666090278785
+      "median_mm": 0.07163338873090225,
+      "max_mm": 0.14002076283985462
      }
     }
    }
@@ -140,12 +139,12 @@
   "cost_per_step_s": [
    {
     "t": 0.5,
-    "wall_s": 48.47,
+    "wall_s": 128.5,
     "old_design_s": 31.4
    },
    {
     "t": 1.0,
-    "wall_s": 189.97,
+    "wall_s": 529.58,
     "old_design_s": 175.3
    }
   ],
@@ -154,8 +153,8 @@
   "steps": [
    {
     "t": 0.5,
-    "wall_s": 48.47,
-    "peak_rss_gb": 1.003,
+    "wall_s": 128.5,
+    "peak_rss_gb": 0.681,
     "parts": 1,
     "passes_max": 6,
     "parts_next": 1,
@@ -211,30 +210,30 @@
     "pending_flux_max_Wm2": 0.0,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 0.677,
-     "skins trial": 2.174,
-     "skins real": 2.959,
-     "skins repeats": 24.015,
-     "runoff (within the skins' passes)": 1.578,
-     "cut-cell solve": 0.302,
-     "cut-cell solve repeats": 0.85,
-     "interface and part books": 0.005,
+     "loads": 1.792,
+     "skins trial": 5.76,
+     "skins real": 9.351,
+     "skins repeats": 63.248,
+     "runoff (within the skins' passes)": 4.895,
+     "cut-cell solve": 0.838,
+     "cut-cell solve repeats": 2.382,
+     "interface and part books": 0.012,
      "surfaces phi": 0.0,
-     "surfaces psi": 1.838,
-     "markers": 0.95,
-     "re-partition": 9.219,
-     "remesh": 3.26,
-     "base moves": 0.0,
-     "division": 0.002,
-     "step summary": 0.482,
-     "other": 0.156,
+     "surfaces psi": 5.089,
+     "markers": 2.616,
+     "re-partition": 21.235,
+     "remesh": 9.569,
+     "base moves": 0.001,
+     "division": 0.0,
+     "step summary": 1.338,
+     "other": 0.374,
      "inclusive": {
       "base moves": 0.0,
-      "division": 0.002,
-      "re-partition": 9.219,
+      "division": 0.0,
+      "re-partition": 21.235,
       "loads shadow": 0.0,
-      "runoff": 1.578,
-      "markers": 10.17,
+      "runoff": 4.895,
+      "markers": 23.852,
       "base moves volume": 0.0,
       "base moves redistance": 0.0,
       "base moves volume correction": 0.0
@@ -253,11 +252,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 9.062,
+     "divide_s": 20.856,
      "divide_calls": 1,
-     "divide_mean_s": 9.062,
-     "tie_query_s": 3.074,
-     "centroid_distances_s": 5.888,
+     "divide_mean_s": 20.856,
+     "tie_query_s": 6.425,
+     "centroid_distances_s": 14.402,
      "centroid_distances_calls": 600
     },
     "solver_watch": {
@@ -267,7 +266,7 @@
      "newton_iterations_max": 7,
      "gmres_iterations_max": 19,
      "gmres_residual_max": 9.997241312467214e-13,
-     "side_solves": 2360,
+     "side_solves": 2370,
      "side_solves_unconverged": 0
     },
     "recession_mm": 0.0,
@@ -472,30 +471,30 @@
    },
    {
     "t": 1.0,
-    "wall_s": 189.97,
-    "peak_rss_gb": 1.757,
+    "wall_s": 529.58,
+    "peak_rss_gb": 1.03,
     "parts": 8,
-    "passes_max": 3,
+    "passes_max": 4,
     "parts_next": 5,
     "split_depth_max": 1,
     "parts_over": 0,
-    "mass_residual": -8.171306496218513e-15,
-    "enthalpy_residual": -2.388616719361305e-16,
-    "enthalpy_in_J": 301.3517951208603,
+    "mass_residual": 2.8804458002894166e-15,
+    "enthalpy_residual": 0.0,
+    "enthalpy_in_J": 301.9962862980832,
     "enthalpy_radiated_J": 0.0,
-    "mass_removed_kg": 0.00016539384295230437,
+    "mass_removed_kg": 0.00014550526976550264,
     "mass_sprayed_kg": 0.0,
-    "mass_volume_kg": 0.0007635178699406804,
-    "mass_skins_kg": 0.0013200832100283002,
+    "mass_volume_kg": 0.0007780496122119196,
+    "mass_skins_kg": 0.0013254400409438878,
     "n_markers": 132,
     "markers_trapped": 0,
     "marker_splits": 0,
     "marker_merges": 0,
-    "cells": 463510,
-    "cells_at_floor": 281024,
+    "cells": 454454,
+    "cells_at_floor": 270848,
     "snap_fallback": 0,
     "snap_slide_max_m": 0.0,
-    "volume_correction_max": 3.520535491028577e-10,
+    "volume_correction_max": 2.5901342671349018e-11,
     "move_corrections": [
      {
       "kind": "part",
@@ -509,332 +508,419 @@
      },
      {
       "kind": "part",
-      "worst": 0.0,
-      "body": 0.0
+      "worst": 2.64863168024782e-16,
+      "body": 2.64863168024782e-16
      },
      {
       "kind": "part",
-      "worst": 1.3444431878205506e-12,
-      "body": 1.3444431878205506e-12
+      "worst": 1.5957979991202292e-12,
+      "body": 1.5957979991202292e-12
      },
      {
       "kind": "part",
-      "worst": 2.2008631137171298e-11,
-      "body": 2.2008631137171298e-11
+      "worst": 1.6854040526093407e-11,
+      "body": 1.6854040526093407e-11
      },
      {
       "kind": "part",
-      "worst": 1.375660171815706e-16,
-      "body": 1.375660171815706e-16
+      "worst": 1.3737235250890264e-16,
+      "body": 1.3737235250890264e-16
      },
      {
       "kind": "part",
-      "worst": 1.4006756384699523e-16,
-      "body": 1.4006756384699523e-16
+      "worst": 2.5901342671349018e-11,
+      "body": 2.5901342671349018e-11
      },
      {
       "kind": "part",
-      "worst": 1.0485231574070825e-10,
-      "body": 1.0485231574070825e-10
+      "worst": 1.4159231048817159e-16,
+      "body": 1.4159231048817159e-16
      },
      {
       "kind": "remesh",
-      "worst": 3.520535491028577e-10,
-      "body": 3.520535491028577e-10
+      "worst": 2.0119276174195764e-11,
+      "body": 2.0119276174195764e-11
      }
     ],
-    "group_area_ratio_min": 0.5336053510827135,
-    "group_area_ratio_max": 1.152371634018429,
-    "group_area_ratio_trimmed_max": 1.003715577279335,
-    "phi_move_max_m": 0.000923656869446694,
-    "phi_move_median_m": 2.1571455927388248e-07,
-    "volume_repartitioned_share": 0.0474050427433312,
-    "stretch_min": 0.9395203579717987,
-    "stretch_max": 1.0980722381544736,
-    "grad_phi_below_bound_share": 0.043845331232059435,
-    "phi_beta_angle_median_deg": 2.457303330484036,
-    "phi_beta_angle_p95_deg": 76.71445732016554,
-    "phi_beta_angle_max_deg": 86.13234443702676,
-    "layer_factor_max": 0.0006210982442447222,
-    "fill_miss_max": 2.16261072418479e-16,
-    "move_miss_max": 2.9178681783988292e-05,
+    "group_area_ratio_min": 0.5345277393950709,
+    "group_area_ratio_max": 1.2636286090535256,
+    "group_area_ratio_trimmed_max": 1.0027114684795992,
+    "phi_move_max_m": 0.0008867995961402573,
+    "phi_move_median_m": 2.588190446383283e-07,
+    "volume_repartitioned_share": 0.03851431464974433,
+    "stretch_min": 0.9562342404679605,
+    "stretch_max": 1.0639010507267423,
+    "grad_phi_below_bound_share": 0.05043241858907429,
+    "phi_beta_angle_median_deg": 2.5119290621529666,
+    "phi_beta_angle_p95_deg": 58.568563297847646,
+    "phi_beta_angle_max_deg": 73.8597768499894,
+    "layer_factor_max": 0.0006428981265107492,
+    "fill_miss_max": 2.1390816126495677e-16,
+    "move_miss_max": 1.5071520854317425e-06,
     "n_baseless": 0,
-    "density_carry_m3": 7.11868080871441e-26,
-    "density_carry_share_max": 1.9351720911155664e-16,
-    "pending_share_of_heat_in": 0.011713560937211757,
-    "interface_mismatch_share": 3.4176629261123256e-05,
-    "residual_newton_J": 1.7792721784815058e-07,
-    "residual_move_J": 3.9360816971757933,
-    "residual_remesh_J": 3.410605131648481e-13,
-    "mass_drawn_kg": 0.00017957709460129692,
-    "mass_handed_kg": 3.5905532514191084e-05,
+    "density_carry_m3": -5.2693182165475145e-23,
+    "density_carry_share_max": 3.138364302310437e-16,
+    "pending_share_of_heat_in": 0.004333571569528671,
+    "interface_mismatch_share": 1.168349266730763e-05,
+    "residual_newton_J": 1.7194151524790868e-07,
+    "residual_move_J": 1.7636491191584849,
+    "residual_remesh_J": 5.684341886080802e-14,
+    "mass_drawn_kg": 0.00016124064877221254,
+    "mass_handed_kg": 3.210082895632084e-05,
     "n_pieces": 1,
-    "pieces_used_up": 2,
+    "pieces_used_up": 0,
     "island_nodes": 0,
-    "groups_guarded_max": 6,
-    "pending_flux_max_Wm2": 351127.27429746755,
+    "groups_guarded_max": 5,
+    "pending_flux_max_Wm2": 808992.8346183619,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 5.621,
-     "skins trial": 3.309,
-     "skins real": 3.258,
-     "skins repeats": 13.552,
-     "runoff (within the skins' passes)": 5.155,
-     "cut-cell solve": 0.956,
-     "cut-cell solve repeats": 1.882,
-     "interface and part books": 5.59,
-     "surfaces phi": 2.599,
-     "surfaces psi": 6.225,
-     "markers": 1.488,
-     "re-partition": 11.838,
-     "remesh": 19.125,
-     "base moves": 40.846,
-     "division": 65.412,
-     "step summary": 0.807,
-     "other": 2.309,
+     "loads": 15.748,
+     "skins trial": 10.486,
+     "skins real": 10.54,
+     "skins repeats": 46.359,
+     "runoff (within the skins' passes)": 18.809,
+     "cut-cell solve": 3.089,
+     "cut-cell solve repeats": 5.561,
+     "interface and part books": 15.601,
+     "surfaces phi": 7.145,
+     "surfaces psi": 14.192,
+     "markers": 4.143,
+     "re-partition": 30.851,
+     "remesh": 52.342,
+     "base moves": 116.776,
+     "division": 174.149,
+     "step summary": 2.179,
+     "other": 1.607,
      "inclusive": {
-      "base moves": 42.979,
-      "division": 65.412,
-      "re-partition": 11.838,
+      "base moves": 122.726,
+      "division": 174.149,
+      "re-partition": 30.851,
       "loads shadow": 0.0,
-      "runoff": 5.155,
-      "markers": 13.326,
-      "base moves volume": 1.008,
+      "runoff": 18.809,
+      "markers": 34.994,
+      "base moves volume": 2.767,
       "base moves redistance": 0.0,
-      "base moves volume correction": 5.023
+      "base moves volume correction": 14.298
      },
      "calls": {
       "base moves": 8,
       "base moves volume": 8,
       "cut-cell solve": 8,
-      "cut-cell solve repeats": 16,
+      "cut-cell solve repeats": 17,
       "skins trial": 8,
-      "skins repeats": 32,
-      "runoff": 336,
+      "skins repeats": 34,
+      "runoff": 350,
       "re-partition": 1,
       "remesh build": 1,
       "division": 9
      }
     },
     "division_cost": {
-     "divide_s": 77.021,
+     "divide_s": 204.451,
      "divide_calls": 9,
-     "divide_mean_s": 8.558,
-     "tie_query_s": 25.882,
-     "centroid_distances_s": 2.984,
-     "centroid_distances_calls": 336
+     "divide_mean_s": 22.717,
+     "tie_query_s": 64.891,
+     "centroid_distances_s": 9.567,
+     "centroid_distances_calls": 350
     },
     "solver_watch": {
-     "passes_max": 3,
-     "passes_accepted_max": 3,
-     "interface_mismatch_max": 0.0004622155696216437,
-     "newton_iterations_max": 5,
+     "passes_max": 4,
+     "passes_accepted_max": 4,
+     "interface_mismatch_max": 0.0004651540579019859,
+     "newton_iterations_max": 7,
      "gmres_iterations_max": 16,
-     "gmres_residual_max": 9.933286953587468e-13,
-     "side_solves": 1681,
+     "gmres_residual_max": 9.865968427208797e-13,
+     "side_solves": 1807,
      "side_solves_unconverged": 0
     },
-    "recession_mm": 0.8888203336796527,
-    "centre_marker_off_axis_mm": 2.061747466879556,
+    "recession_mm": 0.8844390866020007,
+    "centre_marker_off_axis_mm": 2.116804107442686,
     "face_grid_recession_mm": [
      [
-      0.08742453993778937,
-      0.6054414769863025,
-      0.5070236280415447,
-      0.55352356069459,
-      0.36224911626358364,
-      0.4541440499652312,
-      0.9035162806699847,
-      0.4662531002493568,
-      -0.0010957323007972607
+      0.1558459376802771,
+      0.3406895939555695,
+      0.5015358352544247,
+      0.5505209842976426,
+      0.22569236174469887,
+      0.47051866655108565,
+      0.6740546937635209,
+      0.46818952439139094,
+      0.15750293790905112
      ],
      [
-      0.4953636887630626,
-      0.8307740044198411,
-      0.8195483530969903,
-      0.84625293628297,
-      0.8644781682156871,
-      0.9024874608605611,
-      0.8908466198491215,
-      0.8474240090863426,
-      0.5907263525437774
+      0.4909913301219867,
+      0.48480619899309974,
+      0.7243910055084982,
+      0.7985745599888494,
+      0.767768170242703,
+      0.6841680991973853,
+      0.6857524313406034,
+      0.6864090672284331,
+      0.6465834290070821
      ],
      [
-      0.5145333377191185,
-      0.8194891247851926,
-      0.866100438765901,
-      0.8621666146632744,
-      0.8748182984668786,
-      0.8782174422049998,
-      0.8685934053592952,
-      0.8900119685173558,
-      0.6217111801969637
+      0.4761103992473783,
+      0.6247155400124836,
+      0.7599476880890722,
+      0.8353598785213467,
+      0.872040584701644,
+      0.8995083690148241,
+      0.8489785207958866,
+      0.7500897027273327,
+      0.6192393758740712
      ],
      [
-      0.5172092649175126,
-      0.8108092023612375,
-      0.8795570071418691,
-      0.8795570071418691,
-      0.8783509756915341,
-      0.8758795062860456,
-      0.8802985669630498,
-      0.8992909240182317,
-      0.6552662610772083
+      0.5382574894397694,
+      0.7743655230994604,
+      0.8764430779029543,
+      0.8764430779029543,
+      0.8877859197235503,
+      0.9107511513172851,
+      0.8806521858882003,
+      0.7486797990068277,
+      0.551080417036043
      ],
      [
-      0.5104274733576022,
-      0.886339945873615,
-      0.8641983421780338,
-      0.8800779494904046,
-      0.8888203336796527,
-      0.8863674615279546,
-      0.890741839408332,
-      0.9087081616100151,
-      0.5095379484661733
+      0.24079097491346577,
+      0.8206668981357336,
+      0.8862589833201896,
+      0.8863114624721191,
+      0.8844390866020007,
+      0.907406994152162,
+      0.8773080287230771,
+      0.7584038619789213,
+      0.2632828033486811
      ],
      [
-      0.45126341956977856,
-      0.9067692176843236,
-      0.8618808073394342,
-      0.8811386973935592,
-      0.8801126139785336,
-      0.9075138564271674,
-      0.9079905619652886,
-      0.9100807324016664,
-      0.6317375870011641
+      0.4657320019268883,
+      0.6865127956414614,
+      0.8961113508913822,
+      0.9062943518004254,
+      0.9039363109293844,
+      0.9005716680990953,
+      0.8744083287008683,
+      0.7596916306974212,
+      0.534428760748796
      ],
      [
-      0.9100841005309067,
-      0.9103063165895168,
-      0.8648235372261613,
-      0.8843243062736611,
-      0.8835833829687507,
-      0.90698434779015,
-      0.9091249021852031,
-      0.911411253630267,
-      0.9106737295171623
+      0.6766782912763121,
+      0.6903116161506165,
+      0.8408136443618813,
+      0.8717316013445646,
+      0.8695579999988563,
+      0.882447992186966,
+      0.8471956993297688,
+      0.7645339966124327,
+      0.7596916306974212
      ],
      [
-      0.8042895771644778,
-      0.928727026300433,
-      0.8976349152572819,
-      0.8982973012050585,
-      0.8957024768997328,
-      0.9046626560739947,
-      0.9086997191700822,
-      0.9161887182012065,
-      0.6265153691284833
+      0.6057288334852572,
+      0.7011464104187508,
+      0.7362662136386773,
+      0.7201872339611752,
+      0.7643565355589487,
+      0.8029849132806127,
+      0.7335323920948673,
+      0.6131648748187819,
+      0.5281317700842505
      ],
      [
-      -0.006143361962218999,
-      0.8802036110897755,
-      0.6447014818838919,
-      0.6385532267128134,
-      0.2142101023854567,
-      0.6863224704073694,
-      0.9111398062597478,
-      0.8549776139568079,
-      0.3547333428340267
+      0.20519128316671573,
+      0.6891213231210603,
+      0.615611585020132,
+      0.5286955590532989,
+      0.3843323529916813,
+      0.5762395994201417,
+      0.6667665558657948,
+      0.6047495096477814,
+      0.10692294637009532
      ]
     ],
     "edges": {
      "heated +y": {
-      "radius_mm": 0.046371653168452716,
-      "depth_mm": 0.028473495314662763,
-      "angle_deg": 76.56917752045437
+      "radius_mm": 0.06878465107362121,
+      "depth_mm": 0.043248544092913156,
+      "angle_deg": 75.75375429981293
      },
      "heated -y": {
-      "radius_mm": -0.2168819022662206,
-      "depth_mm": -0.10252773490691444,
-      "angle_deg": 85.53244580404875
+      "radius_mm": -0.11557503593345693,
+      "depth_mm": -0.06731941456443435,
+      "angle_deg": 78.3841412433912
      },
      "heated +z": {
-      "radius_mm": 0.08116800903112789,
-      "depth_mm": 0.05227649140857396,
-      "angle_deg": 74.9265714045638
+      "radius_mm": 0.055380307823165595,
+      "depth_mm": 0.03478914821473901,
+      "angle_deg": 75.78477395859258
      },
      "heated -z": {
-      "radius_mm": -0.22279981193047152,
-      "depth_mm": -0.10512360686192523,
-      "angle_deg": 85.59766471422462
+      "radius_mm": -0.10591366596187887,
+      "depth_mm": -0.06287056438357636,
+      "angle_deg": 77.73319544391235
      },
      "rear +y": {
-      "radius_mm": 0.19244173756156902,
-      "depth_mm": 0.07971260564991174,
-      "angle_deg": 89.99973558486408
+      "radius_mm": 0.1924421220768416,
+      "depth_mm": 0.07971284123344967,
+      "angle_deg": 89.99970345413715
      },
      "rear -y": {
-      "radius_mm": 0.12095294096600553,
-      "depth_mm": 0.05008902671124402,
-      "angle_deg": 90.00758545356169
+      "radius_mm": 0.12097646001321578,
+      "depth_mm": 0.05009932750387912,
+      "angle_deg": 90.00720957275131
      },
      "rear +z": {
-      "radius_mm": 0.19243974425810714,
-      "depth_mm": 0.07971167882335353,
-      "angle_deg": 89.99977818174395
+      "radius_mm": 0.19244202099742572,
+      "depth_mm": 0.07971260519487557,
+      "angle_deg": 89.99978520952092
      },
      "rear -z": {
-      "radius_mm": 0.12095572864840588,
-      "depth_mm": 0.0500902956957934,
-      "angle_deg": 90.00750870138522
+      "radius_mm": 0.1209500962227989,
+      "depth_mm": 0.050087680778076585,
+      "angle_deg": 90.00769793654175
      },
      "along x +y +z": {
-      "radius_mm": 0.0018361088048303436,
-      "depth_mm": 0.0007606490803695708,
-      "angle_deg": 89.9952381080401
+      "radius_mm": 0.0033463340513627256,
+      "depth_mm": 0.0013866577374841912,
+      "angle_deg": 89.98642340770311
      },
      "along x +y -z": {
-      "radius_mm": 0.13953666090278785,
-      "depth_mm": 0.057762958344849485,
-      "angle_deg": 90.02034085867139
+      "radius_mm": 0.14002076283985462,
+      "depth_mm": 0.05798707456904171,
+      "angle_deg": 90.00661175380392
      },
      "along x -y +z": {
-      "radius_mm": 0.13952677265574973,
-      "depth_mm": 0.05776432137414179,
-      "angle_deg": 90.01717056847686
+      "radius_mm": 0.13992044341044177,
+      "depth_mm": 0.05794593950873708,
+      "angle_deg": 90.00637403598498
      },
      "along x -y -z": {
-      "radius_mm": 0.0010378782471209412,
-      "depth_mm": 0.0004299026868321079,
-      "angle_deg": 90.00004365883527
+      "radius_mm": 0.00134714786435928,
+      "depth_mm": 0.000557981058712121,
+      "angle_deg": 90.0015552963776
      }
     },
     "edge_radius_mm": {
      "heated": {
-      "median_mm": -0.08525512454888394,
-      "max_mm": 0.08116800903112789
+      "median_mm": -0.02526667906935664,
+      "max_mm": 0.06878465107362121
      },
      "rear": {
-      "median_mm": 0.15669773645325652,
-      "max_mm": 0.19244173756156902
+      "median_mm": 0.15670924050532076,
+      "max_mm": 0.1924421220768416
      },
      "along x": {
-      "median_mm": 0.07068144073029003,
-      "max_mm": 0.13953666090278785
+      "median_mm": 0.07163338873090225,
+      "max_mm": 0.14002076283985462
      }
     },
     "face_group_ratio": [
-     0.9450836305739051,
-     0.9990498506066481,
-     1.0107761775395692
+     0.8528950166796485,
+     0.9941755289757706,
+     1.0542558929451973
     ],
-    "face_flatness_mm": 0.10994394677026853,
+    "face_flatness_mm": 0.40530655176030955,
     "face_recession_mm": {
      "within_2mm": null,
-     "2_to_4mm": 0.8849546097798435,
-     "beyond_4mm": 0.9214019070357335,
-     "min": 0.816671149020438,
-     "max": 0.9266150957907066
+     "2_to_4mm": 0.7386640979505663,
+     "beyond_4mm": 0.6586163197718166,
+     "min": 0.4999476787090002,
+     "max": 0.9052542304693098
     },
-    "edge_recession_mm": -0.07824381425115606,
+    "edge_recession_mm": -0.08565925916014135,
     "face_markers": 16,
-    "face_tilt_max_deg": 3.449890620972486,
-    "heat_coverage_by_normals": 0.8874365547899722,
-    "heat_coverage_projected": 0.9999999999999999,
+    "face_tilt_max_deg": 17.317852762352427,
+    "heat_coverage_by_normals": 0.8418596898262476,
+    "heat_coverage_projected": 1.0,
     "skin_thickness_max_mm": 1.2000000000000004,
     "edge_skin_thickness_max_mm": null
    }
-  ]
+  ],
+  "against_task7": {
+   "task7_record": "the record at plan 03b Task 11's BASE (6e489ec): gathered in plan 03b Task 7d on 73b5a9a (record commit eca9243), under the bridge law and before main's merge (6b65df8)",
+   "task7": {
+    "passes": false,
+    "books": {
+     "mass_residual_max_abs": 8.171306496218513e-15,
+     "enthalpy_residual_max_abs": 2.388616719361305e-16,
+     "layer_factor_max": 0.0006210982442447222,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.8888203336796527,
+      "rel_1d": 0.1265149983265561,
+      "rel_liquidus": 0.061911987669835966,
+      "heated_edge_radius_median_mm": -0.08525512454888394
+     }
+    },
+    "markers_trapped": 0,
+    "steps": [
+     {
+      "t": 0.5,
+      "parts": 1,
+      "mass_residual": 0.0,
+      "enthalpy_residual": 0.0,
+      "layer_factor_max": 0.0005919348435502458,
+      "enthalpy_in_J": 299.9505097633137,
+      "cells": 327182,
+      "wall_s": 48.47
+     },
+     {
+      "t": 1.0,
+      "parts": 8,
+      "mass_residual": -8.171306496218513e-15,
+      "enthalpy_residual": -2.388616719361305e-16,
+      "layer_factor_max": 0.0006210982442447222,
+      "enthalpy_in_J": 301.3517951208603,
+      "cells": 463510,
+      "wall_s": 189.97
+     }
+    ]
+   },
+   "now": {
+    "passes": false,
+    "books": {
+     "mass_residual_max_abs": 2.8804458002894166e-15,
+     "enthalpy_residual_max_abs": 0.0,
+     "layer_factor_max": 0.0006428981265107492,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.8844390866020007,
+      "rel_1d": 0.12096208694803634,
+      "rel_liquidus": 0.05667752282198402,
+      "heated_edge_radius_median_mm": -0.02526667906935664
+     }
+    },
+    "markers_trapped": 0,
+    "steps": [
+     {
+      "t": 0.5,
+      "parts": 1,
+      "mass_residual": 0.0,
+      "enthalpy_residual": 0.0,
+      "layer_factor_max": 0.0005919348435502458,
+      "enthalpy_in_J": 299.9505097633137,
+      "cells": 327182,
+      "wall_s": 128.5
+     },
+     {
+      "t": 1.0,
+      "parts": 8,
+      "mass_residual": 2.8804458002894166e-15,
+      "enthalpy_residual": 0.0,
+      "layer_factor_max": 0.0006428981265107492,
+      "enthalpy_in_J": 301.9962862980832,
+      "cells": 454454,
+      "wall_s": 529.58
+     }
+    ]
+   },
+   "change": "Changed by the composite rheology alone: a scratch re-run of box --steps 2 under SkinSettings(rheology='bridge') on e57945f reproduced Task 7d's entry in every number but the wall times, so main's merge changed nothing here. First step: the same in every number but the count of sideways solves (2370 against 2360). Second step: the face centre has receded 0.8844 mm at 1.0 s against 0.8888 mm (12.1 % ahead of REFERENCE_1D against 12.65 %, still past RECESSION_TOL, 5 %); the mass books are 2.9e-15 of the stored mass against -8.2e-15 and the enthalpy books 0 against -2.4e-16, all far inside the tolerances; the face is less even: its inner 7 by 7 grid points receded 0.485 to 0.911 mm (0.811 to 0.929 mm before), its markers' recessions spread over 0.405 mm (0.110 mm before), and 12 % less metal was removed (0.146 g against 0.165 g); the heated edges' median rounding radius is -0.025 mm against -0.085 mm. The wall times (build 151 s, steps 128.5 s and 529.6 s, against 60.0, 48.5 and 190.0 s) were measured with one-minute load averages of about 9 to 20 from other sessions."
+  },
+  "record_note": "plan 03b Task 11: this entry is a run to 1.0 s only (stage3_cases.py box --steps 2, the controller's ruling T7d-d) on e57945f, clean; the third step and beyond are not run on a laptop (on Task 7d's code, 73b5a9a, the third step had not ended after 115 minutes; task-7d-report.md, round 2)"
  },
  "cost_rim": {
   "code": {
@@ -960,7 +1046,7 @@
  },
  "plate_cold_dev": {
   "code": {
-   "commit": "73b5a9a6e548d00a170464c76580788babfa53e4",
+   "commit": "e57945f46d68009a411c6c06c106020fb231b140",
    "dirty": false
   },
   "case": "plate-cold",
@@ -971,8 +1057,9 @@
   "dt_s": 0.5,
   "width_mm": 5.6,
   "depth_mm": 8.0,
+  "offset_mm": 0.0,
   "markers": 1,
-  "build_s": 1.23,
+  "build_s": 4.19,
   "books_pass": true,
   "compare": {
    "1.0": {
@@ -1008,8 +1095,8 @@
   "steps": [
    {
     "t": 0.5,
-    "wall_s": 1.22,
-    "peak_rss_gb": 0.206,
+    "wall_s": 4.41,
+    "peak_rss_gb": 0.241,
     "parts": 1,
     "passes_max": 3,
     "parts_next": 1,
@@ -1071,30 +1158,30 @@
     "pending_flux_max_Wm2": 0.0,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 0.011,
-     "skins trial": 0.116,
-     "skins real": 0.126,
-     "skins repeats": 0.509,
+     "loads": 0.073,
+     "skins trial": 0.497,
+     "skins real": 0.553,
+     "skins repeats": 1.874,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.124,
-     "cut-cell solve repeats": 0.084,
-     "interface and part books": 0.001,
-     "surfaces phi": 0.005,
-     "surfaces psi": 0.029,
-     "markers": 0.014,
-     "re-partition": 0.055,
-     "remesh": 0.132,
+     "cut-cell solve": 0.381,
+     "cut-cell solve repeats": 0.29,
+     "interface and part books": 0.023,
+     "surfaces phi": 0.01,
+     "surfaces psi": 0.074,
+     "markers": 0.042,
+     "re-partition": 0.195,
+     "remesh": 0.333,
      "base moves": 0.0,
      "division": 0.0,
-     "step summary": 0.01,
-     "other": 0.007,
+     "step summary": 0.026,
+     "other": 0.035,
      "inclusive": {
       "base moves": 0.0,
       "division": 0.0,
-      "re-partition": 0.055,
+      "re-partition": 0.195,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.069,
+      "markers": 0.237,
       "base moves volume": 0.0,
       "base moves redistance": 0.0,
       "base moves volume correction": 0.0
@@ -1113,11 +1200,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.054,
+     "divide_s": 0.19,
      "divide_calls": 1,
-     "divide_mean_s": 0.054,
-     "tie_query_s": 0.009,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.19,
+     "tie_query_s": 0.035,
+     "centroid_distances_s": 0.006,
      "centroid_distances_calls": 300
     },
     "solver_watch": {
@@ -1140,8 +1227,8 @@
    },
    {
     "t": 1.0,
-    "wall_s": 2.17,
-    "peak_rss_gb": 0.213,
+    "wall_s": 6.62,
+    "peak_rss_gb": 0.241,
     "parts": 8,
     "passes_max": 3,
     "parts_next": 2,
@@ -1228,33 +1315,33 @@
     "pending_flux_max_Wm2": 89542.02510706906,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 0.051,
-     "skins trial": 0.178,
-     "skins real": 0.165,
-     "skins repeats": 0.355,
+     "loads": 0.131,
+     "skins trial": 0.587,
+     "skins real": 0.541,
+     "skins repeats": 1.145,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.239,
-     "cut-cell solve repeats": 0.244,
-     "interface and part books": 0.06,
-     "surfaces phi": 0.028,
-     "surfaces psi": 0.034,
-     "markers": 0.016,
-     "re-partition": 0.055,
-     "remesh": 0.138,
-     "base moves": 0.324,
-     "division": 0.264,
-     "step summary": 0.01,
-     "other": 0.012,
+     "cut-cell solve": 0.776,
+     "cut-cell solve repeats": 0.781,
+     "interface and part books": 0.167,
+     "surfaces phi": 0.075,
+     "surfaces psi": 0.099,
+     "markers": 0.051,
+     "re-partition": 0.175,
+     "remesh": 0.392,
+     "base moves": 0.815,
+     "division": 0.822,
+     "step summary": 0.028,
+     "other": 0.038,
      "inclusive": {
-      "base moves": 0.345,
-      "division": 0.264,
-      "re-partition": 0.055,
+      "base moves": 0.866,
+      "division": 0.822,
+      "re-partition": 0.175,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.071,
-      "base moves volume": 0.051,
+      "markers": 0.226,
+      "base moves volume": 0.121,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.053
+      "base moves volume correction": 0.13
      },
      "calls": {
       "base moves": 5,
@@ -1270,11 +1357,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.318,
+     "divide_s": 0.991,
      "divide_calls": 6,
-     "divide_mean_s": 0.053,
-     "tie_query_s": 0.056,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.165,
+     "tie_query_s": 0.157,
+     "centroid_distances_s": 0.004,
      "centroid_distances_calls": 224
     },
     "solver_watch": {
@@ -1297,8 +1384,8 @@
    },
    {
     "t": 1.5,
-    "wall_s": 2.56,
-    "peak_rss_gb": 0.213,
+    "wall_s": 7.99,
+    "peak_rss_gb": 0.241,
     "parts": 8,
     "passes_max": 3,
     "parts_next": 2,
@@ -1400,33 +1487,33 @@
     "pending_flux_max_Wm2": 238351.77014437065,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 0.077,
-     "skins trial": 0.188,
-     "skins real": 0.17,
-     "skins repeats": 0.416,
+     "loads": 0.225,
+     "skins trial": 0.644,
+     "skins real": 0.59,
+     "skins repeats": 1.41,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.206,
-     "cut-cell solve repeats": 0.232,
-     "interface and part books": 0.086,
-     "surfaces phi": 0.043,
-     "surfaces psi": 0.031,
-     "markers": 0.014,
-     "re-partition": 0.05,
-     "remesh": 0.125,
-     "base moves": 0.492,
-     "division": 0.411,
-     "step summary": 0.008,
-     "other": 0.01,
+     "cut-cell solve": 0.688,
+     "cut-cell solve repeats": 0.777,
+     "interface and part books": 0.229,
+     "surfaces phi": 0.123,
+     "surfaces psi": 0.072,
+     "markers": 0.036,
+     "re-partition": 0.147,
+     "remesh": 0.316,
+     "base moves": 1.338,
+     "division": 1.33,
+     "step summary": 0.022,
+     "other": 0.046,
      "inclusive": {
-      "base moves": 0.527,
-      "division": 0.411,
-      "re-partition": 0.05,
+      "base moves": 1.441,
+      "division": 1.33,
+      "re-partition": 0.147,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.064,
-      "base moves volume": 0.075,
+      "markers": 0.183,
+      "base moves volume": 0.184,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.078
+      "base moves volume correction": 0.208
      },
      "calls": {
       "base moves": 8,
@@ -1442,11 +1529,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.46,
+     "divide_s": 1.472,
      "divide_calls": 9,
-     "divide_mean_s": 0.051,
-     "tie_query_s": 0.082,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.164,
+     "tie_query_s": 0.242,
+     "centroid_distances_s": 0.004,
      "centroid_distances_calls": 238
     },
     "solver_watch": {
@@ -1469,8 +1556,8 @@
    },
    {
     "t": 2.0,
-    "wall_s": 2.65,
-    "peak_rss_gb": 0.214,
+    "wall_s": 9.31,
+    "peak_rss_gb": 0.241,
     "parts": 8,
     "passes_max": 3,
     "parts_next": 3,
@@ -1567,33 +1654,33 @@
     "pending_flux_max_Wm2": 346523.02987386205,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 0.058,
-     "skins trial": 0.218,
-     "skins real": 0.197,
-     "skins repeats": 0.68,
+     "loads": 0.181,
+     "skins trial": 0.805,
+     "skins real": 0.718,
+     "skins repeats": 2.329,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.19,
-     "cut-cell solve repeats": 0.307,
-     "interface and part books": 0.066,
-     "surfaces phi": 0.034,
-     "surfaces psi": 0.026,
-     "markers": 0.011,
-     "re-partition": 0.048,
-     "remesh": 0.025,
-     "base moves": 0.388,
-     "division": 0.389,
-     "step summary": 0.005,
-     "other": 0.009,
+     "cut-cell solve": 0.749,
+     "cut-cell solve repeats": 1.175,
+     "interface and part books": 0.221,
+     "surfaces phi": 0.108,
+     "surfaces psi": 0.092,
+     "markers": 0.04,
+     "re-partition": 0.217,
+     "remesh": 0.074,
+     "base moves": 1.146,
+     "division": 1.407,
+     "step summary": 0.013,
+     "other": 0.033,
      "inclusive": {
-      "base moves": 0.419,
-      "division": 0.389,
-      "re-partition": 0.048,
+      "base moves": 1.245,
+      "division": 1.407,
+      "re-partition": 0.217,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.059,
-      "base moves volume": 0.06,
+      "markers": 0.256,
+      "base moves volume": 0.163,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.055
+      "base moves volume correction": 0.162
      },
      "calls": {
       "base moves": 8,
@@ -1609,11 +1696,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.436,
+     "divide_s": 1.617,
      "divide_calls": 9,
-     "divide_mean_s": 0.048,
-     "tie_query_s": 0.083,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.18,
+     "tie_query_s": 0.265,
+     "centroid_distances_s": 0.005,
      "centroid_distances_calls": 294
     },
     "solver_watch": {
@@ -1634,11 +1721,840 @@
     "base_excess_K": -10.037804028744631,
     "base_excess_max_K": -10.00415859353393
    }
-  ]
+  ],
+  "against_task7": {
+   "task7_record": "the record at plan 03b Task 11's BASE (6e489ec): gathered in plan 03b Task 7d on 73b5a9a (record commit eca9243), under the bridge law and before main's merge (6b65df8)",
+   "task7": {
+    "passes": true,
+    "books": {
+     "mass_residual_max_abs": 5.81792032466648e-16,
+     "enthalpy_residual_max_abs": 1.3892334591582309e-14,
+     "layer_factor_max": 4.6629367034256575e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.799999999999999,
+      "rel_1d": 0.01394169835234349,
+      "rel_liquidus": -0.044205495818400165,
+      "nonrigid_mm": 0.40885817129265806
+     },
+     "1.5": {
+      "recession_mm": 2.7187500000000004,
+      "rel_1d": 0.002488938053097467,
+      "rel_liquidus": -0.01920995670995651,
+      "nonrigid_mm": 0.4527343270760755
+     },
+     "2.0": {
+      "recession_mm": 5.201806640625005,
+      "rel_1d": -0.0032943781136224315,
+      "rel_liquidus": -0.018156541973385232,
+      "nonrigid_mm": 0.5488255605681623
+     }
+    }
+   },
+   "now": {
+    "passes": true,
+    "books": {
+     "mass_residual_max_abs": 5.81792032466648e-16,
+     "enthalpy_residual_max_abs": 1.3892334591582309e-14,
+     "layer_factor_max": 4.6629367034256575e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.799999999999999,
+      "rel_1d": 0.01394169835234349,
+      "rel_liquidus": -0.044205495818400165,
+      "nonrigid_mm": 0.40885817129265806
+     },
+     "1.5": {
+      "recession_mm": 2.7187500000000004,
+      "rel_1d": 0.002488938053097467,
+      "rel_liquidus": -0.01920995670995651,
+      "nonrigid_mm": 0.4527343270760755
+     },
+     "2.0": {
+      "recession_mm": 5.201806640625005,
+      "rel_1d": -0.0032943781136224315,
+      "rel_liquidus": -0.018156541973385232,
+      "nonrigid_mm": 0.5488255605681623
+     }
+    }
+   },
+   "change": "No change: every judged and recorded number equals Task 7d's (73b5a9a) to every digit, the books included; only the wall times, the code stamp and the new offset_mm field (0 here) differ. Neither the composite rheology (the skins' default since plan 03b Task 9) nor main's merge (6b65df8) moves the plate, which runs with no flow (that no viscosity enters is inferred from the case's setup; the equality is measured), so no bridge-law re-run was needed."
+  }
+ },
+ "plate_cold_dev_offset_0.27mm": {
+  "code": {
+   "commit": "e57945f46d68009a411c6c06c106020fb231b140",
+   "dirty": false
+  },
+  "case": "plate-cold",
+  "preset": "dev",
+  "every_second": false,
+  "T0_K": 700.0,
+  "q_Wm2": 6000000.0,
+  "dt_s": 0.5,
+  "width_mm": 5.6,
+  "depth_mm": 8.27,
+  "offset_mm": 0.27,
+  "markers": 1,
+  "build_s": 3.28,
+  "books_pass": true,
+  "compare": {
+   "1.0": {
+    "recession_mm": 0.7600000000000002,
+    "removed_recession_mm": 0.7600000000000003,
+    "ref_1d_mm": 0.789,
+    "rel_1d": -0.03675538656527222,
+    "ref_liquidus_mm": 0.837,
+    "rel_liquidus": -0.09199522102747881,
+    "nonrigid_mm": 0.37688329140235827
+   },
+   "1.5": {
+    "recession_mm": 2.6278124999999948,
+    "removed_recession_mm": 2.6278125000000006,
+    "ref_1d_mm": 2.712,
+    "rel_1d": -0.031042588495577172,
+    "ref_liquidus_mm": 2.772,
+    "rel_liquidus": -0.0520156926406945,
+    "nonrigid_mm": 0.4979589198264322
+   },
+   "2.0": {
+    "recession_mm": 5.036518554687494,
+    "removed_recession_mm": 5.0365185546875,
+    "ref_1d_mm": 5.219,
+    "rel_1d": -0.034964829529125496,
+    "ref_liquidus_mm": 5.298,
+    "rel_liquidus": -0.049354746189600895,
+    "nonrigid_mm": 0.48088687146945197
+   }
+  },
+  "passes": false,
+  "failure": null,
+  "steps": [
+   {
+    "t": 0.5,
+    "wall_s": 4.03,
+    "peak_rss_gb": 0.257,
+    "parts": 1,
+    "passes_max": 3,
+    "parts_next": 1,
+    "split_depth_max": 0,
+    "parts_over": 0,
+    "mass_residual": 0.0,
+    "enthalpy_residual": 2.3401011993539573e-15,
+    "enthalpy_in_J": 94.08000000000007,
+    "enthalpy_radiated_J": 0.0,
+    "mass_removed_kg": 0.0,
+    "mass_sprayed_kg": 0.0,
+    "mass_volume_kg": 0.0006236848576,
+    "mass_skins_kg": 0.00010585881600000001,
+    "n_markers": 1,
+    "markers_trapped": 0,
+    "marker_splits": 0,
+    "marker_merges": 0,
+    "cells": 4856,
+    "cells_at_floor": 0,
+    "snap_fallback": 0,
+    "snap_slide_max_m": 0.0,
+    "volume_correction_max": 0.0,
+    "move_corrections": [
+     {
+      "kind": "remesh",
+      "worst": 0.0,
+      "body": 0.0
+     }
+    ],
+    "group_area_ratio_min": 0.9999999999999993,
+    "group_area_ratio_max": 0.9999999999999993,
+    "group_area_ratio_trimmed_max": 0.9936718749999994,
+    "phi_move_max_m": 2.710505431213761e-20,
+    "phi_move_median_m": 2.710505431213761e-20,
+    "volume_repartitioned_share": 0.0,
+    "stretch_min": 1.0000000000000002,
+    "stretch_max": 1.0000000000000002,
+    "grad_phi_below_bound_share": 0.0,
+    "phi_beta_angle_median_deg": 0.0,
+    "phi_beta_angle_p95_deg": 0.0,
+    "phi_beta_angle_max_deg": 0.0,
+    "layer_factor_max": 8.881784197001252e-16,
+    "fill_miss_max": 3.5169243730996065e-16,
+    "move_miss_max": 0.0,
+    "n_baseless": 0,
+    "density_carry_m3": 0.0,
+    "density_carry_share_max": 0.0,
+    "pending_share_of_heat_in": 0.000352061242550624,
+    "interface_mismatch_share": 0.00035205971070764193,
+    "residual_newton_J": 1.4411550353088387e-07,
+    "residual_move_J": 0.0,
+    "residual_remesh_J": 2.8421709430404007e-13,
+    "mass_drawn_kg": 0.0,
+    "mass_handed_kg": 0.0,
+    "n_pieces": 1,
+    "pieces_used_up": 0,
+    "island_nodes": 0,
+    "groups_guarded_max": 0,
+    "pending_flux_max_Wm2": 0.0,
+    "surface_flux_max_Wm2": 6000000.0,
+    "cost_split_s": {
+     "loads": 0.031,
+     "skins trial": 0.423,
+     "skins real": 0.422,
+     "skins repeats": 1.727,
+     "runoff (within the skins' passes)": 0.0,
+     "cut-cell solve": 0.389,
+     "cut-cell solve repeats": 0.233,
+     "interface and part books": 0.006,
+     "surfaces phi": 0.019,
+     "surfaces psi": 0.09,
+     "markers": 0.046,
+     "re-partition": 0.192,
+     "remesh": 0.411,
+     "base moves": 0.0,
+     "division": 0.0,
+     "step summary": 0.021,
+     "other": 0.024,
+     "inclusive": {
+      "base moves": 0.0,
+      "division": 0.0,
+      "re-partition": 0.192,
+      "loads shadow": 0.0,
+      "runoff": 0.0,
+      "markers": 0.238,
+      "base moves volume": 0.0,
+      "base moves redistance": 0.0,
+      "base moves volume correction": 0.0
+     },
+     "calls": {
+      "base moves": 0,
+      "base moves volume": 0,
+      "cut-cell solve": 1,
+      "cut-cell solve repeats": 2,
+      "skins trial": 1,
+      "skins repeats": 4,
+      "runoff": 0,
+      "re-partition": 1,
+      "remesh build": 1,
+      "division": 1
+     }
+    },
+    "division_cost": {
+     "divide_s": 0.188,
+     "divide_calls": 1,
+     "divide_mean_s": 0.188,
+     "tie_query_s": 0.03,
+     "centroid_distances_s": 0.006,
+     "centroid_distances_calls": 300
+    },
+    "solver_watch": {
+     "passes_max": 3,
+     "passes_accepted_max": 3,
+     "interface_mismatch_max": 0.00020491028120985202,
+     "newton_iterations_max": 5,
+     "gmres_iterations_max": 1,
+     "gmres_residual_max": 1.7212764288068886e-13,
+     "side_solves": 938,
+     "side_solves_unconverged": 0
+    },
+    "recession_mm": 0.0,
+    "removed_recession_mm": 0.0,
+    "nonrigid_mm": 2.710505431213761e-17,
+    "skin_flowing_mm": 0.0,
+    "skin_thickness_mm": 1.2,
+    "base_excess_K": -62.50421906610052,
+    "base_excess_max_K": -62.466795461577135
+   },
+   {
+    "t": 1.0,
+    "wall_s": 7.4,
+    "peak_rss_gb": 0.257,
+    "parts": 8,
+    "passes_max": 3,
+    "parts_next": 2,
+    "split_depth_max": 1,
+    "parts_over": 0,
+    "mass_residual": 5.573015425872705e-17,
+    "enthalpy_residual": 3.991477201879931e-15,
+    "enthalpy_in_J": 94.08,
+    "enthalpy_radiated_J": 0.0,
+    "mass_removed_kg": 6.704391680000003e-05,
+    "mass_sprayed_kg": 0.0,
+    "mass_volume_kg": 0.0005566409408,
+    "mass_skins_kg": 0.00010585881600000002,
+    "n_markers": 1,
+    "markers_trapped": 0,
+    "marker_splits": 0,
+    "marker_merges": 0,
+    "cells": 4856,
+    "cells_at_floor": 0,
+    "snap_fallback": 0,
+    "snap_slide_max_m": 0.0,
+    "volume_correction_max": 3.3717517292033514e-16,
+    "move_corrections": [
+     {
+      "kind": "part",
+      "worst": 0.0,
+      "body": 0.0
+     },
+     {
+      "kind": "part",
+      "worst": 0.0,
+      "body": 0.0
+     },
+     {
+      "kind": "part",
+      "worst": 2.1450110534787946e-16,
+      "body": 2.1450110534787946e-16
+     },
+     {
+      "kind": "part",
+      "worst": 2.1952193746265435e-16,
+      "body": 2.1952193746265435e-16
+     },
+     {
+      "kind": "part",
+      "worst": 3.3717517292033514e-16,
+      "body": 3.3717517292033514e-16
+     },
+     {
+      "kind": "remesh",
+      "worst": 0.0,
+      "body": 0.0
+     }
+    ],
+    "group_area_ratio_min": 0.9999999999999927,
+    "group_area_ratio_max": 1.0000000000000184,
+    "group_area_ratio_trimmed_max": 0.9961065051020574,
+    "phi_move_max_m": 0.0007600000000000003,
+    "phi_move_median_m": 0.0007600000000000003,
+    "volume_repartitioned_share": 0.0,
+    "stretch_min": 0.9999999999999998,
+    "stretch_max": 0.9999999999999998,
+    "grad_phi_below_bound_share": 0.0,
+    "phi_beta_angle_median_deg": 0.0,
+    "phi_beta_angle_p95_deg": 0.0,
+    "phi_beta_angle_max_deg": 0.0,
+    "layer_factor_max": 2.3314683517128287e-15,
+    "fill_miss_max": 3.5169243730996085e-16,
+    "move_miss_max": 9.231926479386439e-15,
+    "n_baseless": 0,
+    "density_carry_m3": 0.0,
+    "density_carry_share_max": 0.0,
+    "pending_share_of_heat_in": 0.0014350788324407635,
+    "interface_mismatch_share": 0.0001767360525663108,
+    "residual_newton_J": 5.79754235729979e-08,
+    "residual_move_J": 0.4191885638697812,
+    "residual_remesh_J": 2.2737367544323206e-13,
+    "mass_drawn_kg": 6.704391680000003e-05,
+    "mass_handed_kg": 0.0,
+    "n_pieces": 1,
+    "pieces_used_up": 0,
+    "island_nodes": 0,
+    "groups_guarded_max": 0,
+    "pending_flux_max_Wm2": 77812.47110855769,
+    "surface_flux_max_Wm2": 6000000.0,
+    "cost_split_s": {
+     "loads": 0.127,
+     "skins trial": 0.582,
+     "skins real": 0.515,
+     "skins repeats": 1.481,
+     "runoff (within the skins' passes)": 0.0,
+     "cut-cell solve": 0.715,
+     "cut-cell solve repeats": 1.08,
+     "interface and part books": 0.185,
+     "surfaces phi": 0.083,
+     "surfaces psi": 0.099,
+     "markers": 0.049,
+     "re-partition": 0.168,
+     "remesh": 0.411,
+     "base moves": 0.952,
+     "division": 0.883,
+     "step summary": 0.027,
+     "other": 0.047,
+     "inclusive": {
+      "base moves": 1.014,
+      "division": 0.883,
+      "re-partition": 0.168,
+      "loads shadow": 0.0,
+      "runoff": 0.0,
+      "markers": 0.216,
+      "base moves volume": 0.131,
+      "base moves redistance": 0.0,
+      "base moves volume correction": 0.137
+     },
+     "calls": {
+      "base moves": 5,
+      "base moves volume": 5,
+      "cut-cell solve": 8,
+      "cut-cell solve repeats": 10,
+      "skins trial": 8,
+      "skins repeats": 20,
+      "runoff": 0,
+      "re-partition": 1,
+      "remesh build": 1,
+      "division": 6
+     }
+    },
+    "division_cost": {
+     "divide_s": 1.046,
+     "divide_calls": 6,
+     "divide_mean_s": 0.174,
+     "tie_query_s": 0.162,
+     "centroid_distances_s": 0.004,
+     "centroid_distances_calls": 252
+    },
+    "solver_watch": {
+     "passes_max": 3,
+     "passes_accepted_max": 3,
+     "interface_mismatch_max": 0.0009531181991347484,
+     "newton_iterations_max": 5,
+     "gmres_iterations_max": 1,
+     "gmres_residual_max": 4.648734628138582e-14,
+     "side_solves": 977,
+     "side_solves_unconverged": 0
+    },
+    "recession_mm": 0.7600000000000002,
+    "removed_recession_mm": 0.7600000000000003,
+    "nonrigid_mm": 0.37688329140235827,
+    "skin_flowing_mm": 0.3920837986473177,
+    "skin_thickness_mm": 1.2000000000000002,
+    "base_excess_K": -22.964816086386236,
+    "base_excess_max_K": -22.955321416881816
+   },
+   {
+    "t": 1.5,
+    "wall_s": 7.78,
+    "peak_rss_gb": 0.257,
+    "parts": 8,
+    "passes_max": 3,
+    "parts_next": 2,
+    "split_depth_max": 1,
+    "parts_over": 0,
+    "mass_residual": 5.727862636551635e-16,
+    "enthalpy_residual": 1.3640099728578886e-14,
+    "enthalpy_in_J": 94.08000000000001,
+    "enthalpy_radiated_J": 0.0,
+    "mass_removed_kg": 0.00016477034979999996,
+    "mass_sprayed_kg": 0.0,
+    "mass_volume_kg": 0.0003918705910000005,
+    "mass_skins_kg": 0.000105858816,
+    "n_markers": 1,
+    "markers_trapped": 0,
+    "marker_splits": 0,
+    "marker_merges": 0,
+    "cells": 4440,
+    "cells_at_floor": 0,
+    "snap_fallback": 0,
+    "snap_slide_max_m": 0.0,
+    "volume_correction_max": 6.851151376168064e-16,
+    "move_corrections": [
+     {
+      "kind": "part",
+      "worst": 0.0,
+      "body": 0.0
+     },
+     {
+      "kind": "part",
+      "worst": 2.3826728286348785e-16,
+      "body": 2.3826728286348785e-16
+     },
+     {
+      "kind": "part",
+      "worst": 2.4572397366634806e-16,
+      "body": 2.4572397366634806e-16
+     },
+     {
+      "kind": "part",
+      "worst": 0.0,
+      "body": 0.0
+     },
+     {
+      "kind": "part",
+      "worst": 0.0,
+      "body": 0.0
+     },
+     {
+      "kind": "part",
+      "worst": 6.851151376168064e-16,
+      "body": 6.851151376168064e-16
+     },
+     {
+      "kind": "part",
+      "worst": 1.4274378599199322e-16,
+      "body": 1.4274378599199322e-16
+     },
+     {
+      "kind": "part",
+      "worst": 0.0,
+      "body": 0.0
+     },
+     {
+      "kind": "remesh",
+      "worst": 0.0,
+      "body": 0.0
+     }
+    ],
+    "group_area_ratio_min": 0.9999999999999913,
+    "group_area_ratio_max": 1.000000000000017,
+    "group_area_ratio_trimmed_max": 0.9962284757653117,
+    "phi_move_max_m": 0.001867812499999994,
+    "phi_move_median_m": 0.001867812499999994,
+    "volume_repartitioned_share": 0.0,
+    "stretch_min": 1.0,
+    "stretch_max": 1.0,
+    "grad_phi_below_bound_share": 0.0,
+    "phi_beta_angle_median_deg": 0.0,
+    "phi_beta_angle_p95_deg": 0.0,
+    "phi_beta_angle_max_deg": 0.0,
+    "layer_factor_max": 5.10702591327572e-15,
+    "fill_miss_max": 0.0,
+    "move_miss_max": 7.26534250240323e-15,
+    "n_baseless": 0,
+    "density_carry_m3": 0.0,
+    "density_carry_share_max": 0.0,
+    "pending_share_of_heat_in": 0.0024157945832125665,
+    "interface_mismatch_share": 5.826992016262189e-09,
+    "residual_newton_J": 1.1306614151607164e-06,
+    "residual_move_J": 1.3724551616940879,
+    "residual_remesh_J": 5.684341886080802e-14,
+    "mass_drawn_kg": 0.0001647703498,
+    "mass_handed_kg": 0.0,
+    "n_pieces": 1,
+    "pieces_used_up": 0,
+    "island_nodes": 0,
+    "groups_guarded_max": 0,
+    "pending_flux_max_Wm2": 223630.91950434024,
+    "surface_flux_max_Wm2": 6000000.0,
+    "cost_split_s": {
+     "loads": 0.211,
+     "skins trial": 0.626,
+     "skins real": 0.554,
+     "skins repeats": 1.466,
+     "runoff (within the skins' passes)": 0.0,
+     "cut-cell solve": 0.64,
+     "cut-cell solve repeats": 0.766,
+     "interface and part books": 0.228,
+     "surfaces phi": 0.106,
+     "surfaces psi": 0.083,
+     "markers": 0.037,
+     "re-partition": 0.127,
+     "remesh": 0.335,
+     "base moves": 1.266,
+     "division": 1.281,
+     "step summary": 0.02,
+     "other": 0.038,
+     "inclusive": {
+      "base moves": 1.35,
+      "division": 1.281,
+      "re-partition": 0.127,
+      "loads shadow": 0.0,
+      "runoff": 0.0,
+      "markers": 0.164,
+      "base moves volume": 0.184,
+      "base moves redistance": 0.0,
+      "base moves volume correction": 0.199
+     },
+     "calls": {
+      "base moves": 8,
+      "base moves volume": 8,
+      "cut-cell solve": 8,
+      "cut-cell solve repeats": 10,
+      "skins trial": 8,
+      "skins repeats": 20,
+      "runoff": 0,
+      "re-partition": 1,
+      "remesh build": 1,
+      "division": 9
+     }
+    },
+    "division_cost": {
+     "divide_s": 1.404,
+     "divide_calls": 9,
+     "divide_mean_s": 0.156,
+     "tie_query_s": 0.228,
+     "centroid_distances_s": 0.004,
+     "centroid_distances_calls": 252
+    },
+    "solver_watch": {
+     "passes_max": 3,
+     "passes_accepted_max": 3,
+     "interface_mismatch_max": 0.0009144487237783567,
+     "newton_iterations_max": 5,
+     "gmres_iterations_max": 1,
+     "gmres_residual_max": 1.8880560205359834e-14,
+     "side_solves": 1015,
+     "side_solves_unconverged": 0
+    },
+    "recession_mm": 2.6278124999999948,
+    "removed_recession_mm": 2.6278125000000006,
+    "nonrigid_mm": 0.4979589198264322,
+    "skin_flowing_mm": 0.4338421339176952,
+    "skin_thickness_mm": 1.2,
+    "base_excess_K": -16.67164491379083,
+    "base_excess_max_K": -16.648966899177253
+   },
+   {
+    "t": 2.0,
+    "wall_s": 8.0,
+    "peak_rss_gb": 0.257,
+    "parts": 8,
+    "passes_max": 3,
+    "parts_next": 3,
+    "split_depth_max": 1,
+    "parts_over": 0,
+    "mass_residual": 1.6337222955446704e-16,
+    "enthalpy_residual": 1.4838617310781295e-14,
+    "enthalpy_in_J": 94.08000000000001,
+    "enthalpy_radiated_J": 0.0,
+    "mass_removed_kg": 0.00021248564253437496,
+    "mass_sprayed_kg": 0.0,
+    "mass_volume_kg": 0.0001793849484656256,
+    "mass_skins_kg": 0.000105858816,
+    "n_markers": 1,
+    "markers_trapped": 0,
+    "marker_splits": 0,
+    "marker_merges": 0,
+    "cells": 4440,
+    "cells_at_floor": 0,
+    "snap_fallback": 0,
+    "snap_slide_max_m": 0.0,
+    "volume_correction_max": 5.220761979429446e-16,
+    "move_corrections": [
+     {
+      "kind": "part",
+      "worst": 3.1435280846582623e-16,
+      "body": 3.1435280846582623e-16
+     },
+     {
+      "kind": "part",
+      "worst": 1.6566473985160064e-16,
+      "body": 1.6566473985160064e-16
+     },
+     {
+      "kind": "part",
+      "worst": 3.5127506947025773e-16,
+      "body": 3.5127506947025773e-16
+     },
+     {
+      "kind": "part",
+      "worst": 3.7431329097864004e-16,
+      "body": 3.7431329097864004e-16
+     },
+     {
+      "kind": "part",
+      "worst": 0.0,
+      "body": 0.0
+     },
+     {
+      "kind": "part",
+      "worst": 4.3340788166567636e-16,
+      "body": 4.3340788166567636e-16
+     },
+     {
+      "kind": "part",
+      "worst": 2.365159983178973e-16,
+      "body": 2.365159983178973e-16
+     },
+     {
+      "kind": "part",
+      "worst": 5.220761979429446e-16,
+      "body": 5.220761979429446e-16
+     }
+    ],
+    "group_area_ratio_min": 0.9999999999999853,
+    "group_area_ratio_max": 1.000000000000008,
+    "group_area_ratio_trimmed_max": 0.996464398442475,
+    "phi_move_max_m": 0.002408706054687498,
+    "phi_move_median_m": 0.002408706054687498,
+    "volume_repartitioned_share": 0.0,
+    "stretch_min": 0.9999999999999997,
+    "stretch_max": 0.9999999999999997,
+    "grad_phi_below_bound_share": 0.0,
+    "phi_beta_angle_median_deg": 0.0,
+    "phi_beta_angle_p95_deg": 0.0,
+    "phi_beta_angle_max_deg": 0.0,
+    "layer_factor_max": 3.9968028886505635e-15,
+    "fill_miss_max": 1.7584621865498045e-16,
+    "move_miss_max": 8.361166088096782e-15,
+    "n_baseless": 0,
+    "density_carry_m3": 0.0,
+    "density_carry_share_max": 0.0,
+    "pending_share_of_heat_in": 0.003148499560128904,
+    "interface_mismatch_share": 5.0120386341790055e-08,
+    "residual_newton_J": 9.252030945816614e-07,
+    "residual_move_J": 1.9779675126767664,
+    "residual_remesh_J": 0.0,
+    "mass_drawn_kg": 0.00021248564253437493,
+    "mass_handed_kg": 0.0,
+    "n_pieces": 1,
+    "pieces_used_up": 0,
+    "island_nodes": 0,
+    "groups_guarded_max": 0,
+    "pending_flux_max_Wm2": 339106.66004924115,
+    "surface_flux_max_Wm2": 6000000.0,
+    "cost_split_s": {
+     "loads": 0.175,
+     "skins trial": 0.729,
+     "skins real": 0.634,
+     "skins repeats": 1.829,
+     "runoff (within the skins' passes)": 0.0,
+     "cut-cell solve": 0.598,
+     "cut-cell solve repeats": 0.862,
+     "interface and part books": 0.2,
+     "surfaces phi": 0.103,
+     "surfaces psi": 0.098,
+     "markers": 0.046,
+     "re-partition": 0.163,
+     "remesh": 0.095,
+     "base moves": 1.147,
+     "division": 1.268,
+     "step summary": 0.016,
+     "other": 0.036,
+     "inclusive": {
+      "base moves": 1.24,
+      "division": 1.268,
+      "re-partition": 0.163,
+      "loads shadow": 0.0,
+      "runoff": 0.0,
+      "markers": 0.209,
+      "base moves volume": 0.162,
+      "base moves redistance": 0.0,
+      "base moves volume correction": 0.172
+     },
+     "calls": {
+      "base moves": 8,
+      "base moves volume": 8,
+      "cut-cell solve": 8,
+      "cut-cell solve repeats": 11,
+      "skins trial": 8,
+      "skins repeats": 22,
+      "runoff": 0,
+      "re-partition": 1,
+      "remesh build": 0,
+      "division": 9
+     }
+    },
+    "division_cost": {
+     "divide_s": 1.426,
+     "divide_calls": 9,
+     "divide_mean_s": 0.158,
+     "tie_query_s": 0.232,
+     "centroid_distances_s": 0.005,
+     "centroid_distances_calls": 266
+    },
+    "solver_watch": {
+     "passes_max": 3,
+     "passes_accepted_max": 3,
+     "interface_mismatch_max": 0.0009574998755101945,
+     "newton_iterations_max": 5,
+     "gmres_iterations_max": 1,
+     "gmres_residual_max": 1.577617894350687e-14,
+     "side_solves": 1112,
+     "side_solves_unconverged": 0
+    },
+    "recession_mm": 5.036518554687494,
+    "removed_recession_mm": 5.0365185546875,
+    "nonrigid_mm": 0.48088687146945197,
+    "skin_flowing_mm": 0.47947375466610914,
+    "skin_thickness_mm": 1.2,
+    "base_excess_K": -11.376199360970418,
+    "base_excess_max_K": -11.360522180271005
+   }
+  ],
+  "against_offset_0": {
+   "offset_0": {
+    "passes": true,
+    "books": {
+     "mass_residual_max_abs": 5.81792032466648e-16,
+     "enthalpy_residual_max_abs": 1.3892334591582309e-14,
+     "layer_factor_max": 4.6629367034256575e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.799999999999999,
+      "rel_1d": 0.01394169835234349,
+      "rel_liquidus": -0.044205495818400165,
+      "nonrigid_mm": 0.40885817129265806
+     },
+     "1.5": {
+      "recession_mm": 2.7187500000000004,
+      "rel_1d": 0.002488938053097467,
+      "rel_liquidus": -0.01920995670995651,
+      "nonrigid_mm": 0.4527343270760755
+     },
+     "2.0": {
+      "recession_mm": 5.201806640625005,
+      "rel_1d": -0.0032943781136224315,
+      "rel_liquidus": -0.018156541973385232,
+      "nonrigid_mm": 0.5488255605681623
+     }
+    }
+   },
+   "now": {
+    "passes": false,
+    "books": {
+     "mass_residual_max_abs": 5.727862636551635e-16,
+     "enthalpy_residual_max_abs": 1.4838617310781295e-14,
+     "layer_factor_max": 5.10702591327572e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.7600000000000002,
+      "rel_1d": -0.03675538656527222,
+      "rel_liquidus": -0.09199522102747881,
+      "nonrigid_mm": 0.37688329140235827
+     },
+     "1.5": {
+      "recession_mm": 2.6278124999999948,
+      "rel_1d": -0.031042588495577172,
+      "rel_liquidus": -0.0520156926406945,
+      "nonrigid_mm": 0.4979589198264322
+     },
+     "2.0": {
+      "recession_mm": 5.036518554687494,
+      "rel_1d": -0.034964829529125496,
+      "rel_liquidus": -0.049354746189600895,
+      "nonrigid_mm": 0.48088687146945197
+     }
+    }
+   },
+   "change": "The cold plate (dev) with its face 0.27 mm higher on the same mesh (the controller's ruling T7-m; stage3_cases.py plate-cold --offset-mm 0.27): its skin base cuts its 0.7 mm cells as a 10 % sliver of metal (71 % at offset 0), and its slab holds 8.27 mm of metal instead of 8 mm. Judged by Task 7's criteria (the 8 mm references) it fails: 0.760, 2.628 and 5.037 mm at 1.0, 1.5 and 2.0 s, 3.7, 3.1 and 3.5 % behind REFERENCE_1D (within the 5 %) and 9.2, 5.2 and 4.9 % behind REFERENCE_1D_LIQUIDUS (past it at 1.0 and 1.5 s). The cause, measured: the deeper slab. analysis/ablation_1d.py for an 8.27 mm slab (1 um, 0.5 ms; scratch, once; the 8 mm runs reproduced both committed references exactly) gives references_for_8.27_mm; against them the plate is 0.7, 0.2 and -0.1 % from the first and 5.4, 2.1 and 1.6 % behind the second, where the offset-0 plate is 1.4, 0.2 and -0.3 % and 4.4, 1.9 and 1.8 % from its own. The mesh offset's own effect is thus at most 0.9 percentage points (at 1.0 s), less than one 20 um skin cell, 2.5 % of the 1.0 s recession (the plate recedes in whole cells: 0.760 mm is 38, 0.800 mm 40). Diagnosis D1's 5 % slower recession at this offset was the deeper slab.",
+   "references_for_8.27_mm": {
+    "source": "analysis/ablation_1d.py --length-mm 8.27 --remove-at feed|liquidus, 1 um cells, 0.5 ms steps, run once in scratch on 2026-11-15 (plan 03b Task 11)",
+    "feed_mm": {
+     "1.0": 0.755,
+     "1.5": 2.623,
+     "2.0": 5.044
+    },
+    "liquidus_mm": {
+     "1.0": 0.803,
+     "1.5": 2.683,
+     "2.0": 5.12
+    },
+    "plate_rel_feed": {
+     "1.0": 0.0066,
+     "1.5": 0.0018,
+     "2.0": -0.0015
+    },
+    "plate_rel_liquidus": {
+     "1.0": -0.0535,
+     "1.5": -0.0206,
+     "2.0": -0.0163
+    }
+   }
+  }
  },
  "plate_cold_production": {
   "code": {
-   "commit": "73b5a9a6e548d00a170464c76580788babfa53e4",
+   "commit": "e57945f46d68009a411c6c06c106020fb231b140",
    "dirty": false
   },
   "case": "plate-cold",
@@ -1649,8 +2565,9 @@
   "dt_s": 0.5,
   "width_mm": 5.6,
   "depth_mm": 8.0,
+  "offset_mm": 0.0,
   "markers": 1,
-  "build_s": 1.21,
+  "build_s": 3.88,
   "books_pass": true,
   "compare": {
    "1.0": {
@@ -1686,8 +2603,8 @@
   "steps": [
    {
     "t": 0.5,
-    "wall_s": 1.55,
-    "peak_rss_gb": 0.201,
+    "wall_s": 4.9,
+    "peak_rss_gb": 0.226,
     "parts": 1,
     "passes_max": 3,
     "parts_next": 1,
@@ -1749,30 +2666,30 @@
     "pending_flux_max_Wm2": 0.0,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 0.011,
-     "skins trial": 0.158,
-     "skins real": 0.184,
-     "skins repeats": 0.753,
+     "loads": 0.028,
+     "skins trial": 0.512,
+     "skins real": 0.569,
+     "skins repeats": 2.437,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.104,
-     "cut-cell solve repeats": 0.087,
-     "interface and part books": 0.001,
-     "surfaces phi": 0.005,
-     "surfaces psi": 0.029,
-     "markers": 0.014,
-     "re-partition": 0.054,
-     "remesh": 0.138,
+     "cut-cell solve": 0.355,
+     "cut-cell solve repeats": 0.277,
+     "interface and part books": 0.005,
+     "surfaces phi": 0.014,
+     "surfaces psi": 0.089,
+     "markers": 0.037,
+     "re-partition": 0.166,
+     "remesh": 0.36,
      "base moves": 0.0,
      "division": 0.0,
-     "step summary": 0.01,
-     "other": 0.007,
+     "step summary": 0.026,
+     "other": 0.021,
      "inclusive": {
       "base moves": 0.0,
       "division": 0.0,
-      "re-partition": 0.054,
+      "re-partition": 0.166,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.068,
+      "markers": 0.203,
       "base moves volume": 0.0,
       "base moves redistance": 0.0,
       "base moves volume correction": 0.0
@@ -1791,11 +2708,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.052,
+     "divide_s": 0.161,
      "divide_calls": 1,
-     "divide_mean_s": 0.052,
-     "tie_query_s": 0.009,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.161,
+     "tie_query_s": 0.028,
+     "centroid_distances_s": 0.005,
      "centroid_distances_calls": 300
     },
     "solver_watch": {
@@ -1818,8 +2735,8 @@
    },
    {
     "t": 1.0,
-    "wall_s": 2.72,
-    "peak_rss_gb": 0.21,
+    "wall_s": 8.3,
+    "peak_rss_gb": 0.226,
     "parts": 8,
     "passes_max": 3,
     "parts_next": 2,
@@ -1906,33 +2823,33 @@
     "pending_flux_max_Wm2": 80805.09124872877,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 0.051,
-     "skins trial": 0.262,
-     "skins real": 0.248,
-     "skins repeats": 0.649,
+     "loads": 0.126,
+     "skins trial": 0.807,
+     "skins real": 0.747,
+     "skins repeats": 2.135,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.241,
-     "cut-cell solve repeats": 0.306,
-     "interface and part books": 0.061,
-     "surfaces phi": 0.028,
-     "surfaces psi": 0.037,
-     "markers": 0.017,
-     "re-partition": 0.056,
-     "remesh": 0.146,
-     "base moves": 0.325,
-     "division": 0.265,
-     "step summary": 0.011,
-     "other": 0.013,
+     "cut-cell solve": 0.795,
+     "cut-cell solve repeats": 1.048,
+     "interface and part books": 0.158,
+     "surfaces phi": 0.074,
+     "surfaces psi": 0.104,
+     "markers": 0.049,
+     "re-partition": 0.188,
+     "remesh": 0.369,
+     "base moves": 0.848,
+     "division": 0.778,
+     "step summary": 0.027,
+     "other": 0.042,
      "inclusive": {
-      "base moves": 0.346,
-      "division": 0.265,
-      "re-partition": 0.056,
+      "base moves": 0.903,
+      "division": 0.778,
+      "re-partition": 0.188,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.073,
-      "base moves volume": 0.051,
+      "markers": 0.237,
+      "base moves volume": 0.122,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.053
+      "base moves volume correction": 0.143
      },
      "calls": {
       "base moves": 5,
@@ -1948,11 +2865,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.32,
+     "divide_s": 0.961,
      "divide_calls": 6,
-     "divide_mean_s": 0.053,
-     "tie_query_s": 0.056,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.16,
+     "tie_query_s": 0.154,
+     "centroid_distances_s": 0.004,
      "centroid_distances_calls": 252
     },
     "solver_watch": {
@@ -1975,8 +2892,8 @@
    },
    {
     "t": 1.5,
-    "wall_s": 3.1,
-    "peak_rss_gb": 0.211,
+    "wall_s": 9.26,
+    "peak_rss_gb": 0.226,
     "parts": 8,
     "passes_max": 3,
     "parts_next": 2,
@@ -2078,33 +2995,33 @@
     "pending_flux_max_Wm2": 245291.04175716612,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 0.082,
-     "skins trial": 0.28,
-     "skins real": 0.246,
-     "skins repeats": 0.663,
+     "loads": 0.204,
+     "skins trial": 0.898,
+     "skins real": 0.791,
+     "skins repeats": 2.197,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.214,
-     "cut-cell solve repeats": 0.266,
-     "interface and part books": 0.088,
-     "surfaces phi": 0.044,
-     "surfaces psi": 0.032,
-     "markers": 0.015,
-     "re-partition": 0.057,
-     "remesh": 0.134,
-     "base moves": 0.522,
-     "division": 0.432,
-     "step summary": 0.008,
-     "other": 0.012,
+     "cut-cell solve": 0.695,
+     "cut-cell solve repeats": 0.942,
+     "interface and part books": 0.221,
+     "surfaces phi": 0.113,
+     "surfaces psi": 0.081,
+     "markers": 0.042,
+     "re-partition": 0.142,
+     "remesh": 0.33,
+     "base moves": 1.294,
+     "division": 1.257,
+     "step summary": 0.018,
+     "other": 0.038,
      "inclusive": {
-      "base moves": 0.558,
-      "division": 0.432,
-      "re-partition": 0.057,
+      "base moves": 1.384,
+      "division": 1.257,
+      "re-partition": 0.142,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.072,
-      "base moves volume": 0.08,
+      "markers": 0.185,
+      "base moves volume": 0.181,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.082
+      "base moves volume correction": 0.224
      },
      "calls": {
       "base moves": 8,
@@ -2120,11 +3037,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.487,
+     "divide_s": 1.395,
      "divide_calls": 9,
-     "divide_mean_s": 0.054,
-     "tie_query_s": 0.087,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.155,
+     "tie_query_s": 0.222,
+     "centroid_distances_s": 0.004,
      "centroid_distances_calls": 252
     },
     "solver_watch": {
@@ -2147,8 +3064,8 @@
    },
    {
     "t": 2.0,
-    "wall_s": 3.29,
-    "peak_rss_gb": 0.222,
+    "wall_s": 9.09,
+    "peak_rss_gb": 0.226,
     "parts": 8,
     "passes_max": 3,
     "parts_next": 3,
@@ -2245,33 +3162,33 @@
     "pending_flux_max_Wm2": 341026.5103410753,
     "surface_flux_max_Wm2": 6000000.0,
     "cost_split_s": {
-     "loads": 0.063,
-     "skins trial": 0.356,
-     "skins real": 0.307,
-     "skins repeats": 0.92,
+     "loads": 0.171,
+     "skins trial": 1.079,
+     "skins real": 0.818,
+     "skins repeats": 2.59,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.214,
-     "cut-cell solve repeats": 0.292,
-     "interface and part books": 0.075,
-     "surfaces phi": 0.039,
-     "surfaces psi": 0.032,
-     "markers": 0.014,
-     "re-partition": 0.054,
-     "remesh": 0.033,
-     "base moves": 0.434,
-     "division": 0.438,
-     "step summary": 0.006,
-     "other": 0.009,
+     "cut-cell solve": 0.643,
+     "cut-cell solve repeats": 0.858,
+     "interface and part books": 0.195,
+     "surfaces phi": 0.097,
+     "surfaces psi": 0.059,
+     "markers": 0.028,
+     "re-partition": 0.124,
+     "remesh": 0.054,
+     "base moves": 1.083,
+     "division": 1.254,
+     "step summary": 0.009,
+     "other": 0.032,
      "inclusive": {
-      "base moves": 0.469,
-      "division": 0.438,
-      "re-partition": 0.054,
+      "base moves": 1.172,
+      "division": 1.254,
+      "re-partition": 0.124,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.067,
-      "base moves volume": 0.069,
+      "markers": 0.152,
+      "base moves volume": 0.163,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.063
+      "base moves volume correction": 0.151
      },
      "calls": {
       "base moves": 8,
@@ -2287,11 +3204,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.49,
+     "divide_s": 1.375,
      "divide_calls": 9,
-     "divide_mean_s": 0.054,
-     "tie_query_s": 0.09,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.153,
+     "tie_query_s": 0.22,
+     "centroid_distances_s": 0.004,
      "centroid_distances_calls": 266
     },
     "solver_watch": {
@@ -2312,11 +3229,75 @@
     "base_excess_K": -10.07062927652862,
     "base_excess_max_K": -10.036721896434074
    }
-  ]
+  ],
+  "against_task7": {
+   "task7_record": "the record at plan 03b Task 11's BASE (6e489ec): gathered in plan 03b Task 7d on 73b5a9a (record commit eca9243), under the bridge law and before main's merge (6b65df8)",
+   "task7": {
+    "passes": true,
+    "books": {
+     "mass_residual_max_abs": 1.6888207602689215e-15,
+     "enthalpy_residual_max_abs": 1.301307290857079e-14,
+     "layer_factor_max": 3.552713678800501e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.8099999999999995,
+      "rel_1d": 0.026615969581748278,
+      "rel_liquidus": -0.03225806451612956,
+      "nonrigid_mm": 0.4023231655978307
+     },
+     "1.5": {
+      "recession_mm": 2.723828124999997,
+      "rel_1d": 0.004361403023597665,
+      "rel_liquidus": -0.017378021284272238,
+      "nonrigid_mm": 0.43902426078776824
+     },
+     "2.0": {
+      "recession_mm": 5.204982757568366,
+      "rel_1d": -0.0026858100079775182,
+      "rel_liquidus": -0.017557048401592,
+      "nonrigid_mm": 0.5487320423276949
+     }
+    }
+   },
+   "now": {
+    "passes": true,
+    "books": {
+     "mass_residual_max_abs": 1.6888207602689215e-15,
+     "enthalpy_residual_max_abs": 1.301307290857079e-14,
+     "layer_factor_max": 3.552713678800501e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.8099999999999995,
+      "rel_1d": 0.026615969581748278,
+      "rel_liquidus": -0.03225806451612956,
+      "nonrigid_mm": 0.4023231655978307
+     },
+     "1.5": {
+      "recession_mm": 2.723828124999997,
+      "rel_1d": 0.004361403023597665,
+      "rel_liquidus": -0.017378021284272238,
+      "nonrigid_mm": 0.43902426078776824
+     },
+     "2.0": {
+      "recession_mm": 5.204982757568366,
+      "rel_1d": -0.0026858100079775182,
+      "rel_liquidus": -0.017557048401592,
+      "nonrigid_mm": 0.5487320423276949
+     }
+    }
+   },
+   "change": "No change: every judged and recorded number equals Task 7d's (73b5a9a) to every digit, the books included; only the wall times, the code stamp and the new offset_mm field (0 here) differ. Neither the composite rheology (the skins' default since plan 03b Task 9) nor main's merge (6b65df8) moves the plate, which runs with no flow (that no viscosity enters is inferred from the case's setup; the equality is measured), so no bridge-law re-run was needed."
+  }
  },
  "plate_hot_dev": {
   "code": {
-   "commit": "73b5a9a6e548d00a170464c76580788babfa53e4",
+   "commit": "e57945f46d68009a411c6c06c106020fb231b140",
    "dirty": false
   },
   "case": "plate-hot",
@@ -2327,8 +3308,9 @@
   "dt_s": 0.5,
   "width_mm": 5.6,
   "depth_mm": 8.0,
+  "offset_mm": 0.0,
   "markers": 1,
-  "build_s": 1.3,
+  "build_s": 3.51,
   "books_pass": true,
   "compare": {
    "1.0": {
@@ -2376,8 +3358,8 @@
   "steps": [
    {
     "t": 0.5,
-    "wall_s": 1.35,
-    "peak_rss_gb": 0.241,
+    "wall_s": 3.77,
+    "peak_rss_gb": 0.242,
     "parts": 1,
     "passes_max": 3,
     "parts_next": 1,
@@ -2439,30 +3421,30 @@
     "pending_flux_max_Wm2": 0.0,
     "surface_flux_max_Wm2": 2000000.0,
     "cost_split_s": {
-     "loads": 0.011,
-     "skins trial": 0.157,
-     "skins real": 0.133,
-     "skins repeats": 0.594,
+     "loads": 0.021,
+     "skins trial": 0.386,
+     "skins real": 0.391,
+     "skins repeats": 1.825,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.099,
-     "cut-cell solve repeats": 0.075,
-     "interface and part books": 0.001,
-     "surfaces phi": 0.005,
-     "surfaces psi": 0.038,
-     "markers": 0.016,
-     "re-partition": 0.057,
-     "remesh": 0.147,
+     "cut-cell solve": 0.259,
+     "cut-cell solve repeats": 0.25,
+     "interface and part books": 0.003,
+     "surfaces phi": 0.013,
+     "surfaces psi": 0.087,
+     "markers": 0.038,
+     "re-partition": 0.131,
+     "remesh": 0.323,
      "base moves": 0.0,
      "division": 0.0,
-     "step summary": 0.012,
-     "other": 0.008,
+     "step summary": 0.027,
+     "other": 0.02,
      "inclusive": {
       "base moves": 0.0,
       "division": 0.0,
-      "re-partition": 0.057,
+      "re-partition": 0.131,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.074,
+      "markers": 0.17,
       "base moves volume": 0.0,
       "base moves redistance": 0.0,
       "base moves volume correction": 0.0
@@ -2481,11 +3463,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.056,
+     "divide_s": 0.128,
      "divide_calls": 1,
-     "divide_mean_s": 0.056,
-     "tie_query_s": 0.01,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.128,
+     "tie_query_s": 0.02,
+     "centroid_distances_s": 0.005,
      "centroid_distances_calls": 300
     },
     "solver_watch": {
@@ -2508,8 +3490,8 @@
    },
    {
     "t": 1.0,
-    "wall_s": 2.42,
-    "peak_rss_gb": 0.242,
+    "wall_s": 7.23,
+    "peak_rss_gb": 0.243,
     "parts": 8,
     "passes_max": 3,
     "parts_next": 1,
@@ -2611,33 +3593,33 @@
     "pending_flux_max_Wm2": 43041.006214130015,
     "surface_flux_max_Wm2": 2000000.0,
     "cost_split_s": {
-     "loads": 0.093,
-     "skins trial": 0.186,
-     "skins real": 0.152,
-     "skins repeats": 0.247,
+     "loads": 0.236,
+     "skins trial": 0.568,
+     "skins real": 0.451,
+     "skins repeats": 0.76,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.168,
-     "cut-cell solve repeats": 0.127,
-     "interface and part books": 0.105,
-     "surfaces phi": 0.044,
-     "surfaces psi": 0.037,
-     "markers": 0.017,
-     "re-partition": 0.057,
-     "remesh": 0.152,
-     "base moves": 0.57,
-     "division": 0.441,
-     "step summary": 0.011,
-     "other": 0.014,
+     "cut-cell solve": 0.529,
+     "cut-cell solve repeats": 0.403,
+     "interface and part books": 0.274,
+     "surfaces phi": 0.136,
+     "surfaces psi": 0.111,
+     "markers": 0.085,
+     "re-partition": 0.187,
+     "remesh": 0.527,
+     "base moves": 1.466,
+     "division": 1.427,
+     "step summary": 0.028,
+     "other": 0.043,
      "inclusive": {
-      "base moves": 0.607,
-      "division": 0.441,
-      "re-partition": 0.057,
+      "base moves": 1.574,
+      "division": 1.427,
+      "re-partition": 0.187,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.074,
-      "base moves volume": 0.092,
+      "markers": 0.272,
+      "base moves volume": 0.216,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.096
+      "base moves volume correction": 0.253
      },
      "calls": {
       "base moves": 8,
@@ -2653,11 +3635,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.496,
+     "divide_s": 1.609,
      "divide_calls": 9,
-     "divide_mean_s": 0.055,
-     "tie_query_s": 0.084,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.179,
+     "tie_query_s": 0.242,
+     "centroid_distances_s": 0.003,
      "centroid_distances_calls": 196
     },
     "solver_watch": {
@@ -2680,8 +3662,8 @@
    },
    {
     "t": 1.5,
-    "wall_s": 1.96,
-    "peak_rss_gb": 0.251,
+    "wall_s": 5.22,
+    "peak_rss_gb": 0.243,
     "parts": 8,
     "passes_max": 1,
     "parts_next": 2,
@@ -2778,33 +3760,33 @@
     "pending_flux_max_Wm2": 63633.26864820437,
     "surface_flux_max_Wm2": 2000000.0,
     "cost_split_s": {
-     "loads": 0.089,
-     "skins trial": 0.2,
-     "skins real": 0.17,
+     "loads": 0.225,
+     "skins trial": 0.635,
+     "skins real": 0.496,
      "skins repeats": 0.0,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.185,
+     "cut-cell solve": 0.517,
      "cut-cell solve repeats": 0.0,
-     "interface and part books": 0.101,
-     "surfaces phi": 0.042,
-     "surfaces psi": 0.036,
-     "markers": 0.016,
-     "re-partition": 0.056,
-     "remesh": 0.035,
-     "base moves": 0.574,
-     "division": 0.441,
-     "step summary": 0.01,
-     "other": 0.009,
+     "interface and part books": 0.262,
+     "surfaces phi": 0.1,
+     "surfaces psi": 0.092,
+     "markers": 0.043,
+     "re-partition": 0.161,
+     "remesh": 0.091,
+     "base moves": 1.306,
+     "division": 1.237,
+     "step summary": 0.022,
+     "other": 0.03,
      "inclusive": {
-      "base moves": 0.613,
-      "division": 0.441,
-      "re-partition": 0.056,
+      "base moves": 1.395,
+      "division": 1.237,
+      "re-partition": 0.161,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.072,
-      "base moves volume": 0.091,
+      "markers": 0.204,
+      "base moves volume": 0.194,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.096
+      "base moves volume correction": 0.208
      },
      "calls": {
       "base moves": 8,
@@ -2820,11 +3802,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.495,
+     "divide_s": 1.393,
      "divide_calls": 9,
-     "divide_mean_s": 0.055,
-     "tie_query_s": 0.086,
-     "centroid_distances_s": 0.0,
+     "divide_mean_s": 0.155,
+     "tie_query_s": 0.216,
+     "centroid_distances_s": 0.002,
      "centroid_distances_calls": 112
     },
     "solver_watch": {
@@ -2847,8 +3829,8 @@
    },
    {
     "t": 2.0,
-    "wall_s": 2.18,
-    "peak_rss_gb": 0.251,
+    "wall_s": 6.2,
+    "peak_rss_gb": 0.243,
     "parts": 8,
     "passes_max": 2,
     "parts_next": 2,
@@ -2945,33 +3927,33 @@
     "pending_flux_max_Wm2": 73561.5601040428,
     "surface_flux_max_Wm2": 2000000.0,
     "cost_split_s": {
-     "loads": 0.076,
-     "skins trial": 0.208,
-     "skins real": 0.173,
-     "skins repeats": 0.239,
+     "loads": 0.214,
+     "skins trial": 0.662,
+     "skins real": 0.555,
+     "skins repeats": 0.668,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.153,
-     "cut-cell solve repeats": 0.098,
-     "interface and part books": 0.089,
-     "surfaces phi": 0.042,
-     "surfaces psi": 0.031,
-     "markers": 0.015,
-     "re-partition": 0.054,
-     "remesh": 0.034,
-     "base moves": 0.517,
-     "division": 0.436,
-     "step summary": 0.009,
-     "other": 0.009,
+     "cut-cell solve": 0.503,
+     "cut-cell solve repeats": 0.258,
+     "interface and part books": 0.251,
+     "surfaces phi": 0.11,
+     "surfaces psi": 0.081,
+     "markers": 0.035,
+     "re-partition": 0.147,
+     "remesh": 0.082,
+     "base moves": 1.237,
+     "division": 1.344,
+     "step summary": 0.022,
+     "other": 0.033,
      "inclusive": {
-      "base moves": 0.556,
-      "division": 0.436,
-      "re-partition": 0.054,
+      "base moves": 1.337,
+      "division": 1.344,
+      "re-partition": 0.147,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.069,
-      "base moves volume": 0.082,
+      "markers": 0.183,
+      "base moves volume": 0.184,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.083
+      "base moves volume correction": 0.191
      },
      "calls": {
       "base moves": 8,
@@ -2987,11 +3969,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.488,
+     "divide_s": 1.486,
      "divide_calls": 9,
-     "divide_mean_s": 0.054,
-     "tie_query_s": 0.087,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.165,
+     "tie_query_s": 0.234,
+     "centroid_distances_s": 0.003,
      "centroid_distances_calls": 182
     },
     "solver_watch": {
@@ -3012,11 +3994,87 @@
     "base_excess_K": 2.5933537030509797,
     "base_excess_max_K": 2.601035483105761
    }
-  ]
+  ],
+  "against_task7": {
+   "task7_record": "the record at plan 03b Task 11's BASE (6e489ec): gathered in plan 03b Task 7d on 73b5a9a (record commit eca9243), under the bridge law and before main's merge (6b65df8)",
+   "task7": {
+    "passes": true,
+    "books": {
+     "mass_residual_max_abs": 3.264625994681015e-16,
+     "enthalpy_residual_max_abs": 9.663844369887239e-15,
+     "layer_factor_max": 3.885780586188048e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.759999999999999,
+      "rel": -0.03675538656527377,
+      "judged_recession": false,
+      "nonrigid_mm": 1.4887773230651582,
+      "nonrigid_rel": 0.001195240797012831,
+      "base_excess_K": 1.7502734344233204
+     },
+     "1.5": {
+      "recession_mm": 1.7949999999999993,
+      "rel": -0.012107870115575459,
+      "judged_recession": true,
+      "nonrigid_mm": 1.5830117726866728,
+      "nonrigid_rel": 0.008287753303613199,
+      "base_excess_K": 2.130131916843652
+     },
+     "2.0": {
+      "recession_mm": 2.8937499999999994,
+      "rel": -0.007970517655125242,
+      "judged_recession": true,
+      "nonrigid_mm": 1.682536299989212,
+      "nonrigid_rel": 0.005099342884834046,
+      "base_excess_K": 2.5933537030509797
+     }
+    }
+   },
+   "now": {
+    "passes": true,
+    "books": {
+     "mass_residual_max_abs": 3.264625994681015e-16,
+     "enthalpy_residual_max_abs": 9.663844369887239e-15,
+     "layer_factor_max": 3.885780586188048e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.759999999999999,
+      "rel": -0.03675538656527377,
+      "judged_recession": false,
+      "nonrigid_mm": 1.4887773230651582,
+      "nonrigid_rel": 0.001195240797012831,
+      "base_excess_K": 1.7502734344233204
+     },
+     "1.5": {
+      "recession_mm": 1.7949999999999993,
+      "rel": -0.012107870115575459,
+      "judged_recession": true,
+      "nonrigid_mm": 1.5830117726866728,
+      "nonrigid_rel": 0.008287753303613199,
+      "base_excess_K": 2.130131916843652
+     },
+     "2.0": {
+      "recession_mm": 2.8937499999999994,
+      "rel": -0.007970517655125242,
+      "judged_recession": true,
+      "nonrigid_mm": 1.682536299989212,
+      "nonrigid_rel": 0.005099342884834046,
+      "base_excess_K": 2.5933537030509797
+     }
+    }
+   },
+   "change": "No change: every judged and recorded number equals Task 7d's (73b5a9a) to every digit, the books included; only the wall times, the code stamp and the new offset_mm field (0 here) differ. Neither the composite rheology (the skins' default since plan 03b Task 9) nor main's merge (6b65df8) moves the plate, which runs with no flow (that no viscosity enters is inferred from the case's setup; the equality is measured), so no bridge-law re-run was needed."
+  }
  },
  "plate_hot_production": {
   "code": {
-   "commit": "73b5a9a6e548d00a170464c76580788babfa53e4",
+   "commit": "e57945f46d68009a411c6c06c106020fb231b140",
    "dirty": false
   },
   "case": "plate-hot",
@@ -3027,8 +4085,9 @@
   "dt_s": 0.5,
   "width_mm": 5.6,
   "depth_mm": 8.0,
+  "offset_mm": 0.0,
   "markers": 1,
-  "build_s": 1.31,
+  "build_s": 3.12,
   "books_pass": true,
   "compare": {
    "1.0": {
@@ -3076,8 +4135,8 @@
   "steps": [
    {
     "t": 0.5,
-    "wall_s": 1.73,
-    "peak_rss_gb": 0.272,
+    "wall_s": 4.61,
+    "peak_rss_gb": 0.253,
     "parts": 1,
     "passes_max": 3,
     "parts_next": 1,
@@ -3139,30 +4198,30 @@
     "pending_flux_max_Wm2": 0.0,
     "surface_flux_max_Wm2": 2000000.0,
     "cost_split_s": {
-     "loads": 0.011,
-     "skins trial": 0.22,
-     "skins real": 0.186,
-     "skins repeats": 0.827,
+     "loads": 0.023,
+     "skins trial": 0.562,
+     "skins real": 0.542,
+     "skins repeats": 2.237,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.104,
-     "cut-cell solve repeats": 0.082,
-     "interface and part books": 0.001,
-     "surfaces phi": 0.005,
-     "surfaces psi": 0.039,
-     "markers": 0.016,
-     "re-partition": 0.057,
-     "remesh": 0.159,
+     "cut-cell solve": 0.291,
+     "cut-cell solve repeats": 0.244,
+     "interface and part books": 0.003,
+     "surfaces phi": 0.012,
+     "surfaces psi": 0.106,
+     "markers": 0.04,
+     "re-partition": 0.16,
+     "remesh": 0.345,
      "base moves": 0.0,
      "division": 0.0,
-     "step summary": 0.012,
-     "other": 0.008,
+     "step summary": 0.027,
+     "other": 0.022,
      "inclusive": {
       "base moves": 0.0,
       "division": 0.0,
-      "re-partition": 0.057,
+      "re-partition": 0.16,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.073,
+      "markers": 0.2,
       "base moves volume": 0.0,
       "base moves redistance": 0.0,
       "base moves volume correction": 0.0
@@ -3181,11 +4240,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.056,
+     "divide_s": 0.156,
      "divide_calls": 1,
-     "divide_mean_s": 0.056,
-     "tie_query_s": 0.009,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.156,
+     "tie_query_s": 0.023,
+     "centroid_distances_s": 0.005,
      "centroid_distances_calls": 300
     },
     "solver_watch": {
@@ -3208,8 +4267,8 @@
    },
    {
     "t": 1.0,
-    "wall_s": 2.68,
-    "peak_rss_gb": 0.279,
+    "wall_s": 6.86,
+    "peak_rss_gb": 0.253,
     "parts": 8,
     "passes_max": 2,
     "parts_next": 1,
@@ -3311,33 +4370,33 @@
     "pending_flux_max_Wm2": 43187.54142156727,
     "surface_flux_max_Wm2": 2000000.0,
     "cost_split_s": {
-     "loads": 0.092,
-     "skins trial": 0.272,
-     "skins real": 0.22,
-     "skins repeats": 0.357,
+     "loads": 0.21,
+     "skins trial": 0.734,
+     "skins real": 0.59,
+     "skins repeats": 0.999,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.173,
-     "cut-cell solve repeats": 0.122,
-     "interface and part books": 0.104,
-     "surfaces phi": 0.046,
-     "surfaces psi": 0.037,
-     "markers": 0.017,
-     "re-partition": 0.056,
-     "remesh": 0.152,
-     "base moves": 0.566,
-     "division": 0.439,
-     "step summary": 0.011,
-     "other": 0.013,
+     "cut-cell solve": 0.466,
+     "cut-cell solve repeats": 0.347,
+     "interface and part books": 0.244,
+     "surfaces phi": 0.107,
+     "surfaces psi": 0.09,
+     "markers": 0.047,
+     "re-partition": 0.162,
+     "remesh": 0.376,
+     "base moves": 1.298,
+     "division": 1.124,
+     "step summary": 0.023,
+     "other": 0.039,
      "inclusive": {
-      "base moves": 0.603,
-      "division": 0.439,
-      "re-partition": 0.056,
+      "base moves": 1.385,
+      "division": 1.124,
+      "re-partition": 0.162,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.073,
-      "base moves volume": 0.093,
+      "markers": 0.209,
+      "base moves volume": 0.2,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.098
+      "base moves volume correction": 0.22
      },
      "calls": {
       "base moves": 8,
@@ -3353,11 +4412,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.493,
+     "divide_s": 1.283,
      "divide_calls": 9,
-     "divide_mean_s": 0.055,
-     "tie_query_s": 0.085,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.143,
+     "tie_query_s": 0.194,
+     "centroid_distances_s": 0.004,
      "centroid_distances_calls": 196
     },
     "solver_watch": {
@@ -3380,8 +4439,8 @@
    },
    {
     "t": 1.5,
-    "wall_s": 2.15,
-    "peak_rss_gb": 0.28,
+    "wall_s": 5.58,
+    "peak_rss_gb": 0.253,
     "parts": 8,
     "passes_max": 2,
     "parts_next": 1,
@@ -3478,33 +4537,33 @@
     "pending_flux_max_Wm2": 64707.286879144245,
     "surface_flux_max_Wm2": 2000000.0,
     "cost_split_s": {
-     "loads": 0.087,
-     "skins trial": 0.276,
-     "skins real": 0.225,
-     "skins repeats": 0.059,
+     "loads": 0.209,
+     "skins trial": 0.773,
+     "skins real": 0.634,
+     "skins repeats": 0.143,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.176,
-     "cut-cell solve repeats": 0.021,
-     "interface and part books": 0.1,
-     "surfaces phi": 0.042,
-     "surfaces psi": 0.035,
-     "markers": 0.016,
-     "re-partition": 0.056,
-     "remesh": 0.034,
-     "base moves": 0.558,
-     "division": 0.444,
-     "step summary": 0.009,
-     "other": 0.01,
+     "cut-cell solve": 0.526,
+     "cut-cell solve repeats": 0.054,
+     "interface and part books": 0.232,
+     "surfaces phi": 0.092,
+     "surfaces psi": 0.096,
+     "markers": 0.044,
+     "re-partition": 0.163,
+     "remesh": 0.111,
+     "base moves": 1.26,
+     "division": 1.192,
+     "step summary": 0.021,
+     "other": 0.029,
      "inclusive": {
-      "base moves": 0.597,
-      "division": 0.444,
-      "re-partition": 0.056,
+      "base moves": 1.343,
+      "division": 1.192,
+      "re-partition": 0.163,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.072,
-      "base moves volume": 0.091,
+      "markers": 0.208,
+      "base moves volume": 0.192,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.093
+      "base moves volume correction": 0.204
      },
      "calls": {
       "base moves": 8,
@@ -3520,11 +4579,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.498,
+     "divide_s": 1.351,
      "divide_calls": 9,
-     "divide_mean_s": 0.055,
-     "tie_query_s": 0.086,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.15,
+     "tie_query_s": 0.206,
+     "centroid_distances_s": 0.002,
      "centroid_distances_calls": 126
     },
     "solver_watch": {
@@ -3547,8 +4606,8 @@
    },
    {
     "t": 2.0,
-    "wall_s": 2.39,
-    "peak_rss_gb": 0.28,
+    "wall_s": 6.26,
+    "peak_rss_gb": 0.253,
     "parts": 8,
     "passes_max": 2,
     "parts_next": 2,
@@ -3645,33 +4704,33 @@
     "pending_flux_max_Wm2": 74213.66311470057,
     "surface_flux_max_Wm2": 2000000.0,
     "cost_split_s": {
-     "loads": 0.075,
-     "skins trial": 0.296,
-     "skins real": 0.255,
-     "skins repeats": 0.342,
+     "loads": 0.179,
+     "skins trial": 0.826,
+     "skins real": 0.725,
+     "skins repeats": 0.942,
      "runoff (within the skins' passes)": 0.0,
-     "cut-cell solve": 0.149,
-     "cut-cell solve repeats": 0.09,
-     "interface and part books": 0.085,
-     "surfaces phi": 0.041,
-     "surfaces psi": 0.031,
-     "markers": 0.014,
-     "re-partition": 0.053,
-     "remesh": 0.033,
-     "base moves": 0.488,
-     "division": 0.422,
-     "step summary": 0.009,
-     "other": 0.008,
+     "cut-cell solve": 0.443,
+     "cut-cell solve repeats": 0.258,
+     "interface and part books": 0.207,
+     "surfaces phi": 0.091,
+     "surfaces psi": 0.07,
+     "markers": 0.037,
+     "re-partition": 0.134,
+     "remesh": 0.079,
+     "base moves": 1.103,
+     "division": 1.119,
+     "step summary": 0.019,
+     "other": 0.03,
      "inclusive": {
-      "base moves": 0.526,
-      "division": 0.422,
-      "re-partition": 0.053,
+      "base moves": 1.186,
+      "division": 1.119,
+      "re-partition": 0.134,
       "loads shadow": 0.0,
       "runoff": 0.0,
-      "markers": 0.067,
-      "base moves volume": 0.077,
+      "markers": 0.171,
+      "base moves volume": 0.161,
       "base moves redistance": 0.0,
-      "base moves volume correction": 0.078
+      "base moves volume correction": 0.176
      },
      "calls": {
       "base moves": 8,
@@ -3687,11 +4746,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 0.473,
+     "divide_s": 1.25,
      "divide_calls": 9,
-     "divide_mean_s": 0.053,
-     "tie_query_s": 0.084,
-     "centroid_distances_s": 0.001,
+     "divide_mean_s": 0.139,
+     "tie_query_s": 0.199,
+     "centroid_distances_s": 0.003,
      "centroid_distances_calls": 182
     },
     "solver_watch": {
@@ -3712,11 +4771,87 @@
     "base_excess_K": 2.5243827632178863,
     "base_excess_max_K": 2.5311439740748938
    }
-  ]
+  ],
+  "against_task7": {
+   "task7_record": "the record at plan 03b Task 11's BASE (6e489ec): gathered in plan 03b Task 7d on 73b5a9a (record commit eca9243), under the bridge law and before main's merge (6b65df8)",
+   "task7": {
+    "passes": true,
+    "books": {
+     "mass_residual_max_abs": 3.0725891714644845e-16,
+     "enthalpy_residual_max_abs": 1.2890431381160003e-14,
+     "layer_factor_max": 3.774758283725532e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.759999999999999,
+      "rel": -0.03675538656527377,
+      "judged_recession": false,
+      "nonrigid_mm": 1.4880451881582015,
+      "nonrigid_rel": 0.000702883764762241,
+      "base_excess_K": 1.7487468716257126
+     },
+     "1.5": {
+      "recession_mm": 1.7949999999999975,
+      "rel": -0.012107870115576458,
+      "judged_recession": true,
+      "nonrigid_mm": 1.5830581688230536,
+      "nonrigid_rel": 0.00831730498283667,
+      "base_excess_K": 2.1296173063709603
+     },
+     "2.0": {
+      "recession_mm": 2.905624999999998,
+      "rel": -0.0038995543366479035,
+      "judged_recession": true,
+      "nonrigid_mm": 1.6708454687252507,
+      "nonrigid_rel": -0.0018844272847964305,
+      "base_excess_K": 2.5243827632178863
+     }
+    }
+   },
+   "now": {
+    "passes": true,
+    "books": {
+     "mass_residual_max_abs": 3.0725891714644845e-16,
+     "enthalpy_residual_max_abs": 1.2890431381160003e-14,
+     "layer_factor_max": 3.774758283725532e-15,
+     "books_pass": true
+    },
+    "failure": null,
+    "by_time_s": {
+     "1.0": {
+      "recession_mm": 0.759999999999999,
+      "rel": -0.03675538656527377,
+      "judged_recession": false,
+      "nonrigid_mm": 1.4880451881582015,
+      "nonrigid_rel": 0.000702883764762241,
+      "base_excess_K": 1.7487468716257126
+     },
+     "1.5": {
+      "recession_mm": 1.7949999999999975,
+      "rel": -0.012107870115576458,
+      "judged_recession": true,
+      "nonrigid_mm": 1.5830581688230536,
+      "nonrigid_rel": 0.00831730498283667,
+      "base_excess_K": 2.1296173063709603
+     },
+     "2.0": {
+      "recession_mm": 2.905624999999998,
+      "rel": -0.0038995543366479035,
+      "judged_recession": true,
+      "nonrigid_mm": 1.6708454687252507,
+      "nonrigid_rel": -0.0018844272847964305,
+      "base_excess_K": 2.5243827632178863
+     }
+    }
+   },
+   "change": "No change: every judged and recorded number equals Task 7d's (73b5a9a) to every digit, the books included; only the wall times, the code stamp and the new offset_mm field (0 here) differ. Neither the composite rheology (the skins' default since plan 03b Task 9) nor main's merge (6b65df8) moves the plate, which runs with no flow (that no viscosity enters is inferred from the case's setup; the equality is measured), so no bridge-law re-run was needed."
+  }
  },
  "shoulder_dev": {
   "code": {
-   "commit": "73b5a9a6e548d00a170464c76580788babfa53e4",
+   "commit": "e57945f46d68009a411c6c06c106020fb231b140",
    "dirty": false
   },
   "case": "shoulder",
@@ -3737,7 +4872,7 @@
    "decel_ms2": 29.77
   },
   "markers_at_start": 85,
-  "build_s": 13.83,
+  "build_s": 13.63,
   "books_pass": true,
   "deposit_formed": false,
   "deposit_rigid": false,
@@ -3750,78 +4885,78 @@
   },
   "passes": false,
   "failure": {
-   "step": 3,
-   "t_start": 1.0,
-   "error": "RuntimeError: the groups of phi's move swept 4.270874e-10 m3 but phi's volume changed by 2.668821e-10 m3, more than 1e-12 of the body's volume apart: cells no marker may own changed",
-   "wall_s": 383.63,
-   "parts_accepted": 23,
+   "step": 2,
+   "t_start": 0.5,
+   "error": "RuntimeError: metal thinner than twice the skin depth: 2 pair(s) of columns whose normals oppose (n_i . n_j < -0.5) share a boundary in the layer, the first between the markers at (-3.480, 2.590, -0.630) and (-2.979, 3.101, -2.842) mm (design section 21.11; the skin depth is 1.2 mm, and the thin case is designed later)",
+   "wall_s": 215.09,
+   "parts_accepted": 8,
    "cost_split_s": {
-    "loads": 11.623,
-    "skins trial": 10.452,
-    "skins real": 9.454,
-    "skins repeats": 45.678,
-    "runoff (within the skins' passes)": 145.728,
-    "cut-cell solve": 2.853,
-    "cut-cell solve repeats": 4.783,
-    "interface and part books": 4.01,
-    "surfaces phi": 1.585,
-    "surfaces psi": 0.0,
-    "markers": 0.0,
-    "re-partition": 0.0,
-    "remesh": 0.0,
-    "base moves": 57.877,
-    "division": 89.262,
-    "step summary": 0.186,
-    "other": 0.143,
+    "loads": 7.029,
+    "skins trial": 10.185,
+    "skins real": 10.3,
+    "skins repeats": 64.147,
+    "runoff (within the skins' passes)": 26.903,
+    "cut-cell solve": 2.142,
+    "cut-cell solve repeats": 6.774,
+    "interface and part books": 1.856,
+    "surfaces phi": 1.059,
+    "surfaces psi": 0.447,
+    "markers": 1.299,
+    "re-partition": 15.295,
+    "remesh": 5.003,
+    "base moves": 19.077,
+    "division": 43.255,
+    "step summary": 0.07,
+    "other": 0.253,
     "inclusive": {
-     "base moves": 59.314,
-     "division": 89.262,
-     "re-partition": 0.0,
-     "loads shadow": 4.045,
-     "runoff": 145.728,
-     "markers": 0.0,
-     "base moves volume": 1.594,
+     "base moves": 19.897,
+     "division": 43.255,
+     "re-partition": 15.295,
+     "loads shadow": 3.467,
+     "runoff": 26.903,
+     "markers": 16.594,
+     "base moves volume": 0.795,
      "base moves redistance": 0.0,
-     "base moves volume correction": 5.236
+     "base moves volume correction": 1.269
     },
     "calls": {
-     "base moves": 23,
-     "base moves volume": 22,
-     "cut-cell solve": 34,
-     "cut-cell solve repeats": 51,
-     "skins trial": 34,
-     "skins repeats": 102,
-     "runoff": 632,
-     "re-partition": 0,
-     "remesh build": 0,
-     "division": 22
+     "base moves": 6,
+     "base moves volume": 6,
+     "cut-cell solve": 8,
+     "cut-cell solve repeats": 24,
+     "skins trial": 8,
+     "skins repeats": 48,
+     "runoff": 448,
+     "re-partition": 2,
+     "remesh build": 1,
+     "division": 7
     }
    },
    "division_cost": {
-    "divide_s": 89.259,
-    "divide_calls": 22,
-    "divide_mean_s": 4.057,
-    "tie_query_s": 21.227,
-    "centroid_distances_s": 8.541,
-    "centroid_distances_calls": 632
+    "divide_s": 57.54,
+    "divide_calls": 8,
+    "divide_mean_s": 7.192,
+    "tie_query_s": 13.547,
+    "centroid_distances_s": 10.826,
+    "centroid_distances_calls": 448
    },
    "solver_watch": {
-    "passes_max": 7,
+    "passes_max": 4,
     "passes_accepted_max": 4,
-    "interface_mismatch_max": 0.0008595717362268759,
-    "newton_iterations_max": 7,
-    "gmres_iterations_max": 19,
-    "gmres_residual_max": 9.996003888663928e-13,
-    "side_solves": 3465,
+    "interface_mismatch_max": 0.0008007132787960595,
+    "newton_iterations_max": 6,
+    "gmres_iterations_max": 20,
+    "gmres_residual_max": 9.911204492196954e-13,
+    "side_solves": 2182,
     "side_solves_unconverged": 0
    },
-   "state": "/private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/eb7e9b74-487b-431a-863c-b8a3214cb080/scratchpad/t7d/states_cases/shoulder_dev_failed_from_t1.00.pkl"
+   "state": "/private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/eb7e9b74-487b-431a-863c-b8a3214cb080/scratchpad/t11/w/states_cases/shoulder_dev_failed_from_t0.50.pkl"
   },
   "steps": [
    {
     "t": 0.5,
-    "wall_s": 67.71,
-    "peak_rss_gb": 0.284,
+    "wall_s": 117.0,
+    "peak_rss_gb": 0.243,
     "parts": 1,
     "passes_max": 7,
     "parts_next": 1,
@@ -3877,30 +5012,30 @@
     "pending_flux_max_Wm2": 0.0,
     "surface_flux_max_Wm2": 5943043.626753601,
     "cost_split_s": {
-     "loads": 0.709,
-     "skins trial": 3.915,
-     "skins real": 5.809,
-     "skins repeats": 47.656,
-     "runoff (within the skins' passes)": 2.857,
-     "cut-cell solve": 0.414,
-     "cut-cell solve repeats": 1.041,
-     "interface and part books": 0.036,
+     "loads": 0.915,
+     "skins trial": 6.215,
+     "skins real": 9.752,
+     "skins repeats": 83.341,
+     "runoff (within the skins' passes)": 4.314,
+     "cut-cell solve": 0.875,
+     "cut-cell solve repeats": 1.899,
+     "interface and part books": 0.013,
      "surfaces phi": 0.0,
-     "surfaces psi": 0.289,
-     "markers": 0.257,
-     "re-partition": 3.919,
-     "remesh": 0.666,
-     "base moves": 0.0,
+     "surfaces psi": 0.473,
+     "markers": 0.531,
+     "re-partition": 7.155,
+     "remesh": 1.283,
+     "base moves": 0.001,
      "division": 0.0,
-     "step summary": 0.083,
-     "other": 0.06,
+     "step summary": 0.114,
+     "other": 0.119,
      "inclusive": {
       "base moves": 0.0,
       "division": 0.0,
-      "re-partition": 3.919,
-      "loads shadow": 0.34,
-      "runoff": 2.857,
-      "markers": 4.177,
+      "re-partition": 7.155,
+      "loads shadow": 0.449,
+      "runoff": 4.314,
+      "markers": 7.685,
       "base moves volume": 0.0,
       "base moves redistance": 0.0,
       "base moves volume correction": 0.0
@@ -3919,11 +5054,11 @@
      }
     },
     "division_cost": {
-     "divide_s": 3.731,
+     "divide_s": 6.871,
      "divide_calls": 1,
-     "divide_mean_s": 3.731,
-     "tie_query_s": 0.884,
-     "centroid_distances_s": 8.97,
+     "divide_mean_s": 6.871,
+     "tie_query_s": 1.719,
+     "centroid_distances_s": 15.385,
      "centroid_distances_calls": 700
     },
     "solver_watch": {
@@ -3933,7 +5068,7 @@
      "newton_iterations_max": 8,
      "gmres_iterations_max": 21,
      "gmres_residual_max": 9.977406040317648e-13,
-     "side_solves": 2595,
+     "side_solves": 2594,
      "side_solves_unconverged": 0
     },
     "deposit": {
@@ -3960,186 +5095,102 @@
      0.0,
      0.0
     ]
-   },
-   {
-    "t": 1.0,
-    "wall_s": 111.98,
-    "peak_rss_gb": 0.393,
-    "parts": 8,
-    "passes_max": 4,
-    "parts_next": 4,
-    "split_depth_max": 1,
-    "parts_over": 0,
-    "mass_residual": 8.313020821994405e-16,
-    "enthalpy_residual": -2.4994143565816017e-16,
-    "enthalpy_in_J": 124.17534832197325,
-    "enthalpy_radiated_J": 0.0,
-    "mass_removed_kg": 0.0,
-    "mass_sprayed_kg": 0.0,
-    "mass_volume_kg": 0.0003710345560900223,
-    "mass_skins_kg": 0.0009331870929367038,
-    "n_markers": 85,
-    "markers_trapped": 0,
-    "marker_splits": 0,
-    "marker_merges": 19,
-    "cells": 42184,
-    "cells_at_floor": 34936,
-    "snap_fallback": 0,
-    "snap_slide_max_m": 0.0,
-    "volume_correction_max": 1.355183613009021e-11,
-    "move_corrections": [
-     {
-      "kind": "part",
-      "worst": 2.2836452707295173e-15,
-      "body": 2.2836452707295173e-15
-     },
-     {
-      "kind": "part",
-      "worst": 1.1418226353647613e-16,
-      "body": 1.1418226353647613e-16
-     },
-     {
-      "kind": "part",
-      "worst": 1.1418226353647614e-15,
-      "body": 1.1418226353647614e-15
-     },
-     {
-      "kind": "part",
-      "worst": 0.0,
-      "body": 0.0
-     },
-     {
-      "kind": "part",
-      "worst": 1.6841883871630249e-13,
-      "body": 1.6841883871630249e-13
-     },
-     {
-      "kind": "part",
-      "worst": 1.355183613009021e-11,
-      "body": 1.355183613009021e-11
-     },
-     {
-      "kind": "remesh",
-      "worst": 1.141822635364758e-16,
-      "body": 1.141822635364758e-16
-     }
-    ],
-    "group_area_ratio_min": 0.5195311302230076,
-    "group_area_ratio_max": 1.7516893041741677,
-    "group_area_ratio_trimmed_max": 1.3972218447947717,
-    "phi_move_max_m": 0.0006810416327843614,
-    "phi_move_median_m": 8.841836536559227e-06,
-    "volume_repartitioned_share": 0.020693369160657848,
-    "stretch_min": 0.9835193941205864,
-    "stretch_max": 1.0161670344806393,
-    "grad_phi_below_bound_share": 0.0700354609929078,
-    "phi_beta_angle_median_deg": 5.860606935432092,
-    "phi_beta_angle_p95_deg": 27.90937966109282,
-    "phi_beta_angle_max_deg": 108.7563336453661,
-    "layer_factor_max": 0.00046774549530814724,
-    "fill_miss_max": 2.2034351280368917e-16,
-    "move_miss_max": 9.5969391308412e-08,
-    "n_baseless": 0,
-    "density_carry_m3": -1.0525974268933148e-22,
-    "density_carry_share_max": 4.683030434111056e-16,
-    "pending_share_of_heat_in": 0.0006944997549078663,
-    "interface_mismatch_share": 3.629947213886425e-05,
-    "residual_newton_J": 2.6113877025224497e-06,
-    "residual_move_J": 0.26270727566862495,
-    "residual_remesh_J": 0.0,
-    "mass_drawn_kg": 3.481698022243045e-05,
-    "mass_handed_kg": 2.3027519644048974e-05,
-    "n_pieces": 1,
-    "pieces_used_up": 0,
-    "island_nodes": 0,
-    "groups_guarded_max": 5,
-    "pending_flux_max_Wm2": 150367.54334744002,
-    "surface_flux_max_Wm2": 5943043.626753601,
-    "cost_split_s": {
-     "loads": 4.189,
-     "skins trial": 5.727,
-     "skins real": 5.642,
-     "skins repeats": 34.72,
-     "runoff (within the skins' passes)": 16.133,
-     "cut-cell solve": 1.202,
-     "cut-cell solve repeats": 3.809,
-     "interface and part books": 0.936,
-     "surfaces phi": 0.483,
-     "surfaces psi": 0.431,
-     "markers": 0.467,
-     "re-partition": 3.723,
-     "remesh": 2.4,
-     "base moves": 8.388,
-     "division": 23.474,
-     "step summary": 0.118,
-     "other": 0.138,
-     "inclusive": {
-      "base moves": 8.782,
-      "division": 23.474,
-      "re-partition": 3.723,
-      "loads shadow": 1.785,
-      "runoff": 16.133,
-      "markers": 4.19,
-      "base moves volume": 0.476,
-      "base moves redistance": 0.0,
-      "base moves volume correction": 0.566
-     },
-     "calls": {
-      "base moves": 6,
-      "base moves volume": 6,
-      "cut-cell solve": 8,
-      "cut-cell solve repeats": 24,
-      "skins trial": 8,
-      "skins repeats": 48,
-      "runoff": 448,
-      "re-partition": 1,
-      "remesh build": 1,
-      "division": 7
-     }
-    },
-    "division_cost": {
-     "divide_s": 26.939,
-     "divide_calls": 7,
-     "divide_mean_s": 3.848,
-     "tie_query_s": 6.915,
-     "centroid_distances_s": 5.809,
-     "centroid_distances_calls": 448
-    },
-    "solver_watch": {
-     "passes_max": 4,
-     "passes_accepted_max": 4,
-     "interface_mismatch_max": 0.0008007132787960595,
-     "newton_iterations_max": 6,
-     "gmres_iterations_max": 20,
-     "gmres_residual_max": 9.983384475939231e-13,
-     "side_solves": 2174,
-     "side_solves_unconverged": 0
-    },
-    "deposit": {
-     "mass_kg": 7.765861077948376e-06,
-     "rigid_share": 1.0,
-     "share_past_5mm": 0.06713005768412778,
-     "centroid_past_heat_mm": 1.2418728776426962,
-     "reach_mm": 6.42663896235375,
-     "share_5_to_10mm": 0.06713005768412778,
-     "nonrigid_mass_past_kg": 0.0,
-     "hot_reach_past_mm": 0.0,
-     "upstream_recession_mm": 0.283372381711092,
-     "liquid_on_cap_mm": 0.0,
-     "markers_past": 15
-    },
-    "heat_coverage_projected": 0.9999999999999997,
-    "momentum_to_wall": [
-     0.0011606517902791275,
-     -4.500296101773009e-06,
-     0.0002208040550331149
-    ],
-    "momentum_to_volume": [
-     0.0,
-     0.0,
-     0.0
-    ]
    }
-  ]
+  ],
+  "against_task7": {
+   "task7_record": "the record at plan 03b Task 11's BASE (6e489ec): gathered in plan 03b Task 7d on 73b5a9a (record commit eca9243), under the bridge law and before main's merge (6b65df8)",
+   "task7": {
+    "passes": false,
+    "books": {
+     "mass_residual_max_abs": 8.313020821994405e-16,
+     "enthalpy_residual_max_abs": 2.4994143565816017e-16,
+     "layer_factor_max": 0.00046774549530814724,
+     "books_pass": true
+    },
+    "failure": {
+     "step": 3,
+     "t_start": 1.0,
+     "error": "RuntimeError: the groups of phi's move swept 4.270874e-10 m3 but phi's volume changed by 2.668821e-10 m3, more than 1e-12 of the body's volume apart: cells no marker may own changed",
+     "wall_s": 383.63,
+     "parts_accepted": 23
+    },
+    "steps": [
+     {
+      "t": 0.5,
+      "parts": 1,
+      "mass_residual": 0.0,
+      "enthalpy_residual": 0.0,
+      "layer_factor_max": 3.649517703108174e-05,
+      "wall_s": 67.71,
+      "deposit": {
+       "mass_kg": 0.0,
+       "rigid_share": null,
+       "centroid_past_heat_mm": null,
+       "share_past_5mm": null,
+       "upstream_recession_mm": 0.004784832695755095
+      }
+     },
+     {
+      "t": 1.0,
+      "parts": 8,
+      "mass_residual": 8.313020821994405e-16,
+      "enthalpy_residual": -2.4994143565816017e-16,
+      "layer_factor_max": 0.00046774549530814724,
+      "wall_s": 111.98,
+      "deposit": {
+       "mass_kg": 7.765861077948376e-06,
+       "rigid_share": 1.0,
+       "centroid_past_heat_mm": 1.2418728776426962,
+       "share_past_5mm": 0.06713005768412778,
+       "upstream_recession_mm": 0.283372381711092
+      }
+     }
+    ],
+    "deposit_judged_at_2s": {
+     "deposit_formed": false,
+     "deposit_rigid": false,
+     "deposit_near": false
+    }
+   },
+   "now": {
+    "passes": false,
+    "books": {
+     "mass_residual_max_abs": 0.0,
+     "enthalpy_residual_max_abs": 0.0,
+     "layer_factor_max": 3.649517703108174e-05,
+     "books_pass": true
+    },
+    "failure": {
+     "step": 2,
+     "t_start": 0.5,
+     "error": "RuntimeError: metal thinner than twice the skin depth: 2 pair(s) of columns whose normals oppose (n_i . n_j < -0.5) share a boundary in the layer, the first between the markers at (-3.480, 2.590, -0.630) and (-2.979, 3.101, -2.842) mm (design section 21.11; the skin depth is 1.2 mm, and the thin case is designed later)",
+     "wall_s": 215.09,
+     "parts_accepted": 8
+    },
+    "steps": [
+     {
+      "t": 0.5,
+      "parts": 1,
+      "mass_residual": 0.0,
+      "enthalpy_residual": 0.0,
+      "layer_factor_max": 3.649517703108174e-05,
+      "wall_s": 117.0,
+      "deposit": {
+       "mass_kg": 0.0,
+       "rigid_share": null,
+       "centroid_past_heat_mm": null,
+       "share_past_5mm": null,
+       "upstream_recession_mm": 0.004784832695755095
+      }
+     }
+    ],
+    "deposit_judged_at_2s": {
+     "deposit_formed": false,
+     "deposit_rigid": false,
+     "deposit_near": false
+    }
+   },
+   "change": "Changed by the composite rheology alone: a scratch re-run of shoulder --steps 2 under the bridge law on e57945f reproduced Task 7d's first two steps in every number but the wall times. The first step is Task 7d's in every number but the count of sideways solves (2594 against 2595). The second step (0.5 to 1.0 s) accepts its 8 parts in 215 s and then stops at its end on THIN_METAL (design 21.11): two pairs of columns at the heated cap's +y edge, their normals turning 146 and 142 degrees; the metal through the cap's marker along its normal is 1.39 mm, under 2H = 2.4 mm, and the thin test's measures at the pairs' edges are 0.84 to 2.06 mm. On a 0.1 mm grid across the edge at x = -3.3 mm, a fin of metal about 0.6 mm wide stands about 1 mm above a trough the runoff has cut in the heated cap beside it, with metal run 0.4 mm thick over the edge down the cut face: a real thin site (task-11-report.md). On Task 7d's code the second step completed (a rigid deposit of 7.77 mg past the heat's end at 1.0 s) and the third stopped after 23 parts on MOVE_SUM_RTOL; here no deposit is recorded at 1.0 s."
+  }
  }
 }

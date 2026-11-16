@@ -1021,11 +1021,15 @@ def sprayed():
     liquid formed on its +x face by 0.25 s of 6 MW/m2 (no flow, nothing removed), then one 0.05 s macro step at the
     continuum gas state with the runoff and Girin's plan on: (body, the melting step's book, the spraying step's book or
     None, its time [s], the RuntimeError that stopped it or None)."""
-    # The bridge law, the law this fixture's numbers were tuned on: under the composite default (plan 03b Task 9) the
-    # spraying step stops on THIN_METAL at the rounded lip (a pair of columns whose normals oppose, metal thinner than
-    # twice the skin depth, design 21.11), measured once, where it runs under the bridge law. The cause (a far runnier
-    # slurry moving metal off the lip) is inferred, not isolated. Whether the composite law should run this fixture is
-    # the controller's to decide; until then the fixture pins the law it was built with.
+    # The bridge law, the law this fixture's numbers were tuned on, pinned by the controller's ruling T9-a. Under the
+    # composite default the spraying step stops at its end on THIN_METAL (design 21.11) at one pair of columns (plan 03b
+    # Task 11, measured once): the +x face's lower rounded lip stands 0.96 mm inside its starting surface at one marker
+    # of the pair and the bottom face 0.65 mm proud of it at the other (the runnier slurry run off the lip, inferred),
+    # and the two normals turn 121 degrees (n_i . n_j = -0.515). The metal there is not thin: the two markers stand
+    # 4.2 mm apart with three markers between them on the lip, their columns share no boundary at any level of the
+    # division (only its node pass pairs them, as in plan 03b Task 7c's spurious pairs), the metal through each along
+    # its normal is 3.8 and 8.3 mm, and the thin test reads 2.18 mm between their tangent planes and 2.40 mm along their
+    # normals, at its 2.4 mm threshold. Under the bridge law the same lip turns about 98 degrees and the step runs.
     from dataclasses import replace
     body = gas_body(rounded_cube, settings=replace(SETTINGS, rheology="bridge"))
     melt = body.advance(0.25, q_prescribed=one_face(6e6))
