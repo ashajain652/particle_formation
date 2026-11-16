@@ -3,7 +3,7 @@ item 3 and 20.13; plan docs/superpowers/plans/levelset/03-stage3-skins.md, Task 
 design section 21 by plan 03b Task 7 (docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md): one skin depth H,
 the gas surface phi evolved and the skin base beta derived one skin depth inside it. Run from `Reentry Model/`:
 
-    "$PY" analysis/levelset/stage3_cases.py plate-cold [--preset dev|production]
+    "$PY" analysis/levelset/stage3_cases.py plate-cold [--preset dev|production] [--offset-mm 0.27]
     "$PY" analysis/levelset/stage3_cases.py plate-hot  [--preset dev|production]
     "$PY" analysis/levelset/stage3_cases.py box        [--preset dev]
     "$PY" analysis/levelset/stage3_cases.py shoulder   [--preset dev]
@@ -39,7 +39,12 @@ top beneath the skin is then above T_rigid by construction, so it is reported ag
 criterion, judged under the full-depth skins of design 20.6, which design 21.13 retires) and no longer judged (plan 03b
 Task 7's judgment). The recession is the face's solid top: phi's zero on the axis (with swell off every column holds its
 metal at the solid's density, exactly full), as the skyscrapers' plate reads it; the recession by the removed mass is
-reported beside it.
+reported beside it. The face's place among the mesh's planes of nodes is set by its height above the mesh box's floor
+(the floor is a plane of nodes, and the box a whole number of base cells), so `offset` (`--offset-mm`) raises the face
+by that much on the same mesh box: phi0 = z - offset, the column holding 8 mm + offset of metal under 3.2 mm - offset of
+gas (the controller's ruling T7-m, plan 03b Task 11: the cold plate judged again 0.27 mm up, where diagnosis D1 measured
+its skin base cutting its 0.7 mm cells as the box's does, a 10 % sliver of metal against 71 %, and its recession 5 %
+slower at 1.0 s, measured once). A run with an offset is recorded apart (`plate_<case>_<preset>_offset_<mm>mm`).
 
 The q6p box (Ruling 5): 8 x 10 x 10 mm at 700 K, 6 MW/m2 by projection on its 10 x 10 face (flight along -x; each
 marker the mean projection of the patches of phi it owns, taken again on the moved phi before every part,
@@ -763,14 +768,15 @@ def hot_reference():
             for t in JUDGED_TIMES}
 
 
-def plate_body(case, preset, mat=None):
-    """The plate's centre column (module docstring) at the case's starting temperature, its face one marker."""
+def plate_body(case, preset, mat=None, offset=0.0):
+    """The plate's centre column (module docstring) at the case's starting temperature, its face one marker, `offset`
+    [m] above z = 0 on the same mesh box (module docstring)."""
     mat = material() if mat is None else mat
     T0, _ = PLATE_CASES[case]
     st = skin_settings(preset)
     w = PLATE_WIDTH
     base = BoxBase.around((-w / 2, -w / 2, -PLATE_DEPTH), (w / 2, w / 2, PLATE_GAS), H0)
-    body = skinbody.LevelSetSkinBody(mat, base, lambda x: x[:, 2], T0, st, remove="feed", spacing=w)
+    body = skinbody.LevelSetSkinBody(mat, base, lambda x: x[:, 2] - offset, T0, st, remove="feed", spacing=w)
     if body.markers.n != 1:
         raise RuntimeError("the plate's face should carry one marker, got {}".format(body.markers.n))
     return body
@@ -805,12 +811,13 @@ class EverySecond:
         body._psi, body._target, body._needs_rebuild = psi, target, needs
 
 
-def plate(case, preset="dev", every_second=False, steps=None, save=True):
-    """The plate case (module docstring). Returns its summary (and writes it)."""
+def plate(case, preset="dev", every_second=False, steps=None, save=True, offset=0.0):
+    """The plate case (module docstring), its face `offset` [m] up on the same mesh box. Returns its summary (and writes
+    it)."""
     mat = material()
     T0, q0 = PLATE_CASES[case]
     t_build = time.perf_counter()
-    body = plate_body(case, preset, mat)
+    body = plate_body(case, preset, mat, offset)
     t_build = time.perf_counter() - t_build
     area = float(body.markers.area.sum())
     top0 = plate_top(body)
@@ -837,7 +844,8 @@ def plate(case, preset="dev", every_second=False, steps=None, save=True):
             skipper.skip = (k % 2 == 1)                    # the step ends at 1.0 and 2.0 s skip psi and the remesh
 
     n = int(round(T_END / DT)) if steps is None else steps
-    label = "plate-{} {}{}".format(case, preset, " every-second" if every_second else "")
+    tag = "_offset_{:g}mm".format(offset * 1e3) if offset else ""     # a run with an offset is recorded apart
+    label = "plate-{} {}{}{}".format(case, preset, " every-second" if every_second else "", tag)
     rows, failure = run_steps(body, advance, n, label, extra, before)
     at = {round(r["t"], 6): r for r in rows}
     compare, verdict = {}, []
@@ -865,12 +873,13 @@ def plate(case, preset="dev", every_second=False, steps=None, save=True):
                                "base_within_skyscrapers_tol": at[t]["base_excess_K"] <= HOT_BASE_TOL_K}   # reported
             verdict.append((t < 1.25 or abs(rel) <= RECESSION_TOL) and abs(rel_nr) <= NONRIGID_TOL)
     out = {"case": "plate-" + case, "preset": preset, "every_second": every_second, "T0_K": T0, "q_Wm2": q0,
-           "dt_s": DT, "width_mm": PLATE_WIDTH * 1e3, "depth_mm": PLATE_DEPTH * 1e3, "markers": int(body.markers.n),
+           "dt_s": DT, "width_mm": PLATE_WIDTH * 1e3, "depth_mm": (PLATE_DEPTH + offset) * 1e3,
+           "offset_mm": offset * 1e3, "markers": int(body.markers.n),
            "build_s": round(t_build, 2), "books_pass": books_pass(rows), "compare": compare,
            "passes": bool(verdict) and len(verdict) == len(JUDGED_TIMES) and all(verdict) and books_pass(rows)
            and failure is None, "failure": failure, "steps": rows}
     if save:
-        write("plate_{}_{}{}".format(case, preset, "_every_second" if every_second else ""), out)
+        write("plate_{}_{}{}{}".format(case, preset, "_every_second" if every_second else "", tag), out)
     return out
 
 
@@ -1371,12 +1380,13 @@ def main(argv=None):
     p.add_argument("case", choices=("plate-cold", "plate-hot", "box", "shoulder", "cost", "record"))
     p.add_argument("--preset", choices=tuple(SKIN_PRESETS), default="dev")
     p.add_argument("--every-second", action="store_true", help="plates: psi and the remesh at every second step end")
+    p.add_argument("--offset-mm", type=float, default=0.0, help="plates: the face raised this far on the same mesh [mm]")
     p.add_argument("--what", choices=("sphere", "rim", "skip"), default="sphere", help="cost: which measurement")
     p.add_argument("--steps", type=int, default=None, help="macro steps (default: to 2 s; the sphere 2)")
     p.add_argument("--dt", type=float, default=DT, help="cost sphere: the macro step [s]")
     a = p.parse_args(argv)
     if a.case in ("plate-cold", "plate-hot"):
-        out = plate(a.case.split("-")[1], a.preset, a.every_second, a.steps)
+        out = plate(a.case.split("-")[1], a.preset, a.every_second, a.steps, offset=a.offset_mm * 1e-3)
     elif a.case == "box":
         out = box(a.preset, a.steps)
     elif a.case == "shoulder":
