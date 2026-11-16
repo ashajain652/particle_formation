@@ -232,6 +232,63 @@ def test_the_exposed_slurry_mode_matches_the_skyscrapers_on_one_column():
         np.testing.assert_allclose(plan.slurry[key], modes[key], rtol=1e-9, atol=0.0, err_msg=key)
 
 
+TABLE_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "spraying_table_path.npz")
+
+
+def table_path_case():
+    """The table path's records and released masses (ruling P5 of plan 03b Task 10, the "before" of
+    `test_the_table_path_is_unchanged`): on SLURRY_COLUMNS' skins, every cell moving, the markers in reversed rows, two
+    plans for a 0.5 s macro step on Girin's theory (a spray model whose `dispersion` is the default, "table") -- the
+    liquid's mode alone at the default gas, and with the slurry at the slurry tests' gas -- each released over four flow
+    sub-steps of 0.125 s and recorded at 0.5 s. Returns {name: array}: per case the records (`SprayPlan.records`), the
+    mass each sub-step released per skin row, the plan's rates, books, droplets and size histograms, and the step
+    summary's names and values (`step_summary`)."""
+    mat = aa7075()
+    n = len(SLURRY_COLUMNS)
+    theta = np.linspace(0.05, 0.9, n)
+    out = {}
+    for case, slurry, flow in (("liquid", False, gas(n)), ("slurry", True, gas(n, tau=200.0, G=-3e4))):
+        mk = row_markers(n, order=np.arange(n)[::-1])
+        sk = stacked(mk, SLURRY_COLUMNS, mat, rng=np.random.default_rng(17))
+        plan = spraying.spray_plan(sk, mk, flow, STATE, model_of(mat), theta <= 0.5 * np.pi,
+                                   flow.deceleration * np.cos(theta), 0.5, 0.05, 0.04, slurry=slurry, theta=theta,
+                                   centre=np.array([0.0, 0.0, -0.05]), v_hat=np.array([0.0, 0.0, -1.0]),
+                                   division=row_division(n))
+        out[case + "_released"] = np.array([plan.release(sk, 0.125).mass for _ in range(4)])
+        out[case + "_records"] = plan.records(0.5)
+        for name in ("rate", "rate_slurry", "mass", "mass_slurry", "enthalpy", "enthalpy_slurry", "momentum",
+                     "momentum_slurry", "number", "number_slurry", "hist_n", "hist_m"):
+            out[case + "_" + name] = np.asarray(getattr(plan, name), dtype=float)
+        summary = plan.step_summary(sk, n_before=1.0)
+        out[case + "_summary_names"] = np.array(sorted(summary))
+        out[case + "_summary"] = np.array([summary[k] for k in sorted(summary)], dtype=float)
+    return out
+
+
+def write_table_fixture(path=TABLE_FIXTURE):
+    """Write `table_path_case` to `path` (not a test). The committed file was written on the package as it stood at plan
+    03b Task 10's BASE, 964b415, before spraying.py was edited (the commit that added the file changed no code), from
+    "Reentry Model/": `PYTHONPATH=tests:tests/levelset python -c "import test_levelset_spraying as t;
+    t.write_table_fixture()"`."""
+    np.savez(path, **table_path_case())
+
+
+def test_the_table_path_is_unchanged():
+    """Plan 03b Task 10 (ruling P5): on Girin's theory, the spray model's default `dispersion` "table", the plans'
+    records, the masses each flow sub-step released, the plans' books, droplets and histograms and the step summary are
+    byte for byte those recorded at the task's BASE, before the profile path was added (`table_path_case`,
+    TABLE_FIXTURE): same names, dtypes, shapes and bytes. Both cases release from both modes, so the records hold rows
+    of each."""
+    want = np.load(TABLE_FIXTURE)
+    got = table_path_case()
+    assert sorted(got) == sorted(want.files)
+    for key in want.files:
+        a, b = got[key], want[key]
+        assert a.dtype == b.dtype and a.shape == b.shape and a.tobytes() == b.tobytes(), key
+    assert got["liquid_mass"].sum() > 0.0 and got["slurry_mass"].sum() > 0.0 and got["slurry_mass_slurry"].sum() > 0.0
+    assert got["liquid_records"].shape[1] == len(spray.SOURCE_COLUMNS)
+
+
 def test_the_cascade_takes_liquid_first_and_never_rigid_metal():
     """Asked for everything over a long time, the release takes the run of liquid cells from the top; with the slurry
     every flowing cell down to the first rigid one; never rigid metal, which is as it was in every column."""
