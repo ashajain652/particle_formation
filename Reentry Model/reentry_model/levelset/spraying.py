@@ -329,4 +329,4 @@ def _slurry_modes(skins, rows, T, flow, state, model, windward, w_n, area, edges
     m_s = (skins.m * ((cells >= n_liq_r[:, None]) & (cells < n_flow_r[:, None]))).sum(axis=1)[rows]   # the slurry run
     return spray_mod.slurry_modes(sel, T_cell, f_s, rho, depth, flow, state, model, skins.material, windward, w_n, area,
                                   m_s, extent, F_skin, radius, dt, SHEAR_PASSES, SHEAR_TOL, theta=theta,
-                                  nose_radius=nose_radius)
+                                  nose_radius=nose_radius, law=skins.settings.rheology)

@@ -324,7 +324,8 @@ def momentum_closes(sk, P0, book, rel=1e-12):
 
 def test_flowing_and_liquid_follow_the_shared_temperatures():
     mat = Material.from_drama_json("AA7075_scheil")
-    sk = layered(mat, [(30e-6, 950.0), (30e-6, 908.5), (30e-6, 900.0), (30e-6, mat.T_rigid - 0.05), (30e-6, 880.0)])
+    sk = layered(mat, [(30e-6, 950.0), (30e-6, 908.5), (30e-6, 900.0), (30e-6, mat.T_rigid - 0.05), (30e-6, 880.0)],
+                 settings=SkinSettings(swell=False, rheology="bridge"))      # the test's point is the bridge law's numbers
     flowing, liquid = sk.flowing()[0], sk.liquid()[0]
     assert np.array_equal(flowing, np.arange(15) < 9)                  # above T_rigid (half liquid): flows
     assert np.array_equal(liquid, np.arange(15) < 6)                   # at or above the liquidus: liquid
@@ -408,7 +409,7 @@ def test_liquid_over_slurry_kinks():
     over rigid metal. The stress is 1 Pa all through, so each layer is linear and the profile's slope jumps at the
     interface by the viscosity ratio, the slurry's at its own shear rate (found by the fixed point) over the liquid's."""
     mat = Material.from_drama_json("AA7075_scheil")
-    sk = layered(mat, [(0.15e-3, 950.0), (0.15e-3, 900.0), (0.1e-3, 880.0)], settings=SkinSettings())
+    sk = layered(mat, [(0.15e-3, 950.0), (0.15e-3, 900.0), (0.1e-3, 880.0)], settings=SkinSettings(rheology="bridge"))
     P0 = sk.totals()[2]
     book = sk.momentum_step(STEADY, 1.0 * X, np.zeros(3))
     s, u = heights(sk, 30), sk.U[0, :30, 0]
@@ -1193,3 +1194,80 @@ def test_with_sideways_heat_the_trial_sensitivity_is_the_derivative_for_a_common
     fd = (E_hi - E_lo) / (2 * d)
     assert np.all(dE[[0, 2]] < 0.0)
     np.testing.assert_allclose(dE, fd, rtol=1e-6, atol=1e-9 * np.abs(fd).max())
+
+
+# -- the rheology law (plan 03b Task 9) --------------------------------------------------------------------------------
+
+def rheology_column(law):
+    """One AA7075 column across the liquidus, the bridge, the slurry and below T_rigid, in the law `law`."""
+    mat = Material.from_drama_json("AA7075_scheil")
+    layers = [(30e-6, 950.0), (30e-6, 908.5), (30e-6, 907.0), (30e-6, 900.0), (30e-6, 890.0), (30e-6, mat.T_rigid - 0.05),
+              (30e-6, 880.0)]
+    return mat, layered(mat, layers, settings=SkinSettings(swell=False, rheology=law))
+
+
+def test_the_default_law_is_the_composite_and_a_bad_name_is_refused():
+    assert SkinSettings().rheology == rheology.DEFAULT_LAW == "composite"
+    with pytest.raises(ValueError, match="rheology"):
+        SkinSettings(rheology="nope")
+
+
+def test_settings_pickled_before_the_rheology_field_unpickle_as_the_bridge_law():
+    import pickle
+    old = SkinSettings(rheology="composite")
+    state = dict(old.__dict__)
+    del state["rheology"]
+    fresh = SkinSettings.__new__(SkinSettings)
+    fresh.__setstate__(state)
+    assert fresh.rheology == "bridge" and fresh.cell == old.cell
+    assert pickle.loads(pickle.dumps(SkinSettings(rheology="bridge"))).rheology == "bridge"
+    assert pickle.loads(pickle.dumps(old)).rheology == "composite"
+
+
+def test_composite_viscosity_ignores_the_shear_rate():
+    mat, sk = rheology_column("composite")
+    T = sk.T()
+    flowing = sk.flowing(T)
+    f_s = np.minimum(1.0 - sk.props.liquid_fraction(T[flowing]), np.nextafter(rheology.RIGID_SOLID_FRACTION, 0.0))
+    want = rheology.law_viscosity("composite", T[flowing], f_s, 0.0, mat.liquid.mu, rheology.bridge_solid_fraction(sk.props))
+    base = sk.viscosity(0.0)
+    assert np.isfinite(base[flowing]).all() and np.isinf(base[~flowing]).all()
+    for gamma in (0.0, 100.0, 5000.0):
+        np.testing.assert_allclose(sk.viscosity(gamma), base, rtol=1e-15, atol=0.0)
+    np.testing.assert_allclose(base[flowing], want, rtol=1e-15, atol=0.0)
+    assert base[flowing].max() > 10.0 * mat.liquid.mu                 # the column does span the slurry
+
+
+def test_bridge_viscosity_is_unchanged():
+    """The bridge law through the shared `law_viscosity` gives today's `rheology.viscosity` values (the skins' own
+    property table's solid fraction at the bridge's low end), to 1e-15, and it still depends on the shear rate."""
+    mat, sk = rheology_column("bridge")
+    T = sk.T()
+    flowing = sk.flowing(T)
+    f_s = np.minimum(1.0 - sk.props.liquid_fraction(T[flowing]), np.nextafter(rheology.RIGID_SOLID_FRACTION, 0.0))
+    f_b = 1.0 - float(sk.props.liquid_fraction(rheology.BRIDGE_LOW))
+    for gamma in (0.0, 61.0, 300.0, 5000.0):
+        want = rheology.viscosity(T[flowing], f_s, gamma, mat.liquid.mu, f_b)
+        got = sk.viscosity(gamma)
+        np.testing.assert_allclose(got[flowing], want, rtol=1e-15, atol=0.0)
+    assert not np.allclose(sk.viscosity(0.0)[flowing], sk.viscosity(300.0)[flowing], rtol=1e-3)
+
+
+@pytest.mark.parametrize("law", rheology.LAWS)
+def test_the_same_column_gives_the_same_viscosities_in_both_architectures(law):
+    from reentry_model.skyscrapers import skin as sky
+    mat, ours = rheology_column(law)
+    theirs = sky.Skins(mat, ours.area.copy(), sky.SkinSettings(rheology=law))
+    theirs._install(ours.m.copy(), ours.H.copy(), ours.count.copy())
+    flowing = ours.flowing()
+    assert flowing.sum() == 12 and (~flowing & ours.valid).sum() == 9     # liquid, bridge and slurry cells, then rigid ones
+    T = ours.T()
+    f_s = np.minimum(1.0 - ours.props.liquid_fraction(T[flowing]), np.nextafter(rheology.RIGID_SOLID_FRACTION, 0.0))
+    for gamma in (0.0, 120.0, 400.0, 3000.0):
+        a = ours.viscosity(gamma, T)
+        assert np.isinf(a[ours.valid & ~flowing]).all()
+        # at the same temperatures and solid fractions the two architectures' laws are the one law: to 1e-15
+        np.testing.assert_allclose(a[flowing], sky.viscosity_of(theirs, T[flowing], f_s, gamma), rtol=1e-15, atol=0.0)
+        # through each skin's own temperature (each inverts its own enthalpy table, which differ by about 1e-10 in the
+        # viscosity on this column, measured once), the same viscosities
+        np.testing.assert_allclose(a[flowing], sky.cell_viscosity(theirs, gamma)[flowing], rtol=1e-9, atol=0.0)

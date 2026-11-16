@@ -96,7 +96,8 @@ def cube_body(T0=850.0, phi0=cube, **kw):
     base = BoxBase.around((-9e-3,) * 3, (9e-3,) * 3, 2.8e-3)
     args = dict(MESH, emissivity=0.0)
     args.update(kw)
-    return skinbody.LevelSetSkinBody(aa7075(), base, phi0, T0, SETTINGS, **args)
+    settings = args.pop("settings", SETTINGS)
+    return skinbody.LevelSetSkinBody(aa7075(), base, phi0, T0, settings, **args)
 
 
 PLATE_W, PLATE_DEPTH, PLATE_GAS, PLATE_H0 = 5.6e-3, 8e-3, 3.2e-3, 2.8e-3     # m: a column of a plate, walls the mesh's
@@ -995,15 +996,16 @@ def test_a_step_at_a_gas_state_with_the_flow_and_the_spray_on_closes_its_books()
     assert np.array_equal(sk.m, m) and np.array_equal(sk.profile, profile)
 
 
-def gas_body(phi0=cube):
-    """The cube (`phi0`) with the shared heating and surface flow (`loads.GasLoads`) and Girin's spray model, radiating."""
+def gas_body(phi0=cube, **kw):
+    """The cube (`phi0`) with the shared heating and surface flow (`loads.GasLoads`) and Girin's spray model, radiating;
+    `kw` (for instance `settings`) go to `cube_body`."""
     from reentry_model.levelset import loads
     from reentry_model.shared import heating, spray, surface_flow
     from reentry_model.shared.material import LiquidProperties
     mat = aa7075()
     gl = loads.GasLoads(heating.PhysicsHeating(), surface_flow.SurfaceFlow(), mat.liquid.rho)
     model = spray.SprayModel(LiquidProperties(mat.liquid.rho, mat.liquid.mu, mat.liquid.sigma), spray_gates="2026-11-10")
-    return cube_body(phi0=phi0, loads=gl, spray_model=model, T_ambient=200.0, emissivity=0.2)
+    return cube_body(phi0=phi0, loads=gl, spray_model=model, T_ambient=200.0, emissivity=0.2, **kw)
 
 
 PART_BOUND = 100      # parts a flow-on step of the test cube may take at most: a tenth of PARTS_MAX
@@ -1019,7 +1021,13 @@ def sprayed():
     liquid formed on its +x face by 0.25 s of 6 MW/m2 (no flow, nothing removed), then one 0.05 s macro step at the
     continuum gas state with the runoff and Girin's plan on: (body, the melting step's book, the spraying step's book or
     None, its time [s], the RuntimeError that stopped it or None)."""
-    body = gas_body(rounded_cube)
+    # The bridge law, the law this fixture's numbers were tuned on: under the composite default (plan 03b Task 9) the
+    # spraying step stops on THIN_METAL at the rounded lip (a pair of columns whose normals oppose, metal thinner than
+    # twice the skin depth, design 21.11), measured once, where it runs under the bridge law. The cause (a far runnier
+    # slurry moving metal off the lip) is inferred, not isolated. Whether the composite law should run this fixture is
+    # the controller's to decide; until then the fixture pins the law it was built with.
+    from dataclasses import replace
+    body = gas_body(rounded_cube, settings=replace(SETTINGS, rheology="bridge"))
     melt = body.advance(0.25, q_prescribed=one_face(6e6))
     started = time.perf_counter()
     try:

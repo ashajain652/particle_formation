@@ -142,6 +142,15 @@ class SkinSettings:
     swell: bool = True             # each cell at its own phase's mixture density; False holds every cell at the solid's
     depth: float = 1.2e-3          # m, the skin depth H: every skin's column reaches this far below the gas surface
                                    # (design 21.3: today's 0.4 mm fine zone plus 0.8 mm stub; recorded with every run)
+    rheology: str = rheology.DEFAULT_LAW   # the viscosity law by name (`rheology.LAWS`), chosen in the shared module: the
+                                   # composite law by default, as in the skyscrapers' skins (plan 03b Task 9); a state
+                                   # pickled before this field existed flew the bridge law and keeps it (`__setstate__`)
+
+    def __setstate__(self, state):
+        """Unpickle, giving a state saved before the `rheology` field existed the law it flew, "bridge" (no entry in its
+        __dict__), rather than the class default, so that resuming an old state does not change its viscosity unasked."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("rheology", "bridge")
 
     def __post_init__(self):
         if not (self.cell > 0.0 and self.fine_zone > 0.0 and self.substep > 0.0 and self.depth > 0.0):
@@ -152,6 +161,8 @@ class SkinSettings:
             raise ValueError("a skin's fine zone must lie within its depth: fine_zone <= depth")
         if 2.0 * self.cell > min(self.fine_zone, self.depth) * (1.0 + 1e-12):
             raise ValueError("a skin needs at least two fine cells: cell <= min(fine_zone, depth) / 2")
+        if self.rheology not in rheology.LAWS:
+            raise ValueError(f"skin rheology must be one of {rheology.LAWS}, not {self.rheology!r}")
 
 
 @dataclass
@@ -1475,7 +1486,8 @@ class Skins:
 
     def viscosity(self, gamma, T=None):
         """Every cell's viscosity [Pa s] (n, K) sheared at gamma [1/s] (per cell, or one for all): the shared
-        `rheology.viscosity` at the cell's temperature and solid fraction (1 - the table's f_l) with the material's
+        `rheology.law_viscosity` by the law the settings name (`settings.rheology`: the composite law, which ignores
+        gamma, or the bridge law) at the cell's temperature and solid fraction (1 - the table's f_l) with the material's
         liquid viscosity and its solid fraction at the rheology's BRIDGE_LOW; infinite in a cell that does not flow
         (rigid, padded, or of a material without a liquid)."""
         T = self.T() if T is None else T
@@ -1489,8 +1501,9 @@ class Skins:
             return eta
         gamma = np.broadcast_to(np.asarray(gamma, dtype=float), T.shape)
         f_s = np.minimum(1.0 - self.props.liquid_fraction(T[flowing]), FLOWING_SOLID_MAX)
-        f_s_bridge = 1.0 - float(self.props.liquid_fraction(rheology.BRIDGE_LOW))
-        eta[flowing] = rheology.viscosity(T[flowing], f_s, gamma[flowing], liquid.mu, f_s_bridge)
+        f_s_bridge = rheology.bridge_solid_fraction(self.props)
+        eta[flowing] = rheology.law_viscosity(self.settings.rheology, T[flowing], f_s, gamma[flowing], liquid.mu,
+                                              f_s_bridge)
         return eta
 
     def momentum_step(self, dt, tau, push, response=False):

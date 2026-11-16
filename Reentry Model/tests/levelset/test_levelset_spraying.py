@@ -180,7 +180,7 @@ def test_the_slurry_mode_matches_the_skyscrapers_on_the_same_columns():
     n = len(SLURRY_COLUMNS)
     mk = row_markers(n)
     ours = stacked(mk, SLURRY_COLUMNS, mat, rng=np.random.default_rng(2))
-    theirs = sky.Skins(mat, ours.area.copy(), sky.SkinSettings(rheology="bridge"))   # the level set's law until Task 9
+    theirs = sky.Skins(mat, ours.area.copy(), sky.SkinSettings(rheology=ours.settings.rheology))
     theirs._install(ours.m.copy(), ours.H.copy(), ours.count.copy(), U=ours.U.copy())
     flow, model = gas(n, tau=200.0, G=-3e4), model_of(mat)
     theta = np.linspace(0.05, 0.9, n)
@@ -212,7 +212,7 @@ def test_the_exposed_slurry_mode_matches_the_skyscrapers_on_one_column():
     mat = aa7075()
     mk = row_markers(1, h=0.05)                                      # a wide marker: the slurry's wave fits on it alone
     ours = stacked(mk, [[LIQUID] * 2 + [907.8] * 300 + [RIGID] * 5], mat)
-    theirs = sky.Skins(mat, ours.area.copy(), sky.SkinSettings(rheology="bridge"))   # the level set's law until Task 9
+    theirs = sky.Skins(mat, ours.area.copy(), sky.SkinSettings(rheology=ours.settings.rheology))
     theirs._install(ours.m.copy(), ours.H.copy(), ours.count.copy(), U=ours.U.copy())
     flow, model = gas(1, tau=200.0, G=-3e4), model_of(mat)
     theta = np.array([0.2])
@@ -276,7 +276,7 @@ def test_the_cascade_matches_the_skyscrapers_release_on_one_column():
     mk = row_markers(len(temps))
     for slurry in (False, True):
         ours = stacked(mk, temps, mat, rng=np.random.default_rng(11))
-        theirs = sky.Skins(mat, ours.area.copy(), sky.SkinSettings(rheology="bridge"))   # the level set's law until Task 9
+        theirs = sky.Skins(mat, ours.area.copy(), sky.SkinSettings(rheology=ours.settings.rheology))
         theirs._install(ours.m.copy(), ours.H.copy(), ours.count.copy(), U=ours.U.copy())
         m = ours.m[:, 0]
         dt, steps = 0.5, 8
