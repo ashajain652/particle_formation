@@ -32,7 +32,9 @@ again on the moved phi before every part, under the ownership that sets the mark
 Task 7b, the controller's ruling T7-i); the surface flow's forcing for the runoff (with an aero state or a deceleration),
 taken at the step's start and held over it (the controller's ruling T7b-a, `_take_loads`); Girin's plan once
 (`spraying.spray_plan`, with a spray model and a state; b is always the skin's flowing depth, the wave's regions on the
-division's boundaries at phi); then the step as parts (Ruling 7: none longer than
+division's boundaries at phi; Girin's theory or, with the spray model's `dispersion` "profile", the kinked profile of the
+skins' own cell speeds, whose records are 36 columns wide, `record_names`, and whose history ends with the shared
+melt_profile.DISPERSION_COLUMNS, `_summary`; plan 03b Task 10); then the step as parts (Ruling 7: none longer than
 PART_MAX while any top is at or above T_rigid or about to be, and a part whose move of phi exceeds MOVE_SHARE of the
 markers' target spacing -- the part ratio max |dV_i / A_i(0)| / (MOVE_SHARE spacing), A_i(0) the column's cross-section
 at phi -- rerun as shorter parts, at most SPLIT_DEPTH_MAX levels and at most PARTS_MAX parts a split, past which the
@@ -94,7 +96,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.spatial import cKDTree
 
-from ..shared import nose
+from ..shared import melt_profile, nose
 from ..shared import spray as spray_mod
 from ..shared.droplets import SKIN_SUMMARY_COLUMNS
 from . import loads as loads_mod
@@ -1010,7 +1012,10 @@ class LevelSetSkinBody(StepEnd):
         return float(np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ self.v_hat) ** 2, 0.0)).max())
 
     def _summary(self, state, plan):
-        """The history's droplet columns (SKIN_SUMMARY_COLUMNS' keys and the release angle's) of the step."""
+        """The history's droplet columns (SKIN_SUMMARY_COLUMNS' keys and the release angle's) of the step; with a spray
+        model on the profile path, last, the shared melt_profile.DISPERSION_COLUMNS (plan 03b Task 10, the skyscrapers'
+        `dispersion_stats`): the plan's (`SprayPlan.step_summary`), or an empty step's where the step made no plan, so
+        that every step of such a run has the same columns; none on the table path or without a spray model."""
         sk, mat = self.skins, self.material
         if plan is not None:
             block = plan.records(self.time, state)
@@ -1026,4 +1031,17 @@ class LevelSetSkinBody(StepEnd):
                     "released_step_mass_kg": 0.0, "n_released": self.n_released,
                     "liquid_depth_mean_mm": float(np.mean(liquid) * 1e3) if len(liquid) else 0.0,
                     "flowing_depth_mean_mm": float(np.mean(flowing) * 1e3) if len(flowing) else 0.0})
+        if self._on_profile():
+            out.update(melt_profile.summary(None, None, None, None))
         return out
+
+    def _on_profile(self):
+        """Whether the body's spray model takes the profile path (its `dispersion` "profile"); a body without one is on
+        the table path."""
+        return getattr(self.spray_model, "dispersion", "table") == "profile"
+
+    def record_names(self):
+        """The droplet records' column names (plan 03b Task 10; the skyscrapers' `SkinBody.record_names`):
+        `spray.record_columns(36)` where the spray model is on the profile path, whose rows carry its PROFILE_COLUMNS, and
+        the 27 SOURCE_COLUMNS otherwise -- what the shared writer (`droplets.write_particles`) writes, records or none."""
+        return spray_mod.record_columns(36 if self._on_profile() else 27)

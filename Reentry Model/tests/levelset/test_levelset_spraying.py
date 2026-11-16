@@ -1,8 +1,9 @@
 """Tests of the level set's spraying per marker (design sections 9.5 and 20.6; level-set stage 3 Task 8): Girin's plan on
 the markers' skins through the shared `SprayModel`, the release cascade from the skins' top cells, the droplet records
-through the shared writer, and Girin and Kopyt's 1994 front-surface case through the level-set path. The skyscrapers'
-`skin.Skins`, `cascade_mass` and `release_top` are imported here only to compare against (decision D4): the package
-itself never imports them."""
+through the shared writer, and Girin and Kopyt's 1994 front-surface case through the level-set path; and the kinked-profile
+spraying (plan 03b Task 10): the table path byte for byte as before, and the profile path against the skyscrapers' on the
+same cells. The skyscrapers' `skin.Skins`, `cascade_mass`, `release_top` and `skinbody.girin_plan` and `layer_columns`
+are imported here only to compare against (decision D4): the package itself never imports them."""
 import csv
 import json
 import os
@@ -50,12 +51,12 @@ def row_division(n, h=H):
     return SimpleNamespace(i=np.arange(n - 1), j=np.arange(1, n), length=np.full((max(n - 1, 0), 2), h))
 
 
-def stacked(mk, temps, mat=None, rng=None):
+def stacked(mk, temps, mat=None, rng=None, settings=SETTINGS):
     """Skins on the markers: marker i's skin holds a cell of 10 um of solid metal's mass at each temperature of temps[i],
     top first; every cell moving with a random velocity when `rng` is given."""
     mat = aa7075() if mat is None else mat
     order = np.argsort(mk.skin_index)                    # the marker of each skin row
-    sk = Skins(mat, mk.area[order], mk.kappa[order], SETTINGS)
+    sk = Skins(mat, mk.area[order], mk.kappa[order], settings)
     temps = [temps[m] for m in order]
     count = np.array([len(t) for t in temps])
     K = int(count.max())
@@ -470,24 +471,342 @@ class Iron:
     rho, mu, sigma = 7800.0, 5.8e-3, 1.2
 
 
-def test_girin_cases_through_the_level_set_path():
+@pytest.mark.parametrize("dispersion", spray.DISPERSION_NAMES)
+def test_girin_cases_through_the_level_set_path(dispersion):
     """Girin and Kopyt (1994) Table 2, the front-surface Rayleigh-Taylor mode, fed through `spray_plan` on one flat
     marker at the stagnation point holding a pool of their liquid one wavelength deep (so tanh(k h) is 1 to 1e-5), off
     Girin's closure (no shear mode): the plan's wavelength is their lambda* (Eq. 14) within 2 % and its growth time
-    their tau* within 1 %, at each of the three decelerations."""
+    their tau* within 1 %, at each of the three decelerations. On either dispersion (plan 03b Task 10: Girin's published
+    cases are unchanged on the profile path, whose pool at rest resolves no profile and keeps the table path, the
+    release and growth time the table path's to the bit)."""
     with open(os.path.join(PROJECT_ROOT, "data", "reference_values", "girin1994_tables.json")) as fh:
         t = json.load(fh)["table2"]
     mat = LinearMeltMaterial(rho=Iron.rho, rho_l=Iron.rho, mu=Iron.mu, sigma=Iron.sigma)
-    model = spray.SprayModel(LiquidProperties(Iron.rho, Iron.mu, Iron.sigma), spray_gates="2026-11-10")
+    model = spray.SprayModel(LiquidProperties(Iron.rho, Iron.mu, Iron.sigma), spray_gates="2026-11-10",
+                             dispersion=dispersion)
+    table = spray.SprayModel(LiquidProperties(Iron.rho, Iron.mu, Iron.sigma), spray_gates="2026-11-10")
     for W, lam_ref, tau_ref in zip(t["W_ms2"], t["lambda_star_m_eq14"], t["tau_star_s"]):
-        mk = row_markers(1, h=1.0)                                     # 1 m2: the pool admits the fastest wave
-        sk = Skins(mat, mk.area, mk.kappa, SkinSettings(cell=20e-6, fine_zone=0.4e-3))
-        sk.fill(Iron.rho * lam_ref, 1000.0)                            # one wavelength deep, liquid
-        flow = gas(1, closure=sf.CLOSURE_COUETTE, tau=0.0, decel=W)
-        theta = np.zeros(1)
-        plan = spraying.spray_plan(sk, mk, flow, STATE, model, np.array([True]), np.array([W]), 0.5, 0.05, 0.05,
-                                   theta=theta, division=row_division(1))
+        plans = []
+        for m in (model, table):
+            mk = row_markers(1, h=1.0)                                 # 1 m2: the pool admits the fastest wave
+            sk = Skins(mat, mk.area, mk.kappa, SkinSettings(cell=20e-6, fine_zone=0.4e-3))
+            sk.fill(Iron.rho * lam_ref, 1000.0)                        # one wavelength deep, liquid
+            flow = gas(1, closure=sf.CLOSURE_COUETTE, tau=0.0, decel=W)
+            theta = np.zeros(1)
+            plans.append(spraying.spray_plan(sk, mk, flow, STATE, m, np.array([True]), np.array([W]), 0.5, 0.05, 0.05,
+                                             theta=theta, division=row_division(1)))
+        plan, base = plans
         res = plan.result
         assert res.branch[0] == spray.BRANCH_RT and plan.rate[0] > 0.0
         assert res.wavelength[0] == pytest.approx(lam_ref, rel=2e-2)
         assert res.growth[0] == pytest.approx(tau_ref, rel=1e-2)
+        assert np.array_equal(plan.rate, base.rate) and np.array_equal(res.growth, base.result.growth)
+        assert (plan.resolved is None) if dispersion == "table" else not plan.resolved.any()
+
+
+# -- the profile path (plan 03b Task 10) ----------------------------------------------------------------------------------
+def profile_column(n_fast, n_slow, n_slurry, n_rigid, u_top, u_kink, u_slurry, T_slurry=SLURRY):
+    """One skin's temperatures and speeds [m/s] along x, top first: n_fast liquid cells sheared from u_top to u_kink,
+    n_slow liquid cells from u_kink to u_slurry, n_slurry slurry cells at T_slurry creeping from u_slurry to rest at the
+    rigid front, and n_rigid rigid cells at rest -- a profile with a kink where the liquid's shear drops."""
+    temps = [LIQUID] * (n_fast + n_slow) + [T_slurry] * n_slurry + [RIGID] * n_rigid
+    u = np.concatenate([np.linspace(u_top, u_kink, n_fast, endpoint=False),
+                        np.linspace(u_kink, u_slurry, n_slow, endpoint=False),
+                        np.linspace(u_slurry, 0.0, n_slurry + 1)[:-1], np.zeros(n_rigid)])
+    return temps, u
+
+
+def moving(mk, temps, u, mat, settings=SETTINGS):
+    """The level set's skins on `mk` holding `temps` (`stacked`) with the speeds `u` [m/s] along x (one list per marker,
+    top first)."""
+    ours = stacked(mk, temps, mat, settings=settings)
+    U = np.zeros(ours.m.shape + (3,))
+    for i, row in enumerate(mk.skin_index):
+        U[row, :len(u[i]), 0] = u[i]
+    ours.U = np.where(ours.valid[..., None], U, 0.0)
+    return ours
+
+
+def both_skins(mk, temps, u, mat, settings=SETTINGS):
+    """`moving`'s skins, and the skyscrapers' skins holding the same cells."""
+    from reentry_model import skin as sky
+    ours = moving(mk, temps, u, mat, settings)
+    theirs = sky.Skins(mat, ours.area.copy(), sky.SkinSettings(rheology=ours.settings.rheology))
+    theirs._install(ours.m.copy(), ours.H.copy(), ours.count.copy(), U=ours.U.copy())
+    return ours, theirs
+
+
+def test_layer_columns_match_the_skyscrapers():
+    """`spraying.layer_columns` reads the skins' cells as the skyscrapers' `skinbody.layer_columns` reads theirs, on the
+    same cells (MIXED, every cell moving at about a millimetre a second, a floating crust among them) under both
+    rheology laws: the same depths, thicknesses, speeds, temperatures, masses, densities and fronts, the same flowing and
+    liquid runs, and the same viscosities at the cells' shear rates. Under the bridge law the slurry's viscosity depends
+    on its rate, here some 30 to 150 1/s, below the law's cap (rheology.GAMMA_MAX, 367 1/s), so this pins the shear rates
+    the momentum step starts from (`_shear_rates`, the skyscrapers' `skin.cell_shear_rates`): those viscosities move
+    by more than 10 % from their values at rest. Each skin finds its temperatures from its own property table, so the
+    floats agree to 1e-9 (the slurry tests' tolerance)."""
+    from dataclasses import replace
+
+    from reentry_model import skinbody as sky_body
+    mat = aa7075()
+    n = len(MIXED)
+    mk = row_markers(n)
+    rng = np.random.default_rng(23)
+    u = [rng.normal(0.0, 1e-3, len(t)) for t in MIXED]
+    tau = np.linspace(5.0, 200.0, n)
+    for law in ("composite", "bridge"):
+        ours, theirs = both_skins(mk, MIXED, u, mat, replace(SETTINGS, rheology=law))
+        got, want = spraying.layer_columns(ours, tau), sky_body.layer_columns(theirs, tau)
+        for name in ("flowing", "liquid"):
+            assert np.array_equal(getattr(got, name), getattr(want, name)), (law, name)
+        for name in ("z", "dz", "u", "T", "m", "rho", "mu", "front"):
+            np.testing.assert_allclose(getattr(got, name), getattr(want, name), rtol=1e-9, atol=0.0, equal_nan=True,
+                                       err_msg=law + " " + name)
+        assert got.flowing.sum() >= 30 and np.isfinite(got.mu[got.flowing]).all()
+    slurry = got.flowing & ~got.liquid                                         # the bridge law's, from the last pass
+    rest = ours.viscosity(0.0)[slurry]
+    assert slurry.sum() >= 20 and np.abs(got.mu[slurry] / rest - 1.0).max() > 0.1
+
+
+def assert_plans_agree(plan, ref):
+    """A level-set plan and the skyscrapers' on the same cells (both on the profile path): the same branches, resolved
+    columns and slurry branches; the thresholds T_run within 1e-12 (NaN where no profile mode sprays); the rates, the
+    droplets' density and viscosity, the slurry's own modes, the records' appended columns and the profile modes within
+    1e-9 (each skin finds its temperatures from its own property table)."""
+    assert np.array_equal(plan.result.branch, ref.result.branch) and np.array_equal(plan.resolved, ref.resolved)
+    assert np.array_equal(plan.slurry["branch"], ref.slurry["branch"])
+    np.testing.assert_allclose(plan.T_run, ref.T_run, rtol=1e-12, atol=0.0, equal_nan=True)
+    pairs = [("rate", plan.rate, ref.rate), ("rate_slurry", plan.rate_slurry, ref.rate_slurry),
+             ("rho", plan.props.rho, ref.props.rho), ("mu", plan.props.mu, ref.props.mu),
+             ("profile", plan.profile, ref.profile)]
+    pairs += [("slurry " + k, plan.slurry[k], ref.slurry[k]) for k in ("r", "mu", "gamma", "delta_m", "depth", "rho", "T")]
+    pairs += [("modes " + k, getattr(plan.modes, k), getattr(ref.modes, k)) for k in
+              ("growth", "k", "wall_depth", "nu_eff", "we_s", "cap_gradient", "cap_driven")]
+    for name, a, b in pairs:
+        np.testing.assert_allclose(a, b, rtol=1e-9, atol=0.0, equal_nan=True, err_msg=name)
+
+
+# one column each: (the column's profile, the slurry's own mode on, the flow sub-step [s]); the first is taken by the
+# gas-driven mode on the rigid front, its run at the slurry's temperature (the slurry beneath the liquid released at the
+# mode's rate); the second by the gradient mode, its run the liquid, with the exposed slurry's own mode beneath it
+PROFILE_CASES = ((profile_column(4, 16, 30, 10, 4.0, 1.0, 0.05), False, 4e-4, spray.BRANCH_THIN, SLURRY),
+                 (profile_column(4, 16, 60, 5, 8.0, 1.0, 0.05, 907.8), True, 1e-4, spray.BRANCH_PROFILE, LIQUID))
+PROFILE_STEPS = 6     # flow sub-steps released: the cascade reaches into the slurry and stops short of the column's end
+PROFILE_SOLID_TOL = 1e-8   # the solid released, relative: each skin's own property table gives the liquid fraction of the
+                           # second case's 907.8 K slurry, 1.3 % solid, 3.4e-9 of its solid apart (measured 2026-11-15;
+                           # 8e-11 at 902 K), past the D4 test's SOLID_TOL
+
+
+def test_the_profile_release_matches_the_skyscrapers_on_one_column():
+    """Plan 03b Task 10, decision D4 on the profile path: one wide marker's skin and the skyscrapers' column holding the
+    same cells, a kinked profile (PROFILE_CASES), planned by `spraying.spray_plan` and by their `skinbody.girin_plan` on
+    a spray model with `dispersion` "profile", then released over PROFILE_STEPS flow sub-steps -- the level set by its
+    plan's `release`, the skyscrapers by their `skin.cascade_mass` and `skin.release_top` with their own plan's
+    thresholds and slurry floor, as their flow does with its `Cascade`, at the level set's rates. The plans agree: the
+    same branch, threshold T_run and resolved column, the rates and the droplets' density and viscosity within 1e-9. The
+    releases agree within 1e-12: mass, enthalpy and momentum in total, of each mode, and taken at the slurry's rate (the
+    solid within PROFILE_SOLID_TOL, by each skin's own liquid fractions, as in D4). The records agree: 36 columns, the same rows and branches, and every value within
+    1e-9 (each skin finds its temperatures from its own property table: about 2e-10 at most, measured) but the solid
+    fraction, within PROFILE_SOLID_TOL. In the first case
+    the gas-driven mode's run reaches into the slurry (heat-limited at its temperature); in the second the gradient mode
+    takes the liquid and the exposed slurry's own mode the slurry beneath."""
+    from reentry_model import skin as sky, skinbody as sky_body
+    mat = aa7075()
+    model = model_of(mat, dispersion="profile")
+    centre, v_hat = np.array([0.0, 0.0, -0.05]), np.array([0.0, 0.0, -1.0])
+    for (temps, u), slurry, h, branch, T_run in PROFILE_CASES:
+        mk = row_markers(1, h=0.05)                                  # a wide marker: the waves fit on it alone
+        ours, theirs = both_skins(mk, [temps], [u], mat)
+        flow = gas(1, tau=200.0, G=-3e4)
+        theta = np.array([0.2])
+        windward, w_n = np.array([True]), flow.deceleration * np.cos(theta)
+        plan = spraying.spray_plan(ours, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.04, slurry=slurry,
+                                   theta=theta, centre=centre, v_hat=v_hat, division=row_division(1))
+        ref = sky_body.girin_plan(theirs, flow, STATE, model, theta, theirs.area, np.zeros((0, 2), int), 0.05, 0.5,
+                                  slurry=slurry, points=mk.x.copy(), centre=centre, v_hat=v_hat, nose_radius=0.04)
+        assert plan.result.branch[0] == ref.result.branch[0] == branch and plan.resolved[0] and ref.resolved[0]
+        assert plan.T_run[0] == pytest.approx(T_run, abs=1e-9) and ref.T_run[0] == pytest.approx(T_run, abs=1e-9)
+        assert (plan.rate_slurry[0] > 0.0) == slurry
+        assert_plans_agree(plan, ref)
+        m0 = ours.m.sum()
+        floor = np.where(np.isfinite(ref.slurry["T"]), ref.slurry["T"], np.inf)
+        got = {k: 0.0 for k in ("mass", "enthalpy", "momentum", "solid", "slurry")}
+        want = dict(got)
+        for _ in range(PROFILE_STEPS):
+            book = plan.release(ours, h)
+            dm, from_slurry = sky.cascade_mass(theirs, plan.rate, plan.rate_slurry, theirs.area, h, slurry, floor,
+                                               ref.T_run)
+            rb = sky.release_top(theirs, dm, slurry, ref.T_run)
+            ph = rb.by_phase
+            for key, a in (("mass", ph.mass), ("enthalpy", ph.enthalpy), ("momentum", ph.momentum),
+                           ("solid", ph.solid)):
+                setattr(ref, key, getattr(ref, key) + a[0])
+                setattr(ref, key + "_slurry", getattr(ref, key + "_slurry") + a[1])
+                got[key] = got[key] + getattr(book, key)
+                want[key] = want[key] + getattr(rb, key)
+            got["slurry"] = got["slurry"] + book.released_slurry
+            want["slurry"] = want["slurry"] + from_slurry
+        released = plan.mass.sum() + plan.mass_slurry.sum()
+        assert 0.0 < released < 0.9 * m0 and (plan.mass_slurry.sum() > 0.0) == slurry
+        assert plan.solid.sum() > 0.0 if not slurry else plan.solid_slurry.sum() > 0.0   # slurry left in either mode
+        for key in ("mass", "enthalpy", "momentum", "solid", "slurry"):
+            tol = PROFILE_SOLID_TOL if key == "solid" else 1e-12
+            np.testing.assert_allclose(got[key], want[key], rtol=tol, atol=0.0, err_msg=key)
+        for key in ("mass", "enthalpy", "momentum", "solid"):
+            for name in (key, key + "_slurry"):
+                tol = PROFILE_SOLID_TOL if key == "solid" else 1e-12
+                np.testing.assert_allclose(getattr(plan, name), getattr(ref, name), rtol=tol, atol=0.0, err_msg=name)
+        block = plan.records(0.5)
+        ref.count(ref.props.rho)
+        block_ref = ref.source_block(0.5)
+        names = spray.record_columns(36)
+        assert block.shape == block_ref.shape == (2 if slurry else 1, 36)
+        assert np.array_equal(np.isnan(block), np.isnan(block_ref))
+        for name in ("closure", "branch", "breakup", "floor_like_wall"):
+            j = names.index(name)
+            assert np.array_equal(block[:, j], block_ref[:, j]), name
+        solid = names.index("solid_fraction")                       # by each skin's own liquid fractions
+        np.testing.assert_allclose(block[:, solid], block_ref[:, solid], rtol=PROFILE_SOLID_TOL, atol=0.0)
+        rest = [j for j in range(len(names)) if j != solid]
+        np.testing.assert_allclose(block[:, rest], block_ref[:, rest], rtol=1e-9, atol=0.0, equal_nan=True)
+
+
+def test_the_profile_plan_matches_the_skyscrapers_on_a_row():
+    """The profile path's wiring across markers, against the skyscrapers' `girin_plan` on columns holding the same cells
+    on the same graph (`assert_plans_agree`): a row of 1 mm markers holding PROFILE_CASES' two kinked skins, a moving
+    slurry with no liquid, and a moving slurry over liquid, with the exposed slurry's mode on. The slurry over liquid has
+    no liquid at its top, so its wave fits only in the region of the layers above the walls (the liquid's region would
+    give it none), and it sprays; the gas-driven skin's run takes all its flowing metal, so no slurry is left for the
+    slurry's own mode beneath it."""
+    from reentry_model import skinbody as sky_body
+    mat = aa7075()
+    slurry_top = ([SLURRY] * 60 + [RIGID] * 10, np.concatenate([np.linspace(0.8, 0.0, 60, endpoint=False),
+                                                                 np.zeros(10)]))
+    over_liquid = ([SLURRY] * 3 + [LIQUID] * 30 + [SLURRY] * 30 + [RIGID] * 10,
+                   np.concatenate([np.linspace(2.0, 1.0, 3, endpoint=False), np.linspace(1.0, 0.5, 30, endpoint=False),
+                                   np.linspace(0.5, 0.0, 30, endpoint=False), np.zeros(10)]))
+    columns = [PROFILE_CASES[1][0], slurry_top, PROFILE_CASES[0][0], over_liquid]
+    n, h = len(columns), 1e-3
+    mk = row_markers(n, h=h)
+    ours, theirs = both_skins(mk, [c[0] for c in columns], [c[1] for c in columns], mat)
+    flow = gas(n, tau=200.0, G=-3e4)
+    theta = np.linspace(0.1, 0.5, n)
+    windward, w_n = theta <= 0.5 * np.pi, flow.deceleration * np.cos(theta)
+    model = model_of(mat, dispersion="profile")
+    d = row_division(n, h=h)
+    plan = spraying.spray_plan(ours, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.04, slurry=True, theta=theta,
+                               division=d)
+    ref = sky_body.girin_plan(theirs, flow, STATE, model, theta, theirs.area, np.column_stack([d.i, d.j]), 0.05, 0.5,
+                              slurry=True, points=mk.x.copy(), nose_radius=0.04)
+    assert plan.resolved.all() and np.array_equal(plan.liquid > 0.0, [True, False, True, False])
+    assert plan.rate[3] > 0.0 and plan.rate_slurry[0] > 0.0 and plan.slurry["branch"][2] == -1
+    assert_plans_agree(plan, ref)
+
+
+def test_a_skin_flowing_to_its_base_takes_its_base_as_the_wall():
+    """Design 21.7: where the flowing layer reaches the skin's base the skin's base acts as the wall. A skin that flows
+    to its base -- liquid throughout, its speed falling linearly from the top to rest at the base, so its profile has no
+    kink -- has its front at the column's own depth (`layer_columns`: `depth_above(T_rigid)`, the whole thickness), and
+    the profile path resolves it with the wall at that depth, the rigid front's kind (not a floor-like kink) and no kink."""
+    mat = aa7075()
+    mk = row_markers(1, h=0.05)
+    n_cells = 60
+    sk = stacked(mk, [[LIQUID] * n_cells], mat)
+    depth = sk.thickness()[0]
+    z = (np.arange(n_cells) + 0.5) * depth / n_cells                  # equal liquid cells: the centres
+    sk.U = np.zeros(sk.m.shape + (3,))
+    sk.U[0, :, 0] = 3.0 * (1.0 - z / depth)
+    cols = spraying.layer_columns(sk, np.array([60.0]))
+    assert cols.front[0] == depth and cols.flowing[0].all()
+    flow = gas(1)
+    plan = spraying.spray_plan(sk, mk, flow, STATE, model_of(mat, dispersion="profile"), np.array([True]),
+                               flow.deceleration * np.cos([0.2]), 0.5, 0.05, 0.04, theta=np.array([0.2]),
+                               division=row_division(1))
+    assert plan.resolved[0]
+    assert plan.modes.wall_depth[0] == pytest.approx(depth, rel=1e-12)
+    assert plan.record.floor_like_wall[0] == 0.0 and np.isnan(plan.record.kink_depth[0])
+
+
+def test_profile_records_are_36_wide(tmp_path):
+    """On the profile path the records carry spray.PROFILE_COLUMNS after the 27 SOURCE_COLUMNS: each liquid's row its
+    marker's `profile` (melt_profile.profile_rows), each slurry's row the same with no release depth and no growth rate
+    (ruling T10-a, the skyscrapers' rule); the body names its records `spray.record_columns(36)` on the profile path and
+    27 on the table path or without a spray model (`LevelSetSkinBody.record_names`), and the shared writer writes the 36.
+    Three wide markers: PROFILE_CASES' two kinked skins (the gas-driven mode's, the gradient mode's with the exposed
+    slurry's own mode beneath) and a deep liquid pool at rest, which no profile resolves (its profile columns NaN but
+    Girin's delta_m and V_s)."""
+    from reentry_model.levelset.skinbody import LevelSetSkinBody
+    mat = aa7075()
+    (a, u_a), (b, u_b) = PROFILE_CASES[0][0], PROFILE_CASES[1][0]
+    pool = [LIQUID] * 30 + [RIGID] * 10
+    mk = row_markers(3, h=0.05)
+    sk = moving(mk, [a, b, pool], [u_a, u_b, np.zeros(len(pool))], mat)
+    flow = gas(3, tau=200.0, G=-3e4)
+    theta = np.array([0.2, 0.3, 0.4])
+    plan = spraying.spray_plan(sk, mk, flow, STATE, model_of(mat, dispersion="profile"), theta <= 0.5 * np.pi,
+                               flow.deceleration * np.cos(theta), 0.5, 0.05, 0.04, slurry=True, theta=theta,
+                               division=row_division(3, h=0.05))
+    assert np.array_equal(plan.resolved, [True, True, False])
+    for _ in range(PROFILE_STEPS):
+        plan.release(sk, 1e-4)
+    block = plan.records(0.5)
+    width = len(spray.SOURCE_COLUMNS)
+    assert block.shape == (4, width + len(spray.PROFILE_COLUMNS)) and block.shape[1] == 36
+    liquid, slurry = np.flatnonzero(plan.mass > 0.0), np.flatnonzero(plan.mass_slurry > 0.0)
+    assert np.array_equal(liquid, [0, 1, 2]) and np.array_equal(slurry, [1])
+    np.testing.assert_array_equal(block[:3, width:], plan.profile[liquid])
+    assert np.isnan(block[2, width:width + 7]).all() and np.isfinite(block[:3, width + 7:]).all()
+    blank = [spray.PROFILE_COLUMNS.index("release_depth_m"), spray.PROFILE_COLUMNS.index("growth_rate_per_s")]
+    kept = [j for j in range(len(spray.PROFILE_COLUMNS)) if j not in blank]
+    assert np.isfinite(block[1, width + np.array(blank)]).all() and np.isnan(block[3, width + np.array(blank)]).all()
+    np.testing.assert_array_equal(block[3, width + np.array(kept)], plan.profile[1, kept])
+    body = LevelSetSkinBody.__new__(LevelSetSkinBody)
+    for model, names in ((model_of(mat, dispersion="profile"), spray.record_columns(36)),
+                         (model_of(mat), spray.record_columns(27)), (None, spray.record_columns(27))):
+        body.spray_model = model
+        assert body.record_names() == names
+    body.spray_model, body.source_rows = model_of(mat, dispersion="profile"), [block]
+    history = History({"time_s": np.array([0.5])})
+    cols = np.load(droplets.write_particles(str(tmp_path), body, history, window=1.0)["particles"])
+    assert list(cols.files) == spray.record_columns(36)
+
+
+def test_the_step_summary_gains_the_dispersion_columns():
+    """On the profile path the step summary ends with the shared melt_profile.DISPERSION_COLUMNS, the summary of the
+    plan's modes and record (`melt_profile.summary`, the skyscrapers' `dispersion_stats`); a step that made no plan gives
+    an empty step's (the body's `_summary`), so every step of a profile run has the same columns. The table path's and a
+    body without a spray model have none of them."""
+    from reentry_model.levelset.skinbody import LevelSetSkinBody
+    from reentry_model.shared import melt_profile
+    mat = aa7075()
+    n = len(SLURRY_COLUMNS)
+    theta = np.linspace(0.05, 0.9, n)
+    summaries = {}
+    for dispersion in spray.DISPERSION_NAMES:
+        mk = row_markers(n)
+        sk = stacked(mk, SLURRY_COLUMNS, mat, rng=np.random.default_rng(17))
+        flow = gas(n, tau=200.0, G=-3e4)
+        plan = spraying.spray_plan(sk, mk, flow, STATE, model_of(mat, dispersion=dispersion), theta <= 0.5 * np.pi,
+                                   flow.deceleration * np.cos(theta), 0.5, 0.05, 0.04, theta=theta,
+                                   division=row_division(n))
+        plan.release(sk, 0.1)
+        plan.records(0.5)
+        summaries[dispersion] = (plan, plan.step_summary(sk))
+    plan, out = summaries["profile"]
+    want = melt_profile.summary(plan.modes, plan.record, plan.result.branch, plan.mass)
+    assert list(out)[-len(melt_profile.DISPERSION_COLUMNS):] == list(melt_profile.DISPERSION_COLUMNS)
+    assert {k: out[k] for k in want} == pytest.approx(want, nan_ok=True)
+    assert out["sprayed_gradient_kg"] + out["sprayed_gas_driven_kg"] > 0.0
+    table = summaries["table"][1]
+    assert not set(melt_profile.DISPERSION_COLUMNS) & set(table)
+    assert set(out) - set(melt_profile.DISPERSION_COLUMNS) == set(table)
+    body = LevelSetSkinBody.__new__(LevelSetSkinBody)
+    body.skins, body.material, body.time, body.n_released = sk, mat, 0.5, 0.0
+    for model, has in ((model_of(mat, dispersion="profile"), True), (model_of(mat), False), (None, False)):
+        body.spray_model = model
+        empty = body._summary(None, None)
+        assert set(melt_profile.DISPERSION_COLUMNS) <= set(empty) if has else \
+            not set(melt_profile.DISPERSION_COLUMNS) & set(empty)
+        if has:
+            assert {k: empty[k] for k in melt_profile.DISPERSION_COLUMNS} == pytest.approx(
+                melt_profile.summary(None, None, None, None), nan_ok=True)

@@ -1229,10 +1229,12 @@ def shoulder(preset="dev", steps=None, save=True):
 
 # -- the cost ----------------------------------------------------------------------------------------------------------
 def sphere_body(preset, mat=None):
-    """The 50 mm sphere at the melting state (module docstring), with the shared loads and Girin's spray model."""
+    """The 50 mm sphere at the melting state (module docstring), with the shared loads and Girin's spray model on the
+    kinked-profile path (`dispersion="profile"`, main's default for a spraying skin run; plan 03b Task 10)."""
     mat = material() if mat is None else mat
     gl = loads_mod.GasLoads(heating.PhysicsHeating(), surface_flow.SurfaceFlow(), mat.liquid.rho)
-    model = spray.SprayModel(LiquidProperties(mat.liquid.rho, mat.liquid.mu, mat.liquid.sigma), spray_gates="2026-11-10")
+    model = spray.SprayModel(LiquidProperties(mat.liquid.rho, mat.liquid.mu, mat.liquid.sigma), spray_gates="2026-11-10",
+                             dispersion="profile")
     st = SkinSettings(cell=SKIN_PRESETS[preset])
     L = SPHERE_R + 2 * H0
     base = BoxBase.around((-L,) * 3, (L,) * 3, H0)
