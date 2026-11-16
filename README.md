@@ -810,7 +810,8 @@ shared spray model, on Girin's table or on main's kinked profile of their own ce
 `--rheology` chooses (composite by default). There is still no run driver: `--architecture levelset` exits with code 2,
 and the cases are bodies advanced by a script. `docs/model_assumptions.md` section 18 records every rule with its test
 or marks it assumed, with the decisions taken during the build; the design's §21.8 marks each verification item with its
-test and result.
+test and result; and `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md` states each decision taken on
+Asha's behalf in full, with what it costs if wrong, where the scratch measurements came from, and the open questions.
 
 The files stage 3 adds to `reentry_model/levelset/` are `division.py` (the division of the layer), `skin.py` (the cell
 columns: grading, the measured cross-sections, depth and sideways conduction, the layered flow, the base exchange),

@@ -1288,10 +1288,13 @@ and sets out the two pieces that follow it (§21.9, §21.10).
 *Built on branch `levelset-stage3` by plan `docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md` (2026-11-14 to
 2026-11-15).* Under each item, **Built** names the test that pins it and its measured result; a test marked
 `xfail(strict=True)` (a *strict expected failure*: the tolerance kept, the failure recorded with its measured reason) is
-built and judged but does not pass, and is said so. Rulings are cited by their ids (the plan's working ledger, kept
-outside the repository; each decision is stated in `docs/model_assumptions.md` section 18, which this list follows).
-Numbers measured once are said to be once. The cases' values are in `analysis/levelset/stage3_recorded.json` (the
-record), gathered on e57945f under the composite law (plan 03b Task 11).
+built and judged but does not pass, and is said so. Rulings are cited by their ids; each is stated in full, with why it
+was made and what it costs if wrong, in `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md` (the stage 3
+rulings), which also describes diagnoses D1 to D3 and the scratch measurements cited below ("Task 12's scratch probe",
+"Task 7d's regrid probe" and the like: what was run, on which commit and how often), and each decision is stated in
+`docs/model_assumptions.md` section 18, which this list follows. Numbers measured once are said to be once. The cases'
+values are in `analysis/levelset/stage3_recorded.json` (the record), gathered on e57945f under the composite law (plan
+03b Task 11).
 
 1. **A sharp box at rest:** at t = 0, φ is the box to within the cell floor and β the box shrunk by H with sharp
    edges; cold steps (nothing melting) move φ by round-off only and change no column. At 2 mm spacing here; at 0.4 mm

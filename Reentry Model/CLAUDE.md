@@ -272,9 +272,11 @@ the design's §21 (it governs where it and §20 disagree). What to know before t
   `analysis/levelset/stage3_recorded.json`, from those output files alone, so it would drop the comparison blocks
   (`against_task7`, `against_offset_0`) and the box's `record_note`, which were added after gathering, and re-stamp
   entries from later runs; to update one entry, replace that key only and keep the rest.
-- **Rulings.** The decisions taken during stage 3's build are cited by id (P1 to P5, T1-a onward) in section 18 and the
-  design's §21.8; the plan's ledger that records them in full is kept outside the repository, so section 18 states each
-  in its own words. Questions still open for Asha are listed in section 18.11; do not settle them in code.
+- **Rulings.** The decisions taken during stage 3's build are cited by id (P1 to P5, T1-a onward) in section 18, the
+  design's §21.8 and the package's docstrings and tests; each is stated in full, with why and what it costs if wrong, in
+  `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md`, which also describes diagnoses D1 to D3 and the
+  scratch measurements the documents cite (S1 to S20). Questions still open for Asha are listed in section 18.11 and at
+  the end of that document; do not settle them in code.
 
 ## Architecture of `reentry_model`
 

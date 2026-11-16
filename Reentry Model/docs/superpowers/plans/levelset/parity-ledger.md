@@ -5,9 +5,11 @@ architecture must answer, from the parity target written into the design on 2026
 `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md`) onward. When the stage 3 plan is
 written, this ledger becomes the pinned parity target, so nothing has to be rebuilt from the skyscrapers' history.
 
-**How to use it.** Add a row whenever a skyscrapers change lands (a commit in the build, an approved design, or a decision
-by Asha). Each row names the change, where it is recorded, the route by which it reaches the level set, the stage that
-needs it, and its status. The routes follow the design's isolation rule (§4.1):
+**How to use it.** Add a row whenever a skyscrapers change lands (a commit in the build, an approved design, or a
+decision by Asha). Each row names the change, where it is recorded, the route by which it reaches the level set, the
+stage that needs it, and its status. Ruling ids in rows 10 to 12 (P5, T8-a onward) are plan 03b's, each stated in full
+in `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md`, with the scratch measurements they rest on. The
+routes follow the design's isolation rule (§4.1):
 
 - **shared**: architecture-independent physics. It moves into `reentry_model/shared/` in stage 0 + S, and from then on
   both architectures import it unchanged.

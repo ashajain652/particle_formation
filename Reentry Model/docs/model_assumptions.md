@@ -2078,19 +2078,21 @@ not change that.
 This section describes stage 3 of the level-set architecture as it was built on the branch `levelset-stage3` by plan
 `docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md` (2026-11-14 to 2026-11-15), which builds the design's
 section 21, the amendment of 2026-11-13 ("one skin depth everywhere, and the gas surface evolved"; design file
-`docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md`). It replaces the two skin modes of
-the first stage 3 plan (`03-stage3-skins.md`, whose Tasks 1 to 9 and 9b stand as built and whose Tasks 10 to 12 this
-plan supersedes). Stage 3 is not on `main`, and it is not coupled to a flight: `reentry_model run --architecture
-levelset` still exits with code 2, and every case below is a body advanced by a script with prescribed or analytical
-loads. Where a statement says **(verified)** it names the test that pins it; **(assumed)** marks a setting or rule with
-no test of its own; **(strict expected failure)** marks a case whose test is kept with its tolerance and marked
-`xfail(strict=True)`, so it is built and judged but does not pass. The decisions taken during the build on Asha's
-behalf are cited by their ruling ids (planning rulings 1 to 11, written in the plan; the pre-flight rulings P1 to P5
-and the task rulings T1-a onward, written in the plan's working ledger); the ledger and the task reports, which record
-them in full, are kept outside the repository, so each
-decision that changed behaviour or a tolerance is stated here in its own words. The measured values of the cases are
-in `analysis/levelset/stage3_recorded.json` (the record), each entry stamped with the commit it ran on; the cases'
-script is `analysis/levelset/stage3_cases.py` and their tests `tests/levelset/test_levelset_stage3_cases.py`.
+`docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md`). It replaces the two skin modes of the
+first stage 3 plan (`03-stage3-skins.md`, whose Tasks 1 to 9 and 9b stand as built and whose Tasks 10 to 12 this plan
+supersedes). Stage 3 is not on `main`, and it is not coupled to a flight: `reentry_model run --architecture levelset`
+still exits with code 2, and every case below is a body advanced by a script with prescribed or analytical loads. Where
+a statement says **(verified)** it names the test that pins it; **(assumed)** marks a setting or rule with no test of
+its own; **(strict expected failure)** marks a case whose test is kept with its tolerance and marked
+`xfail(strict=True)`, so it is built and judged but does not pass. The decisions taken during the build on Asha's behalf
+are cited by their ruling ids (planning rulings 1 to 11, written in the plan; the pre-flight rulings P1 to P5 and the
+task rulings T1-a onward). Each of the latter is stated in full, with why it was made and what it costs if wrong, in the
+stage 3 rulings, `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md`, which also describes diagnoses D1
+to D3 and every measurement made in scratch that this section cites (labelled S1 to S20 there: what was run, on which
+commit and how often); each decision that changed behaviour or a tolerance is also stated here in its own words. The
+measured values of the cases are in `analysis/levelset/stage3_recorded.json` (the record), each entry stamped with the
+commit it ran on; the cases' script is `analysis/levelset/stage3_cases.py` and their tests
+`tests/levelset/test_levelset_stage3_cases.py`.
 
 ### 18.1 One skin depth, and the three surfaces
 
@@ -2159,17 +2161,17 @@ departure from one is the closure measure of design 21.8 item 5.
   `math.fsum` (ruling T7d-a): a running sum over the box's 83,000 to 146,000 equal 0.175 mm layer cells rounded every
   addition the same way, about 2.3e-12 of the layer too large, and the fill then filled to it, so each acceptance added
   about 1.3e-12 of the mass (diagnosis D3, measured once; with `fsum` the box's second-step mass residual went from
-  +1.19e-11 to −8.2e-15). Measured factors: the box at 0.7 mm cells 1 − 3.7e-4 and at 0.175 mm cells 1 − 3.6e-4, a 6 mm
-  cube 1 + 6.3e-4, a sphere 1 − 2.8e-5, two cubes 1 + 6.0e-5 and 1 + 7.3e-4, a slab exact (Task 1's fix round, once
-  each); the plates at most 4.7e-15 and the box at most 6.43e-4 over their recorded steps (the record). The shoulder on
-  the mesh's planes of nodes departed 3.7e-3 (its flat faces lay on node planes, 451 nodes at φ = 0); built 0.13 mm off
-  them (ruling T7-h) it closes within 4.3e-4 and records at most 3.6e-5.
+  +1.19e-11 to −8.2e-15; S16). Measured factors: the box at 0.7 mm cells 1 − 3.7e-4 and at 0.175 mm cells 1 − 3.6e-4, a
+  6 mm cube 1 + 6.3e-4, a sphere 1 − 2.8e-5, two cubes 1 + 6.0e-5 and 1 + 7.3e-4, a slab exact (Task 1's fix round, once
+  each; S1); the plates at most 4.7e-15 and the box at most 6.43e-4 over their recorded steps (the record). The shoulder
+  on the mesh's planes of nodes departed 3.7e-3 (its flat faces lay on node planes, 451 nodes at φ = 0); built 0.13 mm
+  off them (ruling T7-h) it closes within 4.3e-4 and records at most 3.6e-5.
 - **Two areas per column (rulings T1-e and T1-g):** the division's A_i(0) is the column's volume per unit depth at φ,
   which the skins fill; the area the top fluxes act on (gas heat, radiation, spraying) stays the marker's owned area of
   φ (`Markers` by ownership), recomputed on the moved φ at every acceptance (ruling T5-e: with fixed areas the box's
   edges receded 1.9 mm within a step and the part ratio reached 2.8e12). On the box at 0.7 mm cells the two differ by up
-  to 10.4 per cent at edge columns (95th percentile 8.6 per cent, median 0.20 per cent; Task 1, once). The books close
-  either way; a top cell's flux area and its profile area differ there.
+  to 10.4 per cent at edge columns (95th percentile 8.6 per cent, median 0.20 per cent; Task 1, once, S1). The books
+  close either way; a top cell's flux area and its profile area differ there.
 - **The profile is used as measured (ruling T3-c):** edge columns' A(z) is jagged level by level (12 to 44 per cent
   jumps where level surfaces cross node planes, a P1 artefact; 28 of 5,406 neighbouring conductance pairs on the box
   differ by more than a factor of two), and no smoothing is applied because none of the failures it would guard against
@@ -2200,8 +2202,8 @@ metal raises if it reappears. **(verified)** `test_a_speck_the_move_removes_stay
 `test_no_change_of_volume_leaves_phi_as_it_was`.
 
 **What the moves do to edges** (design 21.8 items 2 to 4; on the stage 3 box's mesh, each against its grid reference
-within a tenth of the rounding volume, ruling P1 and planning ruling 11; plan 03b Task 2's report, section 4, once
-each):
+within a tenth of the rounding volume, ruling P1 and planning ruling 11; Task 2's runs of these tests on 770259e,
+once each, S2):
 
 - **(verified)** `test_an_equal_recession_keeps_a_box_s_edges_sharp`: a 1.0 mm recession on every group leaves 0.279 mm³
   between φ and the sharp receded box, against a tolerance of 1.889 mm³, and the worst group's swept volume misses its
@@ -2244,7 +2246,7 @@ T6-c: by mass, a merge had moved depths by 0.63 H; planning ruling 6).
   `test_a_marker_left_with_no_area_gives_its_skin_to_its_neighbour`, `test_a_part_that_would_empty_a_column_is_split`.
 - **(verified)** design 21.8 item 4b: `test_a_repartition_by_depth_moves_no_metal_through_the_base_and_keeps_each_depth`
   (cells' depths within 4.5e-16 of H of their donors', metal within 1.8e-16, books −2.2e-16 and 2.2e-16; plan 03b Task
-  7d's report, round 2), `test_combining_by_depth_keeps_each_depth_s_metal`,
+  7d's round 2, S17), `test_combining_by_depth_keeps_each_depth_s_metal`,
   `test_a_merge_keeps_each_depth_s_metal_at_its_depth`, `test_split_and_merge_conserve_mass_and_enthalpy`,
   `test_the_base_exchange_is_exact`.
 - **The draw's temperature (ruling T5-k):** each column with a base draws at its own base temperature, the area mean of
@@ -2276,7 +2278,7 @@ T6-c: by mass, a merge had moved depths by 0.63 H; planning ruling 6).
   as written). Molten volume metal drawn into a skin swells by up to about 15 per cent (1 − ρ_l/ρ_s), and that swelling
   moves φ above the place where the exchange happened, not where the melt is. Measured once on the heated cube at 850 K
   (13.5 per cent liquid by the Scheil law): drawn metal swelled about 2.3 per cent (2,749 against the volume's 2,813
-  kg/m³) and moved φ out by 6.9 mm³ over twelve steps (plan 03b Task 5's report, section 12). The volume's own melt does
+  kg/m³) and moved φ out by 6.9 mm³ over twelve steps (ruling T5-l's diagnostic, S4). The volume's own melt does
   not swell; a density per volume cell belongs with the volume flow (design 21.9).
 
 ### 18.5 Heat: through the depth, sideways, and across the base
@@ -2336,9 +2338,9 @@ transport, ruling P3).
 **(assumed) The capillary push at sharp edges.** The curvature in the capillary pressure is φ's recovered curvature
 (design section 17 item 8). At the cube's sharp edges it pushes far harder than the gas (median 2.5e5 N/m³ against a
 pressure gradient of 3.8e4 N/m³) and raises a ridge of liquid 1.0 mm high within one or two parts and 1.5 mm by eight
-parts, so the ridge is converged in the part count and is not a part-length artefact (ruling T6-a, scratch, once). With
-the edges rounded to 2 mm the same step completes. The spraying fixture's cube therefore has 2 mm rounded edges (ruling
-T6-d, provisional): it tests the spraying and the books, not sharp-edge capillarity, which stays Asha's question
+parts, so the ridge is converged in the part count and is not a part-length artefact (ruling T6-a, scratch, once, S8).
+With the edges rounded to 2 mm the same step completes. The spraying fixture's cube therefore has 2 mm rounded edges
+(ruling T6-d, provisional): it tests the spraying and the books, not sharp-edge capillarity, which stays Asha's question
 (18.11).
 
 ### 18.7 The thin-metal stop (design 21.11)
@@ -2357,9 +2359,9 @@ markers 10 mm away) and on the rounded cube (a lip with at least 2.49 mm of meta
 `test_a_wedge_sharper_than_sixty_degrees_has_opposed_neighbours_and_a_right_angle_has_none`,
 `test_columns_on_opposite_faces_of_thick_metal_are_not_opposed`. On the body's 0.7 mm cells the stop was checked to flag
 a 1.4 mm plate (82 pairs), a 2.0 mm plate (66), a 45 degree wedge (9) and a 55 degree wedge (12) (Task 7c's review,
-once). **(assumed)** A sharp concave notch of gas in thick metal does not stop the run (ruling T7c-d, a reading of 21.11
-for Asha to confirm): its columns meet on its bisector at every level, as at any shared boundary, and the metal there is
-not thin. The stop can still fire on a spurious pair (18.11, ruling T11-c).
+once, S15). **(assumed)** A sharp concave notch of gas in thick metal does not stop the run (ruling T7c-d, a reading of
+21.11 for Asha to confirm): its columns meet on its bisector at every level, as at any shared boundary, and the metal
+there is not thin. The stop can still fire on a spurious pair (18.11, ruling T11-c).
 
 ### 18.8 Spraying and the slurry's viscosity
 
@@ -2384,14 +2386,15 @@ kink in the skin, the wall's depth is the column's), `test_the_profile_release_m
 - **(assumed) The base as the floor** (design 21.7's amended spraying line, for Asha to check): where a skin's flowing
   layer reaches its base and the skin has no kink of its own, the base at depth H is the wall until the volume flow
   exists. In the records that wall is a rigid-front wall (`floor_like_wall` 0), so such a column counts as a rigid-front
-  column in `floor_like_share` (Task 10's review, a wording point for Asha).
+  column in `floor_like_share` (Task 10's review, a wording point for Asha; listed among the stage 3 rulings' open
+  questions).
 - **The first flowing step resolves no column (ruling T11-d; the shared rule, not a level-set gap).** The profile path
   needs the top cell to move (`melt_profile.reducible`), and the cells' speeds at a step's start are those the step
-  before left. On the rounded spraying cube (scratch, once, bridge law) none of 135 top cells moved before its first
-  spraying step, so every column took the table's path; before a second 0.05 s spraying step all 133 top cells moved
-  (fastest 1.34 m/s), 49 were reducible and 43 resolved (35 floor-like, 8 fluid-like, the wall's median depth 0.039 mm),
-  and the 69.9 mg it sprayed was all by the gas-driven mode, with books −1.2e-14 (mass) and 9.7e-17 (enthalpy) over 10
-  parts. A body measured on the profile path therefore needs at least two flowing steps.
+  before left. On the rounded spraying cube (scratch, once, bridge law, S19) none of 135 top cells moved before its
+  first spraying step, so every column took the table's path; before a second 0.05 s spraying step all 133 top cells
+  moved (fastest 1.34 m/s), 49 were reducible and 43 resolved (35 floor-like, 8 fluid-like, the wall's median depth
+  0.039 mm), and the 69.9 mg it sprayed was all by the gas-driven mode, with books −1.2e-14 (mass) and 9.7e-17
+  (enthalpy) over 10 parts. A body measured on the profile path therefore needs at least two flowing steps.
 
 **The slurry's viscosity follows `--rheology`** (design 21.7; Task 9): `SkinSettings.rheology` is `"composite"` by
 default (a settings pickle without the field loads as `"bridge"`), and a level-set skin's cell viscosities come from the
@@ -2440,9 +2443,9 @@ float, between Task 7d's code and Task 11's.
 as metal against 71 per cent, the plate recedes 0.760, 2.628 and 5.037 mm; against the 8 mm references it fails at 1.0
 and 1.5 s by the liquidus reference (9.2 and 5.2 per cent behind). On this mesh box the face cannot move among the node
 planes without deepening the slab, and one-dimensional references for an 8.27 mm slab (the references' own code,
-scratch, once) recede 4.3, 3.3 and 3.4 per cent less: against them the raised plate is 0.7 per cent ahead, 0.2 per cent
-ahead and 0.1 per cent behind, so the offset itself moves the recession by at most 0.9 percentage points, under one 20
-µm skin cell (2.5 per cent of the 1.0 s recession). Diagnosis D1's "5 per cent slower at this offset" was the deeper
+scratch, once, S18) recede 4.3, 3.3 and 3.4 per cent less: against them the raised plate is 0.7 per cent ahead, 0.2 per
+cent ahead and 0.1 per cent behind, so the offset itself moves the recession by at most 0.9 percentage points, under one
+20 µm skin cell (2.5 per cent of the 1.0 s recession). Diagnosis D1's "5 per cent slower at this offset" was the deeper
 slab.
 
 **(strict expected failure) The q6p box** (`test_q6p_box`, `BOX_FAILS`, design 21.8 item 10; marked `reference`, and its
@@ -2467,7 +2470,7 @@ on the windward cap and the liquid kept. Its first step is Task 7d's to every di
 then stops at its end on the thin-metal check, on a real thin site (ruling T11-b): the runoff under the composite law
 cuts a trough about 1.2 mm deep in the heated cap beside its +y cut face and leaves a fin 0.6 to 0.7 mm wide at the
 edge, the metal through the cap's marker along its normal is 1.39 mm (under 2H = 2.4 mm), and the pairs' normals turn
-146 and 142 degrees (Task 11's report, section 4.4, once). Under the bridge law the second step completes (a rigid
+146 and 142 degrees (Task 11's probes, once, S18). Under the bridge law the second step completes (a rigid
 deposit of 7.77 mg past the heat's end at 1.0 s, on Task 7d's code, reproduced by the bridge re-run on e57945f), and on
 Task 7d's code the third step stopped after 23 parts on the move's volume-sum check, its marker groups sweeping 4.27e-10
 m³ where φ's volume changed by 2.67e-10 m³, a 60 per cent miss described as a defect in φ's move at the sharp edge
@@ -2482,8 +2485,8 @@ scatter of a shared machine.
   Task 11's code (e57945f) the first and second steps took 128.5 s and 529.6 s, with one-minute load averages of about 9
   to 20 from other sessions (record `box_dev`); on Task 7d's code (73b5a9a, bridge law) 48.5 s and 190.0 s, load not
   recorded. The first step re-timed on 216296b's code on a quieter machine (load averages 3.4 to 3.7; Task 12's scratch
-  probe) took 34.9 s, against the old design's 31.4 s. The second step, where the face melts and parts split, was not
-  re-timed quietly. The box's mesh has 327,182 cells at the start, of which 161,968 are at the 0.175 mm floor.
+  probe, S20) took 34.9 s, against the old design's 31.4 s. The second step, where the face melts and parts split, was
+  not re-timed quietly. The box's mesh has 327,182 cells at the start, of which 161,968 are at the 0.175 mm floor.
 - **The division** is rebuilt at every acceptance and once at the step end. On the box it took 20.9 s in the first step
   (one division, 16 per cent of the step) and 204 s of the 529.6 s second step (nine divisions averaging 22.7 s, 39 per
   cent of the step; the tie rule's second nearest-marker query 64.9 s of them), under the loads above (record `box_dev`,
@@ -2492,18 +2495,19 @@ scatter of a shared machine.
   line is not this measure. On the shoulder's third step the division was 54 per cent of a 1012-part step (Task 7b's
   code, under the bridge law, once, also counting every division call whole). One division of the box took 1.6 s at
   0.7 mm cells and 17.6 s at 0.175 mm cells in Task 1's fix round (once).
-- **Sideways heat**, like for like (Task 12's scratch probe, `side_heat.py`, on 216296b's code with no package change,
-  one run at load averages 3.4 to 3.7): at the middle heat sub-step of the box's first real pass (0.25 s; 132 columns of
-  42 cells each, 403 shared boundaries, cells at 762 to 899 K), the same `Skins.conduct` call with the cells restored
-  before each took a median of 0.0278 s with the box's side faces and 0.0024 s with none, five times each, interleaved:
-  11.6 times. Over the whole first step, each of the 600 heat sub-steps with side faces was also made without them on
-  the same inputs: 20.3 s with against 1.6 s without, so the sideways conduction added 18.8 s, 54 per cent of the step's
-  34.9 s (the probe's own 1.7 s of paired calls left out); per sub-step the ratio had a median of 12.4 (10th to 90th
-  percentile 10.2 to 16.4). This replaces Task 7's on/off comparison, which was not like for like (the step without
-  sideways heat also moved φ and rebuilt the mesh). The heat sub-step is one coupled solve over all skins, so design
-  20.15's second layer (skins split across cores) must exchange within each solve.
+- **Sideways heat**, like for like (Task 12's scratch probe, `side_heat.py`, S20, on 216296b's code with no package
+  change, one run at load averages 3.4 to 3.7): at the middle heat sub-step of the box's first real pass (0.25 s; 132
+  columns of 42 cells each, 403 shared boundaries, cells at 762 to 899 K), the same `Skins.conduct` call with the cells
+  restored before each took a median of 0.0278 s with the box's side faces and 0.0024 s with none, five times each,
+  interleaved: 11.6 times. Over the whole first step, each of the 600 heat sub-steps with side faces was also made
+  without them on the same inputs: 20.3 s with against 1.6 s without, so the sideways conduction added 18.8 s, 54 per
+  cent of the step's 34.9 s (the probe's own 1.7 s of paired calls left out); per sub-step the ratio had a median of
+  12.4 (10th to 90th percentile 10.2 to 16.4). This replaces Task 7's on/off comparison, which was not like for like
+  (the step without sideways heat also moved φ and rebuilt the mesh). The heat sub-step is one coupled solve over all
+  skins, so design 20.15's second layer (skins split across cores) must exchange within each solve.
 - **Cells per skin:** every column of the box held 42 cells at 0.25 s in development (the probe above), and a full
-  column holds 71 or 72 in production (Task 7d's regrid probe, once), against the estimates of 37 and 63 (design 21.12).
+  column holds 71 or 72 in production (Task 7d's regrid probe, once, S17), against the estimates of 37 and 63 (design
+  21.12).
 - **Cells at the 0.175 mm floor** (design 20.13; record `cost_rim`, re-measured on 216296b by `stage3_cases.py cost
   --what rim`, ruling T12-b, load averages about 3.4, 19 s in all): a puck of radius 12.5 mm and height 6 mm with its
   rims rounded to 0.5 mm, meshed as the body meshes. Without a floor below the fine size it has 152,762 cells (build 2.8
@@ -2543,20 +2547,20 @@ These are not decided; each is stated with what was measured.
   cutting a trough about 1.2 mm deep in the heated cap in 0.5 s, and running metal 0.4 mm thick over the edge, is
   physical or a sign that the law's viscosity near the bridge is too low for the skins' runoff is not judged by these
   runs; the bridge re-run shows only that the law is the cause.
-- **The shoulder's fin may be the box's edge-ownership failure** (Task 11's review, beside T11-b): the cut-face marker's
-  skin holds no non-rigid metal (0.0 mm at 858.9 K) while the fin moved about 0.1 mm and the cap inboard lost about 1.2
-  mm, which is diagnosis D1's mechanism, so 21.10's finer markers are a candidate remedy beside 21.11. And the box's
-  face became much less even under the composite law than under the bridge law (the spread of its markers' recessions
-  widened from 0.110 to 0.405 mm, the largest tilt of a face marker rose from 3.4 to 17.3 degrees, and inner points
-  receded as little as 0.485 mm, 39 per cent behind the reference), which the face-centre criterion hides.
+- **The shoulder's fin may be the box's edge-ownership failure** (Task 11's review, beside T11-b; S18): the cut-face
+  marker's skin holds no non-rigid metal (0.0 mm at 858.9 K) while the fin moved about 0.1 mm and the cap inboard lost
+  about 1.2 mm, which is diagnosis D1's mechanism, so 21.10's finer markers are a candidate remedy beside 21.11. And the
+  box's face became much less even under the composite law than under the bridge law (the spread of its markers'
+  recessions widened from 0.110 to 0.405 mm, the largest tilt of a face marker rose from 3.4 to 17.3 degrees, and inner
+  points receded as little as 0.485 mm, 39 per cent behind the reference), which the face-centre criterion hides.
 - **The node pass still flags a spurious pair at its threshold** (ruling T11-c): on the rounded spraying cube under the
   composite law the stop fires on a pair whose columns share no boundary at any level and whose metal is 3.83 and 8.30
   mm thick through the markers; the thin test's measures read 2.18 and 2.40 mm against its 2.4 mm threshold. Until a
   remedy (for example, a node-pass pair must also share a boundary at some level, or be neighbours among the markers) is
   chosen, the spraying fixture stays on the bridge law (ruling T9-a) and no unit test sprays under the default law.
-- **Markers drift within a step** (diagnosis D2, section 3.5; ruling T7b-a): markers stood up to 2.08 mm (1.7 H) off φ
+- **Markers drift within a step** (diagnosis D2, S13; ruling T7b-a): markers stood up to 2.08 mm (1.7 H) off φ
   within one 50 ms step, and they own the re-taken top flux within the step; they are back on φ at the step's end
-  (1.4e-14 m, Task 7c). Whether they should settle within a step is open.
+  (1.4e-14 m, Task 7c, S15). Whether they should settle within a step is open.
 - **Concave notches** (ruling T7c-d, 18.7): a sharp concave notch of gas in thick metal does not stop the run; a reading
   of 21.11 to confirm.
 - **Swelling** (ruling T5-n, 18.4): the volume holds its metal at the solid's density, so φ sits low by the volume's
