@@ -861,10 +861,11 @@ piece. Each value was measured once on the laptop unless said otherwise.
 averages 3.4 to 3.7), against 31.4 s for the old two-mode design; its first two steps took 128.5 s and 529.6 s in the
 record's run under load averages of about 9 to 20. Sideways heat made the same heat sub-step 11.6 times slower (median
 of five calls each way at one state of the box) and took 54 per cent of the box's quiet first step. The division of the
-layer took 33 per cent of the box's second step. Cells at the 0.175 mm floor cost about 1,800 cells per mm of a 0.5 mm
-rim and made the cut-cell solve's step 4.8 times slower than without the floor. The 50 mm sphere took 36 minutes to
-build and did not finish its first step in 39 minutes on a loaded laptop, a lower bound only. The details, the machine
-loads and the open questions for Asha are in `docs/model_assumptions.md` sections 16.10 and 16.11.
+layer took 39 per cent of the box's second step (204 s of 529.6 s, nine divisions). Cells at the 0.175 mm floor cost
+about 1,800 cells per mm of a 0.5 mm rim and made the cut-cell solve's step 4.8 times slower than without the floor. The
+50 mm sphere took 36 minutes to build and did not finish its first step in 39 minutes on a loaded laptop, a lower bound
+only. The details, the machine loads and the open questions for Asha are in `docs/model_assumptions.md` sections 16.10
+and 16.11.
 
 ## Tests
 

@@ -1435,11 +1435,13 @@ meet on the halfway plane and exchange as any neighbours. The thin case is desig
   column holds 71 or 72 in production (Task 7d's regrid probe, once).
 - **The division** is rebuilt at every move: a nearest-point query for each integration point of the layer's cells.
   Its cost is unknown; it is measured on the box.
-  *Measured:* on the box, 20.9 s for the first step's one division (16 per cent of the step) and 174 s of the 529.6 s
-  second step (nine divisions, 22.7 s each on average, 33 per cent of the step; the tie rule's second nearest-marker
-  query 64.9 s of it), under one-minute load averages of about 9 to 20 (record `box_dev`, `division_cost`, once); 54 per
-  cent of the shoulder's 1012-part third step under the bridge law (Task 7b, once); one division of the box 1.6 s at
-  0.7 mm cells and 17.6 s at 0.175 mm cells (Task 1's fix round, once). The closure it reaches is §21.8 item 5's.
+  *Measured:* on the box, 20.9 s for the first step's one division (16 per cent of the step) and 204 s of the 529.6 s
+  second step (nine divisions averaging 22.7 s, 39 per cent of the step; the tie rule's second nearest-marker query
+  64.9 s of them), under one-minute load averages of about 9 to 20 (record `box_dev`, `division_cost`, every call of
+  `division.divide` timed whole, once; 174 s of it is booked to the step end's division, `stepend._divide`, in the
+  record's cost split); 54 per cent of the shoulder's 1012-part third step under the bridge law (Task 7b, once, also
+  counted whole); one division of the box 1.6 s at 0.7 mm cells and 17.6 s at 0.175 mm cells (Task 1's fix round,
+  once). The closure it reaches is §21.8 item 5's.
 - **Sideways heat** makes each heat sub-step one coupled solve over all skins instead of independent columns. §20.15's
   second layer (skins split across cores) must then exchange within each solve, not only between sub-steps.
   *Measured like for like* (Task 12's scratch probe on 216296b's code, no package change, load averages 3.4 to 3.7,

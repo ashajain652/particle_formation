@@ -2377,11 +2377,13 @@ scatter of a shared machine.
   probe) took 34.9 s, against the old design's 31.4 s. The second step, where the face melts and parts split, was not
   re-timed quietly. The box's mesh has 327,182 cells at the start, of which 161,968 are at the 0.175 mm floor.
 - **The division** is rebuilt at every acceptance and once at the step end. On the box it took 20.9 s in the first step
-  (one division, 16 per cent of the step) and 174 s of the 529.6 s second step (nine divisions averaging 22.7 s, 33 per
-  cent of the step, the tie rule's second nearest-marker query 64.9 s of them), under the loads above (record `box_dev`,
-  `division_cost`); on the shoulder's third step it was 54 per cent of a 1012-part step (Task 7b's code, under the
-  bridge law, once). One division of the box took 1.6 s at 0.7 mm cells and 17.6 s at 0.175 mm cells in Task 1's fix
-  round (once).
+  (one division, 16 per cent of the step) and 204 s of the 529.6 s second step (nine divisions averaging 22.7 s, 39 per
+  cent of the step; the tie rule's second nearest-marker query 64.9 s of them), under the loads above (record `box_dev`,
+  `division_cost`, which times every call of `division.divide` whole); in the record's cost split 174 s of it is booked
+  to the step end's division (`stepend._divide`, the time left after its nested timed calls), so the split's 'division'
+  line is not this measure. On the shoulder's third step the division was 54 per cent of a 1012-part step (Task 7b's
+  code, under the bridge law, once, also counting every division call whole). One division of the box took 1.6 s at
+  0.7 mm cells and 17.6 s at 0.175 mm cells in Task 1's fix round (once).
 - **Sideways heat**, like for like (Task 12's scratch probe, `side_heat.py`, on 216296b's code with no package change,
   one run at load averages 3.4 to 3.7): at the middle heat sub-step of the box's first real pass (0.25 s; 132 columns of
   42 cells each, 403 shared boundaries, cells at 762 to 899 K), the same `Skins.conduct` call with the cells restored
