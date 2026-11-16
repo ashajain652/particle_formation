@@ -291,6 +291,22 @@ def test_a_deposit_thicker_than_the_move_allowance_comes_down_over_several_parts
     assert np.abs(b.solver.temperature() - 700.0).max() < 1e-6
 
 
+def test_the_skins_time_every_rebuild_a_base_move_makes(coarse_sphere_mesh):
+    """A base move that rebuilds the mesh more than once (a compression rebuild and a quality one, or the rebuilds between
+    the pieces of a split move, 2026-11-15) adds all of their time to the skins' rebuild wall time, not the last one's."""
+    b = make(coarse_sphere_mesh, T0=700.0)
+    mm, policy = b.moving, b.moving.move_with_policy
+
+    def twice_rebuilt(u, h_inward=None, h_outward=None):
+        mm.rebuild("quality")
+        mm.rebuild("quality")
+        return policy(u, h_inward, h_outward)
+    mm.move_with_policy = twice_rebuilt
+    b.advance(0.5, 0.5, heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0))
+    assert b.step_parts >= 1 and mm.rebuilds == 2 * b.step_parts
+    assert b.wall["rebuild"] == pytest.approx(mm.rebuild_seconds, rel=1e-12)
+
+
 # -- how far a hot base absorbs (spec 6.6) ------------------------------------------------------------------------------
 def test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped(coarse_sphere_mesh, monkeypatch):
     """The metal a base absorbs is the depth, along the column, from the base node to where the 3D temperature falls to
