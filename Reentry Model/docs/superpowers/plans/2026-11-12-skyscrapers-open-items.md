@@ -97,3 +97,15 @@ subpackage landed on main (655d1a2). Built from the post-refactor open-items inv
     floor), latch on what the spraying first needs rather than on any liquid, and measure whether 0.5 s steps split
     into parts save anything at all once the skins are thick (on this flight they cost more per second of flight than
     the fine step).
+
+24. **A mesh move refused on a fresh mesh, from the base cells and the fitted-sphere loads together** (Asha,
+    2026-11-15: "Go with option 1; test the split by branching from this branch"; branch `refused-move-split`, off
+    `skin-base-cells` at 6663f4a). Merged with main at aa0525f, the base cells made
+    `test_a_spraying_body_in_the_slip_band_keeps_the_three_books` stop in its second step: a move that took one element
+    of four surface corners from a radius ratio of 0.25 to 0.0486 on the freshly rebuilt mesh (the floor is 0.05), a
+    5.0 mm pool's base handed back 0.36 mm beside thin skins drawn in by up to 0.44 mm. Neither change alone fails it.
+    *Done:* such a move is now made in pieces before it stops the flight (`docs/model_assumptions.md` section 17); in
+    halves the test passes, and so does the whole unit tier (1127 of 1128 tests, one skipped). *Still open:* no flight has split a move, so whether real flights on the base cells and the
+    sphere rule refuse moves like this is not known, and `MovingMesh.split_moves` is not yet in the history, so a
+    flight would not show that it split; the pieces of a move share one part of the macro step, with no conduction
+    between them.

@@ -2005,3 +2005,55 @@ s at 0.2 mm, so the latter flew 2.5 s more on 0.5 s steps at about 4.6 times the
 from 182.5 to 186.5 s, on the same step, the skins took 24,813 s at 0.2 mm against 28,928 s with it off, with 4 to 7 %
 more cells. Not known: the flight after 186.5 s, and the base cell with the fitted-sphere windward loads, the interim gas
 loads, the composite viscosity law and the kinked dispersion profile, none of which these flights used.
+
+*With the fitted-sphere loads (2026-11-15).* Merged with main, the base cell under the sphere rule stopped one unit test,
+the spraying test sphere in the slip band, on a mesh move refused even on a freshly rebuilt mesh; with either change
+alone it passed. Such a move is now made in pieces, and the test passes (section 17).
+
+## 17. A mesh move refused even on a fresh mesh is made in pieces (skyscrapers, `movemesh`)
+
+The skins move the 3D mesh's surface corners by the metal crossing the rigid front each part of a macro step, and the
+nodes of the deforming zone beneath follow. A move is refused, changing nothing, if any element it touches would invert
+or fall below a radius ratio of 0.05 (`RATIO_MIN`; the radius ratio is 1 for a regular tetrahedron and 0 for a flat
+one). A refused move is made again on a mesh rebuilt inside the same surface, and until 2026-11-15 a move refused on
+that fresh mesh stopped the flight (exit 1). Since then (Asha, 2026-11-15, option 1; branch `refused-move-split`) it is
+first made in pieces (`MovingMesh._move_in_pieces`): two halves in turn, a half still refused halved again, down to
+pieces of a sixteenth of the move (`SPLIT_LEVELS` = 4), with a rebuild before any piece the mesh refuses if the mesh
+has moved since its last rebuild. Only a piece refused at a sixteenth stops the flight, its message naming the size.
+`MoveResult.pieces` and `MovingMesh.split_moves` count the pieces and the split moves; neither is in the history yet.
+A state saved before the change splits too when resumed.
+
+*Why.* On the merged tree of the base cells (section 16) and main at aa0525f, the unit test
+`test_a_spraying_body_in_the_slip_band_keeps_the_three_books` (the 4 mm test sphere at 3 MW/m2 from 890 K, two 0.25 s
+steps, spraying in the slip band) stopped in its second step: one element of four surface corners went from a radius
+ratio of 0.25 on the rebuilt mesh to 0.0486. One of its corners held a 5.0 mm pool whose base moved 0.36 mm outward as
+metal froze back onto the 3D model; the other three, with 0.87 mm skins, were drawn 0.08 to 0.44 mm inward. It failed
+only with both the base cell and the fitted-sphere windward loads: main, the branch with the base cell off, and the
+branch with the base cell under the normals rule all passed it. A fresh mesh is meshed from the surface it is given,
+so the surface half-way there, meshed afresh, need not contain that element.
+
+*Verified.* With the split the test passes on the branch (be67361, within its limits of 1e-12 of the mass, 1e-8 of
+the heat absorbed and 1e-12 of the impulses). A run of its body with the same split patched in from outside, before it
+was built, made the refused move in two halves and gave the mass to 1e-16, an energy residual of 5e-12 and a momentum
+residual of 2e-17. On the 4 mm test sphere with a 4 mm deforming zone, pressing the whole surface 3.5 mm inward is refused
+even on a fresh mesh and goes through in two halves; 6 mm goes through as a half and two quarters, and fails when
+only one halving is allowed (`tests/test_reentry_model_movemesh.py`). The corners end where the whole move puts them
+(to 1e-15 m), and the books close as for one move: the swept volumes sum to the change of the mesh's volume and the
+energy left plus the swept enthalpy is the starting energy, each to 1e-12. Metal a later piece sweeps inward is booked
+at the slab of the profile below what the earlier pieces swept, from the move's own profile enthalpy (`h_inward`, read
+as the profile's mean from the corner's surface to a depth): on a profile falling 100 kJ/kg per mm, 3.5 mm in, the
+split books within 0.46 % of what one move of the same swept volume books, the corners' areas shrinking between the
+halves on the sphere, where booking each half from the surface would be 9.7 % off. The whole unit tier on be67361
+passes, run once (1127 of its 1128 tests, the FEniCSx module skipped for want of `dolfinx`), and so do the 211
+wake-residence tests.
+
+*Assumed, and not tested.* That a move the mesh can take in pieces is the move the physics asked for: the split
+changes how the mesh follows the surface, not where the surface goes, but the pieces share one macro step's part, so
+no conduction happens between them. That a sixteenth is a sensible floor: it was chosen as a limit on the rebuilds a
+split can make (at most 16 pieces and their rebuilds; on the 50 mm flight with the base cell, 13 rebuilds took 84.5 s
+of wall time, about 6.5 s each, from the flight's history, which counted only the last rebuild of a move that made two),
+not measured.
+The split was tried only on the 4 mm test sphere; no flight has used it, and whether real flights refuse moves this way
+is not known. A move that flattens an element across a sharp fold of the surface itself (the shoulder failure of
+sub-plan 19, recorded in the module's docstring) is not cured by any rebuild inside the same surface, and pieces do
+not change that.

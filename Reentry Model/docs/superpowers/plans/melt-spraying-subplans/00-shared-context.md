@@ -3490,3 +3490,26 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
      fitted-sphere loads, the interim gas loads, the composite law and the profile dispersion is not flown. *The
      jump-fault test* stays as it was, with Task 5k's rule: it caught a real error. Merge after `near-wake-capture`
      (Asha, 2026-11-15).
+
+199. **A mesh move refused even on a fresh mesh is made in pieces (2026-11-15, branch `refused-move-split`, off
+     `skin-base-cells` at 6663f4a; open item 24; Asha: "Go with option 1; test the split by branching from this
+     branch").** *Why.* The unit tier on the base cells merged with main at aa0525f had one failure,
+     `test_a_spraying_body_in_the_slip_band_keeps_the_three_books`: in its second step a move took one element of four
+     surface corners from a radius ratio of 0.25 on the freshly rebuilt mesh to 0.0486, under the 0.05 floor (a 5.0 mm
+     pool's base handed back 0.36 mm beside three corners with 0.87 mm skins drawn in by 0.08 to 0.44 mm). Main, the
+     branch with the base cell off, and the branch with the base cell under `--windward-loads normals` passed it; only the
+     base cell with the sphere rule failed. *The change.* `MovingMesh.move_with_policy` makes a move refused even on the
+     fresh mesh in pieces (`_move_in_pieces`): halves, and a half still refused halved again down to a sixteenth
+     (`SPLIT_LEVELS` = 4; `split_levels=0` is the rule before), each piece moved as a move is, with a rebuild before any
+     piece the mesh refuses if it has moved since its last rebuild. The pieces' swept volumes, enthalpies and corrections
+     are summed into one `MoveResult` (`pieces` counts them; `MovingMesh.split_moves` counts split moves), and a later
+     piece books the metal it sweeps inward at the slab of `h_inward`'s profile below the earlier pieces'. A piece refused
+     at a sixteenth raises "... even after a rebuild, and so does a piece of 1/16 of it" (exit 1). The skins' rebuild
+     wall time (`wall_rebuild_s`) now adds every rebuild a base move makes; before, a move that rebuilt twice (compression
+     then quality) counted only the second. A state saved before reads the class defaults and splits too. *Verified.* The
+     failing test passes with the move made in halves; on the 4 mm test sphere with a 4 mm zone, 3.5 mm inward needs
+     halves and 6 mm a half and two quarters, the corners end where the whole move puts them and the books close to
+     1e-12; the inward booking is within 0.46 % of one move's, against 9.7 % booked from the surface
+     (`tests/test_reentry_model_movemesh.py`, `docs/model_assumptions.md` section 17). The unit tier on be67361 passes,
+     run once: 1127 of 1128 tests, the FEniCSx module skipped. *Not yet known:* whether a flight splits; `split_moves`
+     is not in the history.

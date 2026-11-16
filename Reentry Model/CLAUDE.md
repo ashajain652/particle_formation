@@ -97,14 +97,17 @@ After the low-Mach pressure, the one-solve-per-`--dt` hold and the solve skip we
 1079 pass and 1 is skipped, in 57 minutes on four processes, run once with one-minute load averages of 2 to 14. With
 the fitted-sphere loads merged in (branch `fitted-sphere-loads`, 2026-11-15) it has 1110 tests: 1109 pass and 1 is
 skipped, in 70 minutes on four processes, run once with one-minute load averages of about 6 to 17 and other runs on the
-machine (main had 1080 and the branch alone 1022; the merge adds two tests of its own). The
+machine (main had 1080 and the branch alone 1022; the merge adds two tests of its own). With the base cells and the
+split of a refused mesh move (branches `skin-base-cells` and `refused-move-split`, 2026-11-15) it has 1128 tests: 1127
+pass and 1 is skipped, in 150 minutes on four processes, run once with other runs on the machine. The spraying test
+sphere in the slip band now runs to its end and is the longest test, about 49 minutes when run alone under load. The
 droplet tests, `pytest reentry_model/droplet_reentry/tests`, are 35 and pass (40 s on 2026-11-15, 74 s before). The port's own tools have their tests in `analysis/skyscrapers_port/`, run
 explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 1110 tests, 1 skipped, ~35-71 min on four
+                                                          # the package's unit tier: 1128 tests, 1 skipped, ~35-150 min on four
                                                           # processes (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
@@ -257,7 +260,9 @@ described from its own docstring. The layered-skin design (the "skyscrapers" arc
   The skins' windward loads (heating, surface flow, spray plan) follow `--windward-loads sphere|normals` on `run` and `resume`, `sphere` by default (Asha, 2026-11-13; branch `fitted-sphere-loads`, merged with the interim gas loads on 2026-11-15). Under `sphere`, `skyscrapers/shelter.py` (`upstream_hits`, on a grid; `upstream_hits_plain` is the reference) shelters each corner ahead of the centroid plane whose ray up the flow crosses the tops; `SkinBody.sphere_fit` fits one sphere to the exposed corners, `load_angles()` gives each the angle of the ray from its centre, the radius is capped at `NOSE_CAP_FACTOR` times the windward transverse radius, and `load_meridian()` points the push along the fitted meridian. `normals` is the earlier rule exactly (named `_windward-normals`; a state saved before the option resumes on it); under `sphere` `--leeward-test` and `--size-feedback` are refused (exit 2), and the element model refuses `--windward-loads` as it refuses `--geometry-stop`. The history gains `sheltered_corners`, `sphere_centre_mm` and `sphere_fit_rms_mm`, the frames `load_angle_deg` and `sheltered`. On the default `--gas-loads similarity` a corner the ray test shelters reads pi (`SHELTER_WAKE`) whichever way it faces, a corner behind the centroid plane reads its own `theta` where it faces away (past 90 degrees) and pi where it faces the flow, and an exposed corner keeps its ray angle even past 90 degrees; on `classic` the rule is as before the merge, bit for bit. `analysis/fitted_sphere_check.py` measures the rule on the saved 100 mm and 50 mm states. Assumptions and limits: `docs/model_assumptions.md` section 15.
 - `columns` — the corner columns, each owning the dual cell of one corner of the surface triangulation.
 - `movemesh` — the moving 3D mesh: surface corners move by the metal crossing the rigid front, nodes in a deforming
-  zone beneath follow, and the temperature field is remapped with the energy books closed exactly.
+  zone beneath follow, and the temperature field is remapped with the energy books closed exactly. A move refused even
+  on a freshly rebuilt mesh is made in pieces (halves, down to a sixteenth, `SPLIT_LEVELS`) before it stops the flight
+  with "degrades the mesh even after a rebuild" (exit 1; Asha, 2026-11-15; `docs/model_assumptions.md` section 17).
 - `spreading` — spreading the re-frozen deposit where the base would fold.
 - `restart` — saving a flight's whole state to disk and resuming from it.
 
