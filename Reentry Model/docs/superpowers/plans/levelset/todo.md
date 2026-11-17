@@ -27,6 +27,14 @@ Section 21 marks four of Claude's calls for Asha to check:
 None of them blocks the build. The plates of plan 03b's Task 7 test the first call: if the melting front crossing the
 skin base makes them fail, a larger depth is Asha's decision then (§21.12).
 
+Status: settled by Asha, 2026-11-17 (recorded in §21.3, §21.6 and §21.7):
+- skin depth: kept at 1.2 mm, judged by the kink lying inside the skin; reduce it if it proves too slow;
+- hand-down rule superseded: accepted;
+- one solid density in the volume: overturned. The volume must track density per element; built with the volume melt
+  flow (item 3);
+- base as a floor-like wall: accepted as an interim measure until item 3; the run driver (item 7) records how many
+  spraying columns use it.
+
 ## 3. The volume melt flow (design §21.9, with §8 and §20.7)
 
 Solve the flow of all molten metal inside β with incompressible Navier–Stokes, as §8 sets out. The rigid wall is ψ's
@@ -38,6 +46,8 @@ very roughly, from about 10⁴ flow steps of 10 ms on about a million cells, and
 for it is §20.15's third layer: PETSc's solvers with several MPI ranks on the Mac Studio.
 
 Item 5 below asks whether this solve should reach further than the volume.
+
+Asha, 2026-11-17: the volume flow also brings density per volume element (item 2, §21.6).
 
 ## 4. Finer markers near edges (design §21.10), and thin metal (design §21.11)
 

@@ -1139,6 +1139,15 @@ and sets out the two pieces that follow it (§21.9, §21.10).
   100 mm flight to 30 s with the profile dispersion (Mac Studio, 2026-11-12, *measured* once): the 3950 release records'
   flowing depths lay between 0.84 and 0.92 mm, and the largest anywhere on the body was 0.93 mm. That flight was still
   heating at 30 s, so later melt may be deeper.
+  *Reviewed by Asha, 2026-11-17: kept at 1.2 mm, to be reduced if it proves too slow.* The requirement is that the
+  velocity profile's kink lies inside the skin (Asha: the volume flow carries the deeper melt), not the whole flowing
+  layer. Evidence (`reports/kinked_dispersion_orr_sommerfeld/flight.csv`, 87 sampled skyscrapers columns, *measured*
+  once): on the 100 mm sphere at 32.5 s every kink lay 0.022 to 0.080 mm deep; on the 50 mm sphere at 178.5 s the median
+  was about 0.06 mm and 90 % lay above 0.19 mm, but five deep-liquid columns (flowing layers 1.4 to 5.3 mm) had their
+  first kink at 0.40, 0.82, 0.84, 1.09 and 1.91 mm. The 1.91 mm kink (column 57) lies below H; none of the five sprays
+  (surface Weber numbers 0.0001 to 0.016 against about 3). With one skin depth a skin cannot grow tall, so the
+  skyscrapers' tall-column failure arises only where φ's radius of curvature nears H (§21.10, §21.11). The skin's
+  no-slip base is interim, until §21.9 gives the skins the volume's velocity at β.
 - **Cells** as §20.6: 10 µm (production; 20 µm development) in the top 0.4 mm, then each 10 % thicker than the one
   above, down to H.
 - **No modes.** The full-depth skin, the top-zone skin, the thin test (§20.5) with its hysteresis, the mode changes and
@@ -1150,7 +1159,7 @@ and sets out the two pieces that follow it (§21.9, §21.10).
   passed down only the anchored rigid run below the stub and never a crust, so that metal refrozen on liquid could not
   be carried below that liquid. A hand-down moves no metal — only the owner changes and β follows — so that property
   holds without the rule. A crust deeper than H becomes the volume's crust (§20.3: carried by the volume flow as a
-  rigid body, once the flow exists).
+  rigid body, once the flow exists). *Accepted by Asha, 2026-11-17.*
 - **Melt deeper than H lies in the volume.** Until the volume flow is built (§21.9) it is held, as melt under a
   top-zone skin is held today, and a skin's flow treats its base as a no-slip floor.
 
@@ -1235,6 +1244,10 @@ and sets out the two pieces that follow it (§21.9, §21.10).
   the volume's own melt does not swell. It arises only where melt lies deeper than H, which no flowing layer reached on
   the skyscrapers' 100 mm flight to 30 s. A density per volume cell changes the thermal solve's mass matrix and belongs
   with the volume flow (§21.9), which must handle the swelling of melt in the volume anyway.
+  *Overturned by Asha, 2026-11-17:* the volume must track density per element, by each element's own phase, since it
+  holds both molten and solid metal; one solid density is not acceptable as the design. Built with the volume melt flow
+  (§21.9; Asha's choice of timing), where the expansion is a source in the flow solve and the per-element mass enters
+  the thermal solve's mass matrix. Until then the single-density rule above stays in the code as a known defect.
 - **How the books close** (shown to Asha, 2026-11-13). Mass and energy are held by the skin cells and the volume mesh,
   never by a surface; a surface only decides which store owns a given piece of metal. Metal changes hands in four ways, each
   booked once as taken from one store and given to another: spraying (skin to droplets), runoff (skin to skin),
@@ -1273,7 +1286,8 @@ and sets out the two pieces that follow it (§21.9, §21.10).
   flowing layer reaches the skin's base, so that the melt continues into the volume, a kink inside the skin is used if
   there is one; otherwise the profile beneath would come from the volume flow (§21.9). Until that flow exists the
   volume's melt is held, so the skin's base acts as a floor-like wall at depth H. On the skyscrapers' 100 mm flight to
-  30 s no flowing layer reached 1.2 mm, so this case did not arise there.
+  30 s no flowing layer reached 1.2 mm, so this case did not arise there. *Accepted by Asha as an interim measure,
+  2026-11-17, until §21.9; the run driver is to record how many spraying columns use the base as their floor.*
 - **The rheology follows main's `--rheology composite|bridge`** (composite the default since 69aba28). The level set's
   `SkinSettings` gains `rheology` and its skins' viscosity comes from the shared `rheology.law_viscosity` with the
   shared `rate_cap`. Corrected while planning, 2026-11-13: the request relayed earlier asked the skins to read stored
