@@ -127,7 +127,6 @@ corners ahead of the plane through the mass centroid cast a ray up the flow; tho
 (`shelter.upstream_hits`), one sphere is fitted to the rest (`sphere_fit`), each of them reads the angle of the ray from its
 centre, and the radius is the fit capped at the flat-face bound; sheltered corners and those behind the plane are leeward.
 `normals`, the class's default for states saved before it, is the rule of sub-plan 22 Tasks 5g and 5j unchanged."""
-import copy
 import dataclasses
 import math
 import time
@@ -140,7 +139,6 @@ from ..shared import lubrication
 from ..shared import material as material_mod
 from ..shared import melt_profile
 from . import movemesh
-from ..shared import rheology
 from . import shelter
 from . import skin as skin_mod
 from ..shared import spray as spray_mod
@@ -501,7 +499,6 @@ def layer_columns(sk, tau):
     return melt_profile.LayerColumns(z=cells(np.cumsum(dz, axis=1) - 0.5 * dz), dz=dz, u=cells(u), T=cells(sk.T),
                                      m=np.where(valid, sk.m, 0.0), rho=cells(sk.density(sk.T)), mu=mu, flowing=flowing,
                                      liquid=liquid, front=sk.depth_above(sk.material.T_rigid))
-
 
 
 def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False, points=None, centre=None,

@@ -146,7 +146,7 @@ def test_the_base_level_s_ownership_divides_beta_s_patches_whole():
 
 
 def test_a_spherical_shell_divides_by_the_shell_volume():
-    """A sphere of radius 5 mm (a 10 mm sphere), markers seeded 2 mm apart as the body seeds them: the columns' volumes
+    """A sphere of radius 5 mm, markers seeded 2 mm apart as the body seeds them: the columns' volumes
     close the shell to within DIVISION_TOL, and every column is a cone, its base (R - H)^2 / R^2 of its top to 2 %."""
     R = 5e-3
     c = np.array([OFF, -0.07e-3, 0.11e-3])
@@ -367,6 +367,62 @@ def test_columns_on_opposite_faces_of_thick_metal_are_not_opposed():
     assert len(facing) > 0                                    # the mechanism is reproduced
     assert np.all(np.abs(nrm[d.i[facing], 2]) == 1.0)       # the +z and -z faces' columns
     assert not d.opposed.any()
+
+
+THIN_STEP = 0.1e-3         # m: the thin test's samples along the normals in the test below (the division samples at its
+                           # level spacing, 0.05 mm)
+
+
+def test_the_thin_test_rejects_metal_that_is_thick_along_the_normals():
+    """The final review's M12 (plan 03b Task 7c's deferred minor): the rejecting half of the thin test
+    (`division._thin_between` with `_metal_along`), which no other test reaches. Pairs of markers of opposed normals +y
+    and -y stand either side of points on a slab's mid-plane. 0.5 mm off each point, the depths of the point below their
+    tangent planes sum to 1.0 mm, under twice the skin depth: in a slab 1.0 mm thick the metal along their normals from
+    the point is 0.5 mm each way and the pair is thin; in a slab 6 mm thick the metal along each normal outlasts twice
+    the skin depth (`_metal_along` gives inf) and the pair is not thin, whatever its tangent planes say. 2 mm off each
+    point, in the thin slab, the tangent planes alone reject the pair. From a point in the gas 0.3 mm above a slab the
+    metal along -y is 0."""
+    from reentry_model.levelset.division import _metal_along, _thin_between
+    at = OFF + np.array([[0.0, 0.0, 0.0], [0.5e-3, 0.0, -0.7e-3], [-1.3e-3, 0.0, 0.9e-3]])
+    k = len(at)
+    up, down = np.tile([0.0, 1.0, 0.0], (k, 1)), np.tile([0.0, -1.0, 0.0], (k, 1))
+    i, j = np.arange(k), np.arange(k, 2 * k)
+    reach = np.linspace(0.0, 2.0 * H, int(np.ceil(2.0 * H / THIN_STEP)) + 1)
+    found = {}
+    for thick in (1.0e-3, 6.0e-3):
+        sdf = _slabs_sdf((OFF - 0.5 * thick, OFF + 0.5 * thick))
+        mesh = _layer_mesh(BoxBase((-3e-3, -4e-3, -3e-3), 1e-3, (6, 8, 6)), sdf, fine=0.25e-3)
+        phi = sdf(mesh.points)
+        for off in (0.5e-3, 2e-3):
+            x = np.concatenate([at + off * up, at + off * down])
+            found[thick, off] = _thin_between(mesh, phi, H, x, np.concatenate([up, down]), i, j, at, THIN_STEP)
+        found[thick, "along"] = _metal_along(mesh, phi, at, up, reach), _metal_along(mesh, phi, at, down, reach)
+        found[thick, "gas"] = _metal_along(mesh, phi, at + [0.0, 0.5 * thick + 0.3e-3, 0.0], down, reach)
+    print("thin test: 1.0 mm slab {} (metal {} mm up), 6 mm slab {} (metal {} up)".format(
+        found[1.0e-3, 0.5e-3], np.round(found[1.0e-3, "along"][0] * 1e3, 9), found[6.0e-3, 0.5e-3],
+        found[6.0e-3, "along"][0]))
+    for a in found[1.0e-3, "along"]:
+        np.testing.assert_allclose(a, 0.5e-3, rtol=0.0, atol=1e-12)
+    assert np.all(np.isinf(found[6.0e-3, "along"][0])) and np.all(np.isinf(found[6.0e-3, "along"][1]))
+    assert found[1.0e-3, 0.5e-3].all()                      # thin both ways
+    assert not found[6.0e-3, 0.5e-3].any()                  # thick along the normals: rejected by the metal
+    assert not found[1.0e-3, 2e-3].any()                    # far tangent planes: rejected before the metal is read
+    assert np.all(found[1.0e-3, "gas"] == 0.0) and np.all(found[6.0e-3, "gas"] == 0.0)
+
+
+def test_the_same_side_rule_needs_both_normals():
+    """The final review's M12 (plan 03b Task 1's deferred minor): `ownership` given the markers' normals without the
+    triangles' (or the triangles' without the markers') raises ValueError, not an opaque reshape error; given both, a
+    marker allowed the triangle owns the whole of it."""
+    import pytest
+    x = np.array([[0.2e-3, 0.2e-3, 0.0]])
+    tris = np.array([[[0.0, 0.0, 0.0], [1e-3, 0.0, 0.0], [0.0, 1e-3, 0.0]]])
+    with pytest.raises(ValueError, match="tri_normal"):
+        ownership(x, tris, [0], 1, 1e-3, normals=[[0.0, 0.0, 1.0]])
+    with pytest.raises(ValueError, match="tri_normal"):
+        ownership(x, tris, [0], 1, 1e-3, tri_normal=[[0.0, 0.0, 1.0]])
+    W = ownership(x, tris, [0], 1, 1e-3, normals=[[0.0, 0.0, 1.0]], tri_normal=[[0.0, 0.0, 1.0]])
+    assert W.toarray()[0, 0] == pytest.approx(0.5e-6, rel=1e-12)
 
 
 def test_a_point_halfway_between_two_markers_is_owned_by_one():

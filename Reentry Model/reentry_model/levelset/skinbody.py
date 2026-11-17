@@ -196,9 +196,11 @@ class StepBook:
     step, by source, each the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own
     residual (the heat its law applied less its stored enthalpy's change), `residual_move_J` the moves' and fills' (the
     volume's move against what the skins took and gave), `residual_remesh_J` the remesh's; the interface mismatch is
-    `interface_mismatch_J`. History columns: the markers and their counters (cumulative), `interface_mismatch_J` (the
-    last part's sum of |mismatch|), `volume_correction_max`, `n_pieces`, `frontal_area_m2` (phi's area projected on the
-    flight direction) and `summary` (SKIN_SUMMARY_COLUMNS' keys and the release angle's)."""
+    `interface_mismatch_J`. `side_solves_at_floor` the skins' sideways heat solves the step accepted at
+    `skin.SIDE_ACCEPT_RTOL` short of `skin.SIDE_RTOL`, its trial passes' included (`Skins.side_at_floor`; the final
+    review's I3), so that a run shows it happened. History columns: the markers and their counters (cumulative),
+    `interface_mismatch_J` (the last part's sum of |mismatch|), `volume_correction_max`, `n_pieces`, `frontal_area_m2`
+    (phi's area projected on the flight direction) and `summary` (SKIN_SUMMARY_COLUMNS' keys and the release angle's)."""
     time: float
     dt: float
     parts: int
@@ -256,6 +258,7 @@ class StepBook:
     density_carry_share_max: float = 0.0
     island_nodes: int = 0
     groups_guarded_max: int = 0
+    side_solves_at_floor: int = 0
     move_corrections: list = field(default_factory=list)
     summary: dict = field(default_factory=dict)
 
@@ -347,15 +350,18 @@ def split_part(run, dt, dt_macro, depth, worst=None):
     not helped by splitting, and the parts and move ratios the splitting produced around it -- sibling parts of a few
     nanoseconds -- must not set the next step's count). A split that would ask for more than PARTS_MAX parts undoes the
     part and raises RuntimeError instead, naming the column that sets its ratio, `worst()` (a description, called before
-    the undo; the controller's ruling T7-g)."""
+    the undo; the controller's ruling T7-g), the error marked `part_restored` as a failed part's is, so that `advance`
+    asks whether rigid metal is left (the final review's M6)."""
     ratio, accept, undo = run(dt)
     if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:
         k = int(math.ceil(ratio))
         if k > PARTS_MAX:
             named = worst() if worst is not None else "ratio {:.6e}".format(ratio)
             undo()
-            raise RuntimeError("a part of {:.6e} s would be split into {} parts, more than PARTS_MAX ({}): its move of "
+            err = RuntimeError("a part of {:.6e} s would be split into {} parts, more than PARTS_MAX ({}): its move of "
                                "phi does not fit the allowance; the worst column, {}".format(dt, k, PARTS_MAX, named))
+            err.part_restored = True                       # undone: the part's starting state is back
+            raise err
         undo()
         kids = [split_part(run, dt / k, dt_macro, depth + 1, worst) for _ in range(k)]
         deepest, over = max(c.depth for c in kids), sum(c.over for c in kids)
@@ -907,6 +913,7 @@ class LevelSetSkinBody(StepEnd):
         if self.division is None:                            # a body pickled before plan 03b Task 5
             self._adopt()
         mk, sk, mat = self.markers, self.skins, self.material
+        at_floor = sk.side_at_floor                          # the sideways solves accepted short of SIDE_RTOL so far
         start = self.books()
         M0 = start["mass_volume"] + start["mass_skins"]
         E0 = start["enthalpy_volume"] + start["enthalpy_skins"] + start["pending_J"]
@@ -1003,7 +1010,8 @@ class LevelSetSkinBody(StepEnd):
             layer_factor_max=tally.layer_factor, fill_miss_max=tally.fill_miss, move_miss_max=tally.move_miss,
             n_baseless=tally.baseless, density_carry_m3=float(self.carry.sum()),
             density_carry_share_max=self._carry_share(), island_nodes=tally.islands,
-            groups_guarded_max=tally.guarded, move_corrections=list(tally.corrections), summary=summary)
+            groups_guarded_max=tally.guarded, side_solves_at_floor=int(self.skins.side_at_floor - at_floor),
+            move_corrections=list(tally.corrections), summary=summary)
         return self.last_step
 
     def _radius(self, centroid):

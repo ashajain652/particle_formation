@@ -89,7 +89,11 @@ in 0.115 s, its fill 1.9 million entries for 64 thousand, against 0.014 s for GM
 conductances eight times larger (markers 0.25 mm apart) 0.031 s in 45. The LU's fill grows faster than the cells,
 while an iteration costs one Thomas solve and one product, and the depth conduction, the stiff part, is solved exactly
 by the preconditioner. The heat each column gains sideways is booked per column (`HeatBook.E_side`), each pair's flux
-given by one and taken by the other, so it sums to zero to round-off whatever the solve's error."""
+given by one and taken by the other, so it sums to zero to round-off whatever the solve's error; for that reason a
+solve that stalls short of SIDE_RTOL is accepted as an inexact Newton step when its residual is at most
+SIDE_ACCEPT_RTOL, and counted (`Skins.side_at_floor`), rather than stopping the run (the final review's I3: under
+the bridge law the shoulder's 1012-part third step stopped at a residual of 6.05e-12, and the box at 1 mm markers at
+2.1e-11, against SIDE_RTOL's 1e-12)."""
 from collections import namedtuple
 from dataclasses import dataclass
 
@@ -128,9 +132,23 @@ END_SLACK = 1e-12          # cells within this share of their column's volume re
 LEVELS_RTOL = 1e-9         # a profile's deepest level must be the skins' depth to within this share (`set_profile`)
 SIDE_RTOL = 1e-12          # the sideways heat's linear solve stops at this share of its right-hand side's norm (plan 03b
                            # Task 4; Newton's NEWTON_TOL still decides the sub-step's convergence)
+SIDE_ACCEPT_RTOL = 1e-9    # a sideways solve that has not reached SIDE_RTOL in SIDE_RESTART * SIDE_CYCLES iterations is
+                           # accepted when its true residual is at most this share of its right-hand side, and raises
+                           # above it (an inexact Newton step; the final review's I3). Its source: the inner solve's
+                           # residual never enters the books -- the sideways exchange is antisymmetric (each pair's flux
+                           # given by one column and taken by the other, whatever the iterate), the base heat E_base is
+                           # the books' residual (`conduct`), and what the trial's base law misses is booked as the
+                           # interface mismatch -- and Newton's NEWTON_TOL decides the sub-step's convergence. Its
+                           # margins: about 1000 times the round-off floor measured at 10 um cells (9.9e-13; plan 03b
+                           # Task 4's review), above the 6.05e-12 and 2.1e-11 at which the shoulder's 1012-part step and
+                           # the box at 1 mm markers stopped; and below the outer iteration's tolerance: the error it
+                           # leaves in a Newton step is about that share of the step (times the preconditioned system's
+                           # conditioning), so it reaches NEWTON_TOL (1e-6 K, the largest change of a cell that ends a
+                           # sub-step) only in a step of about 1000 K
 SIDE_RESTART = 50          # GMRES iterations between restarts in that solve (plan 03b Task 4: on the stage 3 box it took
                            # 18, and 45 with the sideways conductances eight times larger, measured once each)
-SIDE_CYCLES = 20           # restarts at most: SIDE_RESTART * SIDE_CYCLES iterations before it raises
+SIDE_CYCLES = 20           # restarts at most: SIDE_RESTART * SIDE_CYCLES iterations before the solve is accepted at
+                           # SIDE_ACCEPT_RTOL or raises
 
 
 @dataclass
@@ -290,6 +308,7 @@ class _Sideways:
         self.ci, self.cj, self.lam = i[e], j[e], lam[e, p]
         self.a, self.b = self.ci * K + ki[e, p], self.cj * K + kj[e, p]
         self.n, self.K = n, K
+        self.at_floor = 0          # the solves accepted at SIDE_ACCEPT_RTOL, short of SIDE_RTOL (`solve`)
         idx = np.arange(n * K).reshape(n, K)
         self._rows = np.concatenate([idx.ravel(), idx[:, 1:].ravel(), idx[:, :-1].ravel(),
                                      self.a, self.a, self.b, self.b])
@@ -342,8 +361,10 @@ class _Sideways:
         """x (n, K) with J x = rhs, J the sub-step's whole Jacobian: the columns' tridiagonal rows (lower, diag, upper,
         as `_tridiagonal` takes them) and the pairs' couplings jac = (dFa, dFb). Restarted GMRES preconditioned by the
         columns' own tridiagonal solves (block Jacobi: the depth conduction exactly, the sideways couplings left to
-        the iteration), to SIDE_RTOL of the right-hand side; RuntimeError if it has not converged within SIDE_RESTART
-        times SIDE_CYCLES iterations (module docstring)."""
+        the iteration), to SIDE_RTOL of the right-hand side. A solve that has not reached it within SIDE_RESTART times
+        SIDE_CYCLES iterations is accepted when its true residual is at most SIDE_ACCEPT_RTOL of the right-hand side
+        (counted in `at_floor`; an inexact Newton step, whose residual the books never see), and raises RuntimeError
+        above that (module docstring)."""
         dFa, dFb = jac
         n, K = self.n, self.K
         N = n * K
@@ -356,10 +377,12 @@ class _Sideways:
                                 dtype=float)
         x, info = spla.gmres(J, b, M=M, rtol=SIDE_RTOL, atol=0.0, restart=SIDE_RESTART, maxiter=SIDE_CYCLES)
         if info != 0:
-            raise RuntimeError("the skins' sideways heat solve did not converge in {} GMRES iterations (residual {:.2e} "
-                               "of the right-hand side, against {:.0e})".format(
-                                   SIDE_RESTART * SIDE_CYCLES, np.linalg.norm(b - J @ x) / np.linalg.norm(b),
-                                   SIDE_RTOL))
+            left = float(np.linalg.norm(b - J @ x) / np.linalg.norm(b))
+            if not left <= SIDE_ACCEPT_RTOL:                     # (a residual that is not a number raises too)
+                raise RuntimeError("the skins' sideways heat solve did not converge in {} GMRES iterations (residual "
+                                   "{:.2e} of the right-hand side, against {:.0e}, and above the {:.0e} accepted)".format(
+                                       SIDE_RESTART * SIDE_CYCLES, left, SIDE_RTOL, SIDE_ACCEPT_RTOL))
+            self.at_floor += 1
         return x.reshape(n, K)
 
 
@@ -389,6 +412,9 @@ class Skins:
     profile_levels = None      # (B + 1,) m, the measured profile's levels from 0 to H, None until `set_profile`; class
     profile = None             # (n, B + 1) m2 its cross-sections; defaults, so that a Skins built by __new__ (runoff's
                                # landing blocks) or pickled before plan 03b Task 3 reads as having none
+    side_at_floor = 0          # the sideways solves `conduct` accepted at SIDE_ACCEPT_RTOL, short of SIDE_RTOL, since
+                               # these skins were made (the body reports a step's, `StepBook.side_solves_at_floor`); a
+                               # class default, so that skins pickled before it read none
 
     def __init__(self, material, area, kappa, settings=None):
         self.material = material
@@ -767,7 +793,9 @@ class Skins:
     def _append_bottom(self, rows, m, H, U=None):
         """One new cell below the bottom of each column rows[j] (distinct), of mass m[j] > 0 [kg], enthalpy H[j] [J]
         and velocity U[j] (3,) [m/s] (at rest by default); the caller regrids. (A draw's cell, `exchange_base`, and the
-        metal a column with no base takes from its neighbour, the body's fill.)"""
+        metal a column with no base takes from its neighbour, the body's fill.) Refused while a trial pass is open, as
+        the `append_bottom` it replaced was (the final review's M7)."""
+        self._no_trial("append a bottom cell")
         rows = np.asarray(rows, dtype=np.int64).reshape(-1)
         m = np.broadcast_to(np.asarray(m, dtype=float), rows.shape)
         H = np.broadcast_to(np.asarray(H, dtype=float), rows.shape)
@@ -1114,8 +1142,11 @@ class Skins:
         remap on depth instead: each of the keeper's cells takes the gone column's metal lying at its own depths (the
         share of each gone cell's volume between the keeper cell's top and bottom, from the gone column's own
         cross-section), and the gone metal deeper than the keeper's bottom joins it as new cells below, the gone cells'
-        parts in their order. The keeper's cell boundaries are kept: with both columns exactly full and their profiles
-        summed, every cell spans the depths it spanned. Shares below END_SLACK of a cell are dropped and the rest scaled
+        parts in their order. The keeper's cell boundaries are kept in mass, not exactly in depth: with both columns
+        exactly full and their profiles summed, a cell spans the depths it spanned only where the metals it mixes share
+        one density; where swelling metal at different temperatures mixes, the mixture's volume is not the sum of its
+        parts' and the cells move (by up to 4.9 % in plan 03b Task 3's review), until the fill that follows a combine
+        (the body's step end) fills the column again. Shares below END_SLACK of a cell are dropped and the rest scaled
         to sum to one, so mass, enthalpy and momentum add to round-off; a gone cell whose every share is so dropped (a
         sliver at the round-off of the volumes the overlaps are reckoned from: plan 03b Task 6 found one of 2e-27 m3 in a
         column of 7e-10 m3, whose shares were 0/0) joins whole the keeper's cell at its depth, or the metal below the
@@ -1430,6 +1461,8 @@ class Skins:
             self._trial_E += E_base
             self._trial_dE += dE
             self._trial_Tb = np.array(T_b, dtype=float)
+        if sideways is not None:
+            self.side_at_floor += sideways.at_floor                # the solves accepted short of SIDE_RTOL
         self.H = E_new
         return book
 

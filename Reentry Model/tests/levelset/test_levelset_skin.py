@@ -409,6 +409,9 @@ def test_liquid_over_slurry_kinks():
     over rigid metal. The stress is 1 Pa all through, so each layer is linear and the profile's slope jumps at the
     interface by the viscosity ratio, the slurry's at its own shear rate (found by the fixed point) over the liquid's."""
     mat = Material.from_drama_json("AA7075_scheil")
+    # the bridge law, whose slurry viscosity depends on the shear rate: `steady_slurry_rate` iterates its
+    # `rheology.viscosity`, and the fixed point takes more than one pass only under a rate-dependent law (the composite
+    # law, the default, depends on the solid fraction alone)
     sk = layered(mat, [(0.15e-3, 950.0), (0.15e-3, 900.0), (0.1e-3, 880.0)], settings=SkinSettings(rheology="bridge"))
     P0 = sk.totals()[2]
     book = sk.momentum_step(STEADY, 1.0 * X, np.zeros(3))
@@ -1194,6 +1197,95 @@ def test_with_sideways_heat_the_trial_sensitivity_is_the_derivative_for_a_common
     fd = (E_hi - E_lo) / (2 * d)
     assert np.all(dE[[0, 2]] < 0.0)
     np.testing.assert_allclose(dE, fd, rtol=1e-6, atol=1e-9 * np.abs(fd).max())
+
+
+class StalledGMRES:
+    """A stand-in for the skin module's `scipy.sparse.linalg` whose `gmres` stalls `share` of the right-hand side's norm
+    short of the solution: it returns the exact solution (a sparse LU solve) moved by J^-1 of a residual of that norm in a
+    random direction, with info 1 (GMRES's "not converged within its iterations"), and counts its calls; every other
+    name is scipy's."""
+
+    def __init__(self, share):
+        self.share, self.solves = share, 0
+
+    def gmres(self, A, b, *a, **k):
+        import scipy.sparse as sp
+        import scipy.sparse.linalg as spla
+        A = sp.csc_matrix(A)
+        r = np.random.default_rng(self.solves).standard_normal(len(b))
+        self.solves += 1
+        return spla.spsolve(A, b) + spla.spsolve(A, self.share * np.linalg.norm(b) * r / np.linalg.norm(r)), 1
+
+    def __getattr__(self, name):
+        import scipy.sparse.linalg as spla
+        return getattr(spla, name)
+
+
+SIDE_STALLED_ACCEPTED = 1e-11   # a stalled sideways solve's residual, of its right-hand side, about ten times the round-off
+                                # floor measured at 10 um cells (9.9e-13) and under SIDE_ACCEPT_RTOL
+SIDE_STALLED_REFUSED = 1e-8     # and one ten times over SIDE_ACCEPT_RTOL
+
+
+def _stalling_row(mat):
+    """Eight columns in a row (`row`, development cells) from 700 to 900 K, across the test material's melting range."""
+    return row(mat, np.linspace(700.0, 900.0, 8), settings=SkinSettings(cell=SKIN_PRESETS["dev"]))
+
+
+def test_a_sideways_solve_stalled_near_round_off_is_accepted_and_the_books_close(monkeypatch):
+    """The final review's I3: a sideways heat solve that stalls short of SIDE_RTOL is accepted as an inexact Newton step
+    when its residual is at most SIDE_ACCEPT_RTOL of its right-hand side. Eight columns in a row (`_stalling_row`, the
+    conductivity rising with temperature), heated at the top, radiating and held 5 K under their temperatures at the
+    base, over a trial pass of two sub-steps and a real sub-step, with every sideways solve stalled at
+    SIDE_STALLED_ACCEPTED (`StalledGMRES`): every sub-step runs, the skins count every stalled solve
+    (`Skins.side_at_floor`), the heat gained sideways sums to zero to 1e-12 of its magnitude and each column's books
+    close to 1e-12 (the solve's residual never enters them), and the cells' temperatures are the converged solves'
+    within Newton's own tolerance (NEWTON_TOL)."""
+    from reentry_model.levelset import skin as skin_mod
+    mat = VariableKMaterial()
+    q, T_amb, eps, dt = 2e6, 300.0, 0.8, 0.010
+
+    def run():
+        sk, side = _stalling_row(mat)
+        T_b = sk.T()[np.arange(sk.n), sk.count - 1] - 5.0
+        for trial in (True, True, False):
+            if not trial:
+                sk.base_law(2 * dt)
+            H0 = sk.totals()[1]
+            book = sk.conduct(dt, q, T_amb, eps, T_b, trial=trial, side=side)
+            H1 = sk.totals()[1]
+            size = np.abs(book.E_side).sum()
+            assert size > 0.0 and abs(book.E_side.sum()) <= 1e-12 * size
+            scale = np.abs(book.E_top) + np.abs(H1 - H0) + np.abs(book.E_side)
+            assert np.all(np.abs(book.E_top - book.E_rad - book.E_base + book.E_side - (H1 - H0)) <= 1e-12 * scale)
+        return sk, book
+    converged, book_c = run()
+    assert converged.side_at_floor == 0
+    stalled = StalledGMRES(SIDE_STALLED_ACCEPTED)
+    monkeypatch.setattr(skin_mod, "spla", stalled)
+    sk, book = run()
+    T, T_c = sk.T(), converged.T()
+    print("stalled at {:.0e}: {} solves accepted; temperatures {:.2e} K from the converged solves', base heat {:.2e} of "
+          "it".format(SIDE_STALLED_ACCEPTED, sk.side_at_floor, np.abs(np.where(sk.valid, T - T_c, 0.0)).max(),
+                      np.abs(book.E_base - book_c.E_base).max() / np.abs(book_c.E_base).max()))
+    assert stalled.solves > 0 and sk.side_at_floor == stalled.solves
+    assert np.array_equal(sk.count, converged.count)
+    assert np.abs(np.where(sk.valid, T - T_c, 0.0)).max() <= skin_mod.NEWTON_TOL
+
+
+def test_a_sideways_solve_stalled_above_the_floor_raises(monkeypatch):
+    """The final review's I3: a sideways heat solve that stalls at SIDE_STALLED_REFUSED of its right-hand side, above
+    SIDE_ACCEPT_RTOL, still raises RuntimeError, naming the residual it was left at, and nothing is counted as
+    accepted."""
+    import re
+    from reentry_model.levelset import skin as skin_mod
+    sk, side = _stalling_row(VariableKMaterial())
+    T_b = sk.T()[np.arange(sk.n), sk.count - 1] - 5.0
+    monkeypatch.setattr(skin_mod, "spla", StalledGMRES(SIDE_STALLED_REFUSED))
+    with pytest.raises(RuntimeError, match="sideways heat solve did not converge") as stop:
+        sk.conduct(0.010, 2e6, 300.0, 0.8, T_b, side=side)
+    left = float(re.search(r"residual ([0-9.e+-]+) of the right-hand side", str(stop.value)).group(1))
+    assert left == pytest.approx(SIDE_STALLED_REFUSED, rel=0.01)
+    assert sk.side_at_floor == 0
 
 
 # -- the rheology law (plan 03b Task 9) --------------------------------------------------------------------------------

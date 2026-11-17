@@ -1,6 +1,7 @@
 """The level set's markers (design sections 9.1, 9.2 and 9.6; level-set stage 3 Task 5): Lagrangian points on phi, the
-gas surface, each carrying one skin (a row of a `Skins`) and an area (Ruling 1: a marker sits on phi and carries its
-skin's base at x - H n, H the skin's thickness).
+gas surface, each carrying one skin (a row of a `Skins`) and an area. A marker sits on phi; its skin's base is not
+carried at x - H n (Ruling 1, retired by design section 21.3 in plan 03b) but is the skin base beta, derived one skin
+depth H inside phi (`surfaces.skin_base`), its column's part of which the division gives (`division.divide`).
 
 Motion. `carry` moves the markers by a velocity field; `snap` returns them to phi's zero contour along the normal,
 x <- x - phi(x) n(x), n the unit recovered gradient, applied once and iterated once more (section 9.1); a marker then
@@ -292,7 +293,10 @@ def ownership(x, tris, tri_patch, n_patch, size, normals=None, tri_normal=None, 
     sphere centred on the mesh's planes the choice lost half of one boundary's length, its column's boundary fluxes
     missing closure by 13 % of its perimeter, and before `_dividing` took each pair in its markers' order another
     boundary counted twice). Without normals and boundaries the result is the one before these options, bit for bit,
-    and asking for the boundaries leaves the areas as they are."""
+    and asking for the boundaries leaves the areas as they are. The rule needs both `normals` and `tri_normal`: one
+    without the other raises ValueError (the final review's M12)."""
+    if (normals is None) != (tri_normal is None):
+        raise ValueError("the same-side rule needs both the markers' normals and the triangles' tri_normal, or neither")
     x = np.asarray(x, dtype=float).reshape(-1, 3)
     n = len(x)
     t = np.asarray(tris, dtype=float).reshape(-1, 3, 3)
@@ -531,10 +535,6 @@ class Markers:
         d = self.x - before
         slide = np.linalg.norm(d - np.einsum("ij,ij->i", d, self.normal)[:, None] * self.normal, axis=1)
         return int((near & (np.abs(val) > NEWTON_REACH)).sum()), float(slide.max(initial=0.0))
-
-    def base(self):
-        """Each marker's skin base [m] (n, 3), x - H n with H its skin's thickness (Ruling 1)."""
-        return self.x - self.skins.thickness()[self.skin_index][:, None] * self.normal
 
     # -- patches and the tessellation -------------------------------------------------------------------------------
     def assign(self, mesh, phi_patches):
