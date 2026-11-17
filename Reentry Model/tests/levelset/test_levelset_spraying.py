@@ -674,12 +674,12 @@ def test_the_profile_release_matches_the_skyscrapers_on_one_column():
 def test_the_profile_plan_matches_the_skyscrapers_on_a_row():
     """The profile path's wiring across markers, against the skyscrapers' `girin_plan` on columns holding the same cells
     on the same graph (`assert_plans_agree`): a row of 1 mm markers holding PROFILE_CASES' two kinked skins, a moving
-    slurry with no liquid, and a moving slurry over liquid, with the exposed slurry's mode on. The slurry over liquid has
-    no liquid at its top, so its wave fits only in the region of the layers above the walls (the liquid's region would
-    give it none), and it sprays; the gas-driven skin's run takes all its flowing metal, so no slurry is left for the
-    slurry's own mode beneath it. The same markers with their skins in reversed rows (the final review's M12; the table
-    path's tests do so) give the same plan by marker (`assert_plans_agree`), and a release of a flow sub-step takes
-    each marker's metal from its own skin row, the same masses, enthalpies and momenta to 1e-12."""
+    slurry with no liquid, and a moving slurry over liquid, with the exposed slurry's mode on. The slurry over liquid
+    has no liquid at its top, so its wave fits only in the region of the layers above the walls (the liquid's region
+    would give it none), and it sprays; the gas-driven skin's run takes all its flowing metal, so no slurry is left for
+    the slurry's own mode beneath it. The same markers with their skins in reversed rows (the final review's M12, cited
+    finding F36; the table path's tests do so) give the same plan by marker (`assert_plans_agree`), and a release of a
+    flow sub-step takes each marker's metal from its own skin row, the same masses, enthalpies and momenta to 1e-12."""
     from reentry_model import skinbody as sky_body
     mat = aa7075()
     slurry_top = ([SLURRY] * 60 + [RIGID] * 10, np.concatenate([np.linspace(0.8, 0.0, 60, endpoint=False),

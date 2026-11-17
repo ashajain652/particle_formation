@@ -27,7 +27,9 @@ is the 10 mm cube of the body's tests, and the spraying cube is the `sprayed` fi
 the spraying cube's hang and the shoulder's move-sum stop, both before Task 7b; D3 the box's mass books, before Task
 7d). Section numbers of `docs/model_assumptions.md` are those after the merge of main at 9993a77, where stage 3 is
 section 18. A measurement labelled S1 to S20 is described, with what was run, on which commit and how often, under
-"Where the scratch measurements came from" below; the scratch folders themselves will not survive.
+"Where the scratch measurements came from" below; the scratch folders themselves will not survive. A review finding or a
+task report that the code, the tests or the record cites by name is listed, numbered F1 onward, under "Review findings
+and reports that the code cites".
 
 ## Before Task 1: the pre-flight scan
 
@@ -770,6 +772,158 @@ here. Loads are one-minute load averages on the laptop's 8 cores. Measurements m
   skin-base test's 322.500 mm³ against 322.423 mm³ and 0.077 mm³ between; the box's test-mesh factor 1 − 3.30e-4 and a
   sphere's 1 − 2.84e-5; the cold box's φ moved 0.0 m; the runoff test's 1.818e-7 kg. The re-measured `cost_rim` and
   `cost_skip_dev` are in the record (load averages about 3.1 to 3.4).
+
+## Review findings and reports that the code cites
+
+The package's docstrings, the tests' docstrings and reasons, and the record cite some findings of the task reviews and
+some task reports by name ("Task 1's report", "stage 3 Task 11's review, M6"). Those reviews and reports are working
+files kept outside the repository (`.superpowers/sdd/03-stage3-skins/` for plan 03, the first stage 3 plan, and
+`.superpowers/sdd/03b-stage3-one-skin-depth/` for plan 03b), and they are deleted with the ledger. Each cited item is
+listed here once, numbered F1 onward, with what it found; a citation in the code is followed by "cited finding F<n>".
+"Stage 3 Task N" without a plan means plan 03's task, as the code wrote it before plan 03b; "plan 03b Task N" is this
+plan's. The numbers are the reviews' and reports' own, each measured once unless said otherwise.
+
+*Plan 03 (the first stage 3 plan, two skin modes).*
+
+- **F1. Plan 03 Task 9, fix round 2, the ruling on its concern 1.** A marker's base law was concentrated on its nearest
+  patches of β, and the pending heat on one patch; the fix spreads both over a group of patches whose area is within
+  `GROUP_AREA_RANGE` (0.5 to 2.0) of the skin's base area, which raised the full-size cube's coldest volume temperature
+  after its first step from 545.8 K to 830.8 K. Cited by
+  `test_a_marker_whose_nearest_patches_are_few_gets_a_grown_group_and_the_law_stays_exact`.
+- **F2. Plan 03 Task 11's review, C1 (critical).** The skins' areas (the tessellated, globally scaled Voronoi cells) and
+  the ownership the loads and the base groups used were two partitions of φ: the q6p box's markers took 0.9606 of a
+  beam's projected heat at the start and 0.6398 after the first melting step by their areas, against exactly 1 by the
+  areas they owned, the ratio of the two running from 0.20 to 1.62. Fixed in the fix round 1 by one partition, each
+  marker's area the area of φ it owns (`markers.ownership`). Cited in `loads.py`, `markers.py` and
+  `test_levelset_loads.py`.
+- **F3. Plan 03 Task 11's review, I2.** The shoulder's 4 mm freeze-reach criterion (the implementer's own) failed on
+  liquid in transit 3 K above the rigid temperature, not on absorbed base metal as `SHOULDER_FAILS` then said (deposit
+  20.05 mg, hot metal 4.30 mm past the heat's end). The controller's ruling on it judges the deposit at 2.0 s instead:
+  at least `DEPOSIT_RIGID_SHARE` (0.9) of it rigid and at most the skyscrapers' 3.0 per cent past 5 mm, the reach
+  reported. Cited by `stage3_cases.py` and `test_levelset_stage3_cases.py` ("the controller's ruling on the review's
+  I2").
+- **F4. Plan 03 Task 11's review, M1.** The volume solve was not reproducible run to run, because the algebraic
+  multigrid preconditioner draws a random start vector from numpy's global state; it is now drawn under `AMG_SEED` and
+  the state put back. Cited in `cutthermal.py` and `test_levelset_cutthermal.py`.
+- **F5. Plan 03 Task 11's review, M3.** The box's heat-coverage unit test could not see C1 (F2): on its fresh box the
+  markers took 1.013 of the projected heat inside a band of 0.95 to 1.053; with one partition it asserts exactness
+  (`COVERAGE_EXACT`). Cited in `test_levelset_loads.py`.
+- **F6. Plan 03 Task 11's review, M5.** The committed record mixed runs from before and after the fix round with nothing
+  to tell them apart; each case's summary now carries the commit it ran on and whether the code differed from it
+  (`code_stamp`). Cited in `stage3_cases.py` and `test_levelset_stage3_cases.py`.
+- **F7. Plan 03 Task 11's review, M6.** A failing case left nothing to diagnose (the states it named were gone, so the
+  box's "volume correction of piece 1 did not converge" at 2.0 s could not be diagnosed); with `STAGE3_STATE_DIR` set
+  the case script now pickles the body before each step and keeps it when the step raises, and `correct_volumes` reports
+  the piece's target, bracket, iterations and claimed cells when it raises. Cited in `levelset.py`, `stage3_cases.py`,
+  `test_levelset_levelset.py` and `test_levelset_stage3_cases.py`.
+- **F8. Plan 03 Task 11's review, M7.** The seed for an island of new metal was evaluated at every node outside the old
+  metal within the fine margin on every base move, though only island nodes read it (base moves were 48 per cent of
+  the box's step to 1.5 s); it is now evaluated only at the nodes the extension cannot reach. Cited in `cutthermal.py`.
+- **F9. Plan 03 Task 11's fix, item 1.** A skin's base group is the base area beneath its own cell on φ, by the
+  ownership the loads use; before, by nearest base point, the box's face skins' groups were 0.55 to 0.82 of their base
+  areas. `GROUP_AREA_RANGE` stays as a guard, and the most groups it replaced in a part is recorded
+  (`groups_guarded_max`). Cited in `skinbody.py` and `stage3_cases.py`.
+- **F10. Plan 03 Task 11's fix, item 2.** The gas loads are each marker's area-weighted mean over the patches of φ it
+  owns, not its own normal's, by which the box's markers caught 74 per cent of the projected heat. Cited in `loads.py`
+  and `test_levelset_loads.py`.
+- **F11. Plan 03 Task 11's fix, item 3.** An island of new metal that a base move makes apart from the old metal (on the
+  box at 1.5 s, 24 nodes about 1.1 mm from it) takes the handed metal's temperatures, where before the move raised;
+  the nodes so filled are counted (`island_nodes`). Cited in `skinbody.py`'s `StepBook` and `stage3_cases.py`.
+- **F12. Plan 03 Task 11's fix, item 4.** The hot plate's volume beneath the skin was judged at most 1 K
+  (`HOT_BASE_TOL_K`) above the rigid temperature, the skyscrapers' criterion (it stood 4.7 to 5.2 K above before);
+  plan 03b reports it and no longer judges it, because the one skin depth puts the melting front below the base. Cited
+  in `stage3_cases.py` and `test_levelset_stage3_cases.py`.
+- **F13. Plan 03 Task 11's fix round 1, the review's concern (b).** The box's "volume correction of piece 1 did not
+  converge" at 2.0 s, left undiagnosed for want of the state (F7); the fix round made the correction converge in one
+  case that can produce it, a speck of metal that a base move makes beside the body, which must grow some 1e5 times and
+  whose first Newton step overshot into saturation. Cited in `test_levelset_levelset.py`.
+- **F14. Plan 03 Task 11's re-review, minor item 4.** The code stamp's difference check covered only `reentry_model` and
+  `analysis/levelset`, so a changed material table or reference value would not mark a run; it now covers `data`
+  (`STAMP_PATHS`). Cited in `stage3_cases.py` and `test_levelset_stage3_cases.py`.
+
+*Plan 03b (this plan).*
+
+- **F15. Task 1's report.** With each level triangle's area divided by |∇φ| (ruling T1-a) the columns' shortfall against
+  the layer at sharp edges is gone, and what remains of the closure's departure is the levels' sampling of the cells
+  along the edges (at 24, 48 and 96 levels the box's factor was −2.04e-3, +3.32e-3 and +5.60e-4 from one at 0.7 mm
+  cells, before the fix round below); the level surfaces' own areas fall smoothly but for rises of 4e-4 of the top near
+  the base in two columns. Cited in `division.py` and `test_levelset_division.py`.
+- **F16. Task 1's review, Important 1, "the review's measurement".** P1 cells along an edge whose depth is constant are
+  cut by no level: on a 6 mm cube so placed, 474 cells constant to 0.1 µm held 2.0 per cent of the layer and the levels
+  alone left the columns 2.1 per cent short (96 levels), whatever the number of levels. The fix round gives such a
+  cell's exact volume whole to the column owning its centroid's foot. Cited in `division.py` and
+  `test_levelset_division.py` ("the review's Important 1").
+- **F17. Task 1's review, Important 2, and its case for the fix round.** A column spanning two pieces of metal was
+  counted wholly in its majority piece: of two 6 mm cubes 0.7 mm apart across gas, markers of each owned 0.39 per cent
+  of the other's surface and the pieces' factors moved about 2e-3 apart. Ruling T1-i divides ownership piece by piece.
+  Cited in `division.py` ("the review's measurement") and `test_levelset_division.py`.
+- **F18. Task 2's report.** The plain distance reset moves the zero contour where it bends within a cell, inward at β's
+  convex edges: on the stage 3 box β held 0.67 mm³ less than φ + depth. Cited in `surfaces.py`.
+- **F19. Task 3's review.** Two deferred minors cited: no test ran the momentum step under a measured profile (one now
+  does), and combining two columns by depth moves the keeper's cells by up to 4.9 per cent where swelling metals at
+  different temperatures mix (their volumes do not add), which the fill after a combine undoes. Cited in `skin.py` and
+  `test_levelset_skin.py`.
+- **F20. Task 4's review.** Over long trial passes the sideways solve's worst residual at 10 µm cells was 9.9e-13, only
+  a few times under `SIDE_RTOL` (1e-12), and a solve short of it raised with no fallback; the reviewer found that the
+  books close whatever the solve's tolerance. The final review's I3 (F33) acted on it. Cited in `skin.py`.
+- **F21. Task 6's diagnosis of the spraying fixture.** On the sharp cube the capillary push of φ's recovered curvature
+  at the edges (some 2.5e5 N/m³ on the face markers) folded the liquid face within the step and stopped it on
+  `THIN_METAL`; hence the spraying fixture's 2 mm rounded edges (ruling T6-d) and the edge-runoff test's surface tension
+  off. Cited in `test_levelset_skinbody.py`.
+- **F22. The reviews' note on `Markers.release` and Task 6's minor item.** A released marker's keeper was chosen by
+  position alone, ignoring the same-side and same-piece rules (Task 5's review, carried into Task 6 as optional; now
+  applied); and, from Task 6's review, the book's `area_repartitioned_share` was renamed `volume_repartitioned_share`
+  in Task 7, a book pickled under the old name loading under the new one. Cited in `test_levelset_markers.py` and
+  `test_levelset_skinbody.py`.
+- **F23. Task 7's review, I1, and the controller's carry 5.** The solver watch did not measure the interface mismatch on
+  `INTERFACE_TOLERANCE`'s own scale (sum |mismatch| over sum |E_top| + |E_base| per accepted part): the recorded share
+  was the last part's over the step's heat in, so the 1.46e-3 then reported compared two different quantities; the
+  watch's `interface_mismatch_max` is now the per-part measure. Cited in `test_levelset_stage3_cases.py`.
+- **F24. Task 7's review, M2.** `BOX_FAILS` cited numbers measured only in scratch (the stopped step's face and edges);
+  `run_steps`' `failed` now records the case's own measures of a stopped body. Cited in `stage3_cases.py` and
+  `test_levelset_stage3_cases.py` ("Task 7's minor M2").
+- **F25. Task 7's review, M5.** The case tests did not apply planning ruling 1's closure check; `_books` now asserts
+  each step's `layer_factor_max` within `DIVISION_TOL`. Cited in `test_levelset_stage3_cases.py`.
+- **F26. The controller's carry 4 into Task 7**, as the code cites it: the division's own cost line in each step's row
+  (every division, the tie rule's second nearest-marker query and the sideways conductances' centroid distances:
+  `division_cost`). Cited in `stage3_cases.py`.
+- **F27. Task 7c's diagnosis.** The spurious thin-metal stops: on the box's second step all four marked pairs came from
+  the levels, slivers of metal 0.15 to 0.3 mm thick off the receded face's rim given to markers on opposite side faces,
+  10 mm apart through solid metal but holding only 0.24 mm along their normals; hence the two measures of the thin
+  test, at the node pass's edges alone (ruling T7-k). Cited in `division.py`.
+- **F28. Task 7d's report, round 2** (the record's `box_dev.record_note`, "task-7d-report.md, round 2"). On Task 7d's
+  code (73b5a9a) the box's third step had not ended after 115 minutes when its run was stopped at the two-hour limit,
+  and the shoulder's third step stopped after 23 parts on the move's volume-sum check; the record's box entry is
+  therefore a run to 1.0 s (ruling T7d-d).
+- **F29. Plan 03b Task 11's report** (the record's shoulder entry, "task-11-report.md"). Under the composite law the
+  shoulder's runoff cuts a trough about 1.2 mm deep in the heated cap and leaves a fin 0.6 to 0.7 mm wide, metal 1.39
+  mm through the cap's marker, a real thin site (ruling T11-b); and the cold plate raised 0.27 mm (8.27 mm of metal) is
+  recorded, its slower recession that of the deeper slab (ruling T11-a). Cited in `test_levelset_stage3_cases.py`.
+- **F30. Plan 03b Task 11's review, M1.** `record()` rebuilt the whole record from the output files, which would erase
+  the blocks added by hand (`against_task7`, `against_offset_0`, `record_note`) and Task 12's cost entries; the final
+  review's M5 (F35) made it merge. Cited in `stage3_cases.py` and `test_levelset_stage3_cases.py`.
+- **F31. Plan 03b Task 11's review, M5.** `--offset-mm` was silently ignored for the box and the shoulder; it is now
+  refused for any case but the plates (F35). Cited in `stage3_cases.py` and `test_levelset_stage3_cases.py`.
+
+*The final review of plan 03b (`final-review.md`, 9993a77..f1c32bd).*
+
+- **F32. I1.** The three strict expected failures (the box, the shoulder, the box edge's heat) passed for any failure,
+  a crash included, because the case script catches every exception into its failure record; each is now marked
+  `raises=AssertionError` and asserts only its recorded failure, anything else raising `NotTheRecordedFailure`. Cited
+  in `tests/levelset/cases.py`, `test_levelset_stage3_cases.py` and `test_levelset_skinbody.py`.
+- **F33. I3.** The sideways solve's 1e-12 tolerance sat at round-off as a hard stop, where the shoulder's 1012-part
+  third step under the bridge law (6.05e-12) and the box at 1 mm markers (2.1e-11) stopped; a stall at most
+  `SIDE_ACCEPT_RTOL` (1e-9) is now accepted and counted. Cited in `skin.py`, `skinbody.py`, `stage3_cases.py` and
+  `test_levelset_skin.py`.
+- **F34. M6 and M7.** The `PARTS_MAX` stop did not mark its part as restored, so a body with no rigid metal left
+  reported the part count instead of `NO_CORE`; and `Skins._append_bottom` lacked the trial-pass guard of the method it
+  replaced. Cited in `skinbody.py`, `skin.py` and `test_levelset_skinbody.py`.
+- **F35. M5.** The cases script's two hazards, F30 and F31, fixed. Cited in `stage3_cases.py` and
+  `test_levelset_stage3_cases.py`.
+- **F36. M11 and M12.** The heated cube's first step was judged against the face's areas after its third step; and three
+  behaviours had no direct test (the thin test's rejecting half, the profile spraying path with reordered skin rows,
+  `ownership` given one of its two normals). Cited in `test_levelset_skinbody.py`, `test_levelset_division.py`,
+  `test_levelset_spraying.py` and `markers.py`.
 
 ## Open questions for Asha
 

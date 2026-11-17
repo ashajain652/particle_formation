@@ -96,9 +96,10 @@ def test_on_a_sphere_shadow_and_facing_agree():
     assert (np.abs(theta[~lee]) <= 0.5 * math.pi + 0.2).all()
 
 
-# -- the loads by the area of phi each marker owns (Task 11's fix, item 2, and its round 1, C1) ------------------------
+# -- the loads by the area each marker owns (Task 11's fix, item 2, and its round 1, C1; cited findings F10, F2) ------
 BEAM = np.array([0.0, 0.0, 1.0])     # a beam arriving along -z: each patch's projection max(n . BEAM, 0)
-COVERAGE_EXACT = 1e-9                # the heat the markers take against the flux over phi's patches, relative (C1)
+COVERAGE_EXACT = 1e-9                # the heat the markers take against the flux over phi's patches, relative (C1,
+                                     # cited finding F2)
 TILT = np.array([0.3, -0.2, 0.15])   # rad: the tilted box's rotation vector
 
 
@@ -142,11 +143,11 @@ def test_a_uniform_beam_on_a_flat_face_gives_every_face_marker_the_same_flux():
 
 @pytest.mark.parametrize("tilt", [None, TILT])
 def test_the_box_s_markers_take_its_projected_heat_exactly(tilt):
-    """The q6p box's shape (8 x 10 x 10 mm, edges rounded to the stub's 0.8 mm) under a beam along -z, upright and turned
-    so that no face is aligned with the beam or the grid: the markers, each its mean over the area of phi it owns on
-    that area (Task 11's fix round 1, C1: one partition of phi), take the beam over phi's patches, each patch's flux
-    times its area, to COVERAGE_EXACT (the review's M3: by the tangent-plane cells' areas the upright box's markers took
-    1.013 of it, within a band of 0.95 to 1.053 that could not see the error)."""
+    """The q6p box's shape (8 x 10 x 10 mm, edges rounded to the stub's 0.8 mm) under a beam along -z, upright and
+    turned so that no face is aligned with the beam or the grid: the markers, each its mean over the area of phi it owns
+    on that area (Task 11's fix round 1, C1, cited finding F2: one partition of phi), take the beam over phi's patches,
+    each patch's flux times its area, to COVERAGE_EXACT (the review's M3, cited finding F5: by the tangent-plane cells'
+    areas the upright box's markers took 1.013 of it, within a band of 0.95 to 1.053 that could not see the error)."""
     mesh, phi, mk, off, half = _box_surface(half=(5e-3, 5e-3, 4e-3), tilt=tilt)
     P = patches(mesh, phi)
     proj = np.maximum(P.normal @ BEAM, 0.0)

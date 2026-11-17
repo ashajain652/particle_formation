@@ -51,34 +51,33 @@ one-dimensional references for an 8.27 mm slab the offset moves the recession by
 one skin cell, and the controller's ruling T11-a closed T7-m on it). A run with an offset is recorded apart
 (`plate_<case>_<preset>_offset_<mm>mm`).
 
-The q6p box (Ruling 5): 8 x 10 x 10 mm at 700 K, 6 MW/m2 by projection on its 10 x 10 face (flight along -x; each
-marker the mean projection of the patches of phi it owns, taken again on the moved phi before every part,
-`projected_heat`, whose docstring says why), 2 s at
-0.5 s steps, dev cells, the design's meshes (0.7 mm fine cells over a 4 mm margin, a 0.25 mm curvature floor), the
-volume flow held (stage 3) and the skins' own flow on (the runoff driven by the flight's deceleration, PUSH_DECEL along
-the flight direction, with no gas pressure gradient or shear), `remove="feed"`. Judged: the face centre's recession
-(phi's zero on the axis) within RECESSION_TOL of REFERENCE_1D at 1.0, 1.5 and 2.0 s (the liquidus reference reported),
-the books, no marker trapped; the edges reported: each of the twelve edges' rounding radius, estimated from phi's zero
-contour in the plane normal to it through its midpoint (`edge_rounding`), and the recession along the bisector of the
-heated face's +y edge, and the face's recession on a 9 x 9 grid 1 mm apart about its axis (`box_grid`); a step that
-stops records the face and the edges as it left them (`run_steps`' `failed`; plan 03b Task 7b, Task 7's minor M2). The
-cost per step is recorded against the old design's 31.4, 175.3, 772.1 and 1175.9 s (OLD_BOX_STEP_S; design 21.8 item
-10).
+The q6p box (Ruling 5): 8 x 10 x 10 mm at 700 K, 6 MW/m2 by projection on its 10 x 10 face (flight along -x; each marker
+the mean projection of the patches of phi it owns, taken again on the moved phi before every part, `projected_heat`,
+whose docstring says why), 2 s at 0.5 s steps, dev cells, the design's meshes (0.7 mm fine cells over a 4 mm margin, a
+0.25 mm curvature floor), the volume flow held (stage 3) and the skins' own flow on (the runoff driven by the flight's
+deceleration, PUSH_DECEL along the flight direction, with no gas pressure gradient or shear), `remove="feed"`. Judged:
+the face centre's recession (phi's zero on the axis) within RECESSION_TOL of REFERENCE_1D at 1.0, 1.5 and 2.0 s (the
+liquidus reference reported), the books, no marker trapped; the edges reported: each of the twelve edges' rounding
+radius, estimated from phi's zero contour in the plane normal to it through its midpoint (`edge_rounding`), and the
+recession along the bisector of the heated face's +y edge, and the face's recession on a 9 x 9 grid 1 mm apart about its
+axis (`box_grid`); a step that stops records the face and the edges as it left them (`run_steps`' `failed`; plan 03b
+Task 7b, Task 7's minor M2, cited finding F24). The cost per step is recorded against the old design's 31.4, 175.3,
+772.1 and 1175.9 s (OLD_BOX_STEP_S; design 21.8 item 10).
 
 The shoulder: a segment of a sphere of radius SHOULDER_R (the 50 mm sphere, as the marker tests' "25 mm sphere") about
 its 45 degree station, cut by flat faces (a closed body: SHOULDER_HALF_X along the meridian, SHOULDER_HALF_Y across,
 SHOULDER_DEPTH deep), the station SHOULDER_OFF off the origin along each axis so that the faces cut the cells (plan 03b
 Task 7b, the controller's ruling T7-h: on the mesh's planes of nodes they left the division's closure 3.7e-3 from one),
-at the skyscrapers' pushed plate's loads (`PUSHES["flight"]` of analysis/skin_plate.py: dp/ds
-and shear down the meridian on its curved face, the deceleration along the flight direction), 700 K, 6 MW/m2 projected
-on the curved face upstream of the station (the windward cap; the heat ends at the station) and nothing behind, the
-liquid kept, dev cells, fine cells to the design's margin but no curvature floor below the fine size (the cut faces'
-edges are not the case; the sphere's own curvature asks for none). The deposit is the solid height gained past the
-heat's end (swell off: phi's radial rise over the sphere), by marker; its centroid past the heat's end is set against
-the skyscrapers' pushed plate's 1.05 mm (SKYSCRAPERS_DEPOSIT_CENTROID_MM). Judged by its test: the books, a deposit
-formed past the heat's end, at least DEPOSIT_RIGID_SHARE of it rigid at 2.0 s and at most the pushed plate's
-3.0 per cent of it past DEPOSIT_FAR (5 mm) (the controller's ruling on the review's I2); the farthest reach of non-rigid
-metal is reported, not judged.
+at the skyscrapers' pushed plate's loads (`PUSHES["flight"]` of analysis/skin_plate.py: dp/ds and shear down the
+meridian on its curved face, the deceleration along the flight direction), 700 K, 6 MW/m2 projected on the curved face
+upstream of the station (the windward cap; the heat ends at the station) and nothing behind, the liquid kept, dev cells,
+fine cells to the design's margin but no curvature floor below the fine size (the cut faces' edges are not the case; the
+sphere's own curvature asks for none). The deposit is the solid height gained past the heat's end (swell off: phi's
+radial rise over the sphere), by marker; its centroid past the heat's end is set against the skyscrapers' pushed plate's
+1.05 mm (SKYSCRAPERS_DEPOSIT_CENTROID_MM). Judged by its test: the books, a deposit formed past the heat's end, at least
+DEPOSIT_RIGID_SHARE of it rigid at 2.0 s and at most the pushed plate's 3.0 per cent of it past DEPOSIT_FAR (5 mm) (the
+controller's ruling on the review's I2, cited finding F3); the farthest reach of non-rigid metal is reported, not
+judged.
 
 The cost (Step 4): the 50 mm sphere at a melting state (880 K, the continuum gas state of the body tests, the shared
 heating, surface flow and Girin's spray), dev and production cells, each macro step's wall time split by the profiler
@@ -158,8 +157,8 @@ SKYSCRAPERS_DEPOSIT_CENTROID_MM = 1.05                   # the pushed plate's de
                                                          # item 21: 1.84 mm without it)
 SKYSCRAPERS_DEPOSIT_FAR_SHARE = 0.030                    # its share landing 5-10 mm past the heat's end (9.9 % without)
 HOT_BASE_TOL_K = 1.0                                     # the skyscrapers' hot plate: base at most this above T_rigid
-                                                         # (skin_plate.HOT_BASE_TOL_K; judged from Task 11's fix, item 4,
-                                                         # to plan 03b Task 7, reported since: module docstring)
+                                                         # (skin_plate.HOT_BASE_TOL_K; judged from Task 11's fix, item 4
+                                                         # (F12), to plan 03b Task 7, reported since: module docstring)
 OLD_BOX_STEP_S = (31.4, 175.3, 772.1, 1175.9)            # s: the box's four steps' wall times on the old design (e129c95,
                                                          # the record of 2026-11-13; design 21.8 item 10)
 
@@ -196,7 +195,7 @@ SHOULDER_Q = 6.0e6                 # W/m2, upstream of the station (x < 0)
 CURVED_FACE = 0.5                  # a marker whose normal's dot with the radial direction exceeds this is on the sphere
 DEPOSIT_RIGID_SHARE = 0.9          # of the metal deposited past the heat's end at 2.0 s, at least this share rigid
 DEPOSIT_FAR = 5e-3                 # m: of the deposit, at most SKYSCRAPERS_DEPOSIT_FAR_SHARE past this from the heat's end
-                                   # (the controller's ruling on the review's I2, 2026-11-13)
+                                   # (the controller's ruling on the review's I2, F3, 2026-11-13)
 SPHERE_R = 25e-3                   # m: the cost case's 50 mm sphere
 SPHERE_T0 = 880.0                  # K: just below T_rigid (895.1 K), so that the windward cap melts within the first step
 CONTINUUM = dict(rho=1e-4, kn=1e-3)   # the body tests' continuum gas state (tests/levelset/test_levelset_skinbody.py)
@@ -254,7 +253,7 @@ class Profile:
         `skin.NEWTON_MAX`, which raises), the most GMRES iterations a sideways solve took and the largest true residual
         it left as a share of its right-hand side (against `skin.SIDE_RTOL`), the sideways solves and those that did not
         reach `skin.SIDE_RTOL` (accepted at `skin.SIDE_ACCEPT_RTOL` and counted in the step's `side_solves_at_floor`,
-        and raising above it; the final review's I3)."""
+        and raising above it; the final review's I3, cited finding F33)."""
         return {"passes_max": 0, "passes_accepted_max": 0, "interface_mismatch_max": 0.0, "newton_iterations_max": 0,
                 "gmres_iterations_max": 0, "gmres_residual_max": 0.0, "side_solves": 0, "side_solves_unconverged": 0}
 
@@ -477,10 +476,11 @@ def split_step(delta, wall):
 
 
 def division_cost(delta):
-    """A step's division line [s] (plan 03b Task 7, the controller's carry 4): every call of `division.divide` (the
-    step end's and the parts' `_divide` and the re-partitions'), inclusive, with its calls and their mean; within them
-    the tie rule's second nearest-marker query (`markers.ownership`); and the sideways conductances' centroid distances
-    (`skin._Sideways._distances`, ruling T6-b, once per heat sub-step with sideways heat), with their calls."""
+    """A step's division line [s] (plan 03b Task 7, the controller's carry 4, cited finding F26): every call of
+    `division.divide` (the step end's and the parts' `_divide` and the re-partitions'), inclusive, with its calls and
+    their mean; within them the tie rule's second nearest-marker query (`markers.ownership`); and the sideways
+    conductances' centroid distances (`skin._Sideways._distances`, ruling T6-b, once per heat sub-step with sideways
+    heat), with their calls."""
     inc, calls = delta["incl"], delta["calls"]
     n = calls.get("divide", 0)
     return {"divide_s": round(inc.get("divide", 0.0), 3), "divide_calls": n,
@@ -608,9 +608,10 @@ def step_row(body, book, wall, x_before, delta, watch=None):
            # carried 8: churn and pieces
            "mass_drawn_kg": book.mass_drawn, "mass_handed_kg": book.mass_handed,
            "n_pieces": book.n_pieces, "pieces_used_up": book.pieces_used_up,
-           # Task 11's fix: the islands a move filled from the skins (item 3), the groups the area guard replaced (item 1)
+           # Task 11's fix: the islands a move filled from the skins (item 3, cited finding F11), the groups the area
+           # guard replaced (item 1, cited finding F9)
            "island_nodes": getattr(book, "island_nodes", 0), "groups_guarded_max": getattr(book, "groups_guarded_max", 0),
-           # the final review's I3: the sideways solves accepted at skin.SIDE_ACCEPT_RTOL, short of skin.SIDE_RTOL
+           # the final review's I3 (F33): the sideways solves accepted at skin.SIDE_ACCEPT_RTOL, short of skin.SIDE_RTOL
            "side_solves_at_floor": getattr(book, "side_solves_at_floor", 0),
            "pending_flux_max_Wm2": book.pending_flux_max, "surface_flux_max_Wm2": book.surface_flux_max}
     if delta is not None:
@@ -623,18 +624,18 @@ def step_row(body, book, wall, x_before, delta, watch=None):
 
 def projected_heat(body, q0, direction, where=None):
     """A flux q0 [W/m2] arriving along -`direction` (a beam from the side `direction` points to) by projection, given to
-    the markers by the patches of phi they own, as the gas loads now are (`loads.patch_mean`, stage 3 Task 11's fix, item
-    2) and as the skyscrapers' plate gives each column the projection of its own dual cell (`projected_flux`): each marker
-    takes q0 times the area-weighted mean, over the patches of phi as it is that it owns, of their own projection
-    max(n_p . direction, 0), on its own area; `where(centroids)` (bool) heats only some patches. Returns q per marker
-    [W/m2]. The ownership is the one that sets the markers' areas (`Markers.owned_patches`, with the same-side and
-    same-piece rules), so that the heat the markers take, sum q_i A_i, is the beam's power on phi; the body calls this
-    again before every part on a moved phi (`skinbody.LevelSetSkinBody._take_loads`; plan 03b Task 7b, the controller's
-    ruling T7-i: meaned under `loads.owned`, the nearest marker alone, and taken once a step, the box's heat in ran 5.5 %
-    over the beam's over its second step and up to 25 % in its last part once the face was uneven; diagnosis D1). (Each
-    marker's own normal, q0 max(n . direction, 0), gave the q6p box's markers 73.6 mm2 of projected area against phi's
-    99.3 mm2, measured once after its first step: its edges, rounded to the stub's 0.8 mm, lie between markers 2 mm
-    apart.)"""
+    the markers by the patches of phi they own, as the gas loads now are (`loads.patch_mean`, stage 3 Task 11's fix,
+    item 2, cited finding F10) and as the skyscrapers' plate gives each column the projection of its own dual cell
+    (`projected_flux`): each marker takes q0 times the area-weighted mean, over the patches of phi as it is that it
+    owns, of their own projection max(n_p . direction, 0), on its own area; `where(centroids)` (bool) heats only some
+    patches. Returns q per marker [W/m2]. The ownership is the one that sets the markers' areas
+    (`Markers.owned_patches`, with the same-side and same-piece rules), so that the heat the markers take, sum q_i A_i,
+    is the beam's power on phi; the body calls this again before every part on a moved phi
+    (`skinbody.LevelSetSkinBody._take_loads`; plan 03b Task 7b, the controller's ruling T7-i: meaned under
+    `loads.owned`, the nearest marker alone, and taken once a step, the box's heat in ran 5.5 % over the beam's over its
+    second step and up to 25 % in its last part once the face was uneven; diagnosis D1). (Each marker's own normal, q0
+    max(n . direction, 0), gave the q6p box's markers 73.6 mm2 of projected area against phi's 99.3 mm2, measured once
+    after its first step: its edges, rounded to the stub's 0.8 mm, lie between markers 2 mm apart.)"""
     P = patches(body.mesh, body.phi)
     proj = np.maximum(P.normal @ np.asarray(direction, float), 0.0)
     if where is not None:
@@ -665,8 +666,8 @@ STAMP_PATHS = ("reentry_model", "analysis/levelset", "data")   # what a run's co
 def code_stamp():
     """The commit the case ran on and whether the package, this script or the data the cases read (STAMP_PATHS: the
     material tables and reference values, and the US76 and drag tables the shared package reads) then differed from it
-    (Task 11's review, M5: the record mixed runs from before and after a fix round with nothing to tell them apart; its
-    re-review, minor item 4: a changed data file did not mark a run)."""
+    (Task 11's review, M5, cited finding F6: the record mixed runs from before and after a fix round with nothing to
+    tell them apart; its re-review, minor item 4, cited finding F14: a changed data file did not mark a run)."""
     try:
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True,
                               check=True).stdout.strip()
@@ -712,13 +713,14 @@ def save_state(body, path):
 
 
 def run_steps(body, advance, steps, label, extra=None, before_step=None, failed=None):
-    """`steps` macro steps of `advance(body)` under the profiler, a row each (`step_row`, plus extra(body, book) if given);
-    a step that raises ends the run and is recorded, with its time until it raised, the parts it accepted, its cost
-    split, its division line, its solver watch and, with `failed`, the case's measures of the body as the stop left it,
-    `failed(body)` (a dict; where the state does not allow them, the error they raised; plan 03b Task 7b, Task 7's minor
-    M2: the box's stopped step's face and edges were measured only in scratch). With STAGE3_STATE_DIR set, the body is
-    pickled there before each step and kept, its path in the failure, when the step raises (Task 11's review, M6: a
-    failing case left nothing to diagnose), and after each step that succeeds. Returns (rows, failure or None)."""
+    """`steps` macro steps of `advance(body)` under the profiler, a row each (`step_row`, plus extra(body, book) if
+    given); a step that raises ends the run and is recorded, with its time until it raised, the parts it accepted, its
+    cost split, its division line, its solver watch and, with `failed`, the case's measures of the body as the stop left
+    it, `failed(body)` (a dict; where the state does not allow them, the error they raised; plan 03b Task 7b, Task 7's
+    minor M2, cited finding F24: the box's stopped step's face and edges were measured only in scratch). With
+    STAGE3_STATE_DIR set, the body is pickled there before each step and kept, its path in the failure, when the step
+    raises (Task 11's review, M6, cited finding F7: a failing case left nothing to diagnose), and after each step that
+    succeeds. Returns (rows, failure or None)."""
     rows, failure = [], None
     tag = label.replace(" ", "_")
     states = os.environ.get("STAGE3_STATE_DIR")
@@ -1037,7 +1039,7 @@ def box(preset="dev", steps=None, save=True):
         rec = (top - face_x0) * 1e3
         mk = b.markers
         tilted = (mk.normal[:, 0] <= -0.5) & (mk.normal[:, 0] >= -FACE_NORMAL)
-        S, A_group, _ = b._interface()                      # the face skins' groups now (Task 11's fix, item 1)
+        S, A_group, _ = b._interface()                      # the face skins' groups now (Task 11's fix, item 1, F9)
         face_rows = b.markers.skin_index[b.markers.normal[:, 0] < -FACE_NORMAL]
         fr = A_group[face_rows] / b.skins.base_area()[face_rows]
         edges = box_edge_roundings(b, c)
@@ -1064,9 +1066,9 @@ def box(preset="dev", steps=None, save=True):
 
     n = int(round(T_END / DT)) if steps is None else steps
     def failed(b):
-        """The face and edges as a stopped step left them (Task 7's minor M2): the face centre's recession, the face's
-        recession on the 9 x 9 grid since the start and its change over the stopped step [mm, a recession positive],
-        and the edges' radii."""
+        """The face and edges as a stopped step left them (Task 7's minor M2, cited finding F24): the face centre's
+        recession, the face's recession on the 9 x 9 grid since the start and its change over the stopped step [mm, a
+        recession positive], and the edges' radii."""
         c, _ = box_centre(b)
         now = box_grid(b)
         edges = box_edge_roundings(b, c)
@@ -1174,12 +1176,12 @@ def shoulder_heat(body):
 
 def deposit(body):
     """The deposit past the heat's end: per marker on the sphere downstream of the station, the solid height gained
-    (phi's radial rise over the sphere, the skins at the solid's density) times its area and the solid density [kg];
-    its mass, centroid past the heat's end [mm], farthest reach [mm], share 5-10 mm past and share past DEPOSIT_FAR; its
+    (phi's radial rise over the sphere, the skins at the solid's density) times its area and the solid density [kg]; its
+    mass, centroid past the heat's end [mm], farthest reach [mm], share 5-10 mm past and share past DEPOSIT_FAR; its
     rigid share, the deposit less the non-rigid metal it holds (each marker's skin cells above T_rigid, at most its
-    deposit) over the deposit (the ruling on the review's I2); the mass of non-rigid cells in the skins past the heat's
-    end, and the largest distance past the heat's end at which a skin holds metal above T_rigid [mm] (the instantaneous
-    reach of non-rigid metal, reported, not judged)."""
+    deposit) over the deposit (the ruling on the review's I2, cited finding F3); the mass of non-rigid cells in the
+    skins past the heat's end, and the largest distance past the heat's end at which a skin holds metal above T_rigid
+    [mm] (the instantaneous reach of non-rigid metal, reported, not judged)."""
     mk, sk, mat = body.markers, body.skins, body.material
     on, s = curved(mk)
     rise = np.linalg.norm(mk.x - SHOULDER_CENTRE, axis=1) - SHOULDER_R
@@ -1367,13 +1369,13 @@ RECORD_KEPT = ("against_task7", "against_offset_0", "record_note")   # an entry'
 
 def record():
     """Merge output/levelset/stage3_*.json into analysis/levelset/stage3_recorded.json, the committed record (the final
-    review's M5, Task 11's review M1: rebuilt from the output files alone, the record lost the blocks added to its
-    entries by hand and the entries no output file holds, such as Task 12's costs). Each output file with a code stamp
-    replaces the record's entry of its name (the case's summary and steps, with the commit it ran on, `code`), and the
-    entry it replaces passes on the blocks RECORD_KEPT it held that the output does not, unchanged; they were written
-    beside the run being replaced, so each carried block is named in what is printed, to be read again. Every other
-    entry and key of the record is kept as it is. The commits are printed, and a summary without a stamp is left out and
-    named. Returns the record written."""
+    review's M5 and plan 03b Task 11's review M1, cited findings F35 and F30: rebuilt from the output files alone, the
+    record lost the blocks added to its entries by hand and the entries no output file holds, such as Task 12's costs).
+    Each output file with a code stamp replaces the record's entry of its name (the case's summary and steps, with the
+    commit it ran on, `code`), and the entry it replaces passes on the blocks RECORD_KEPT it held that the output does
+    not, unchanged; they were written beside the run being replaced, so each carried block is named in what is printed,
+    to be read again. Every other entry and key of the record is kept as it is. The commits are printed, and a summary
+    without a stamp is left out and named. Returns the record written."""
     try:
         with open(RECORD) as fh:
             old = json.load(fh)
@@ -1416,7 +1418,8 @@ def main(argv=None):
     p.add_argument("--steps", type=int, default=None, help="macro steps (default: to 2 s; the sphere 2)")
     p.add_argument("--dt", type=float, default=DT, help="cost sphere: the macro step [s]")
     a = p.parse_args(argv)
-    if a.offset_mm is not None and a.case not in ("plate-cold", "plate-hot"):     # the final review's M5: it was ignored
+    if a.offset_mm is not None and a.case not in ("plate-cold", "plate-hot"):     # the final review's M5: it was
+                                                                                  # ignored (F35)
         p.error("--offset-mm raises the plates' face and is not taken by {}".format(a.case))
     if a.case in ("plate-cold", "plate-hot"):
         out = plate(a.case.split("-")[1], a.preset, a.every_second, a.steps, offset=(a.offset_mm or 0.0) * 1e-3)

@@ -129,7 +129,7 @@ def one_face(q):
 def heated():
     """The 10 mm cube at 850 K heated 2 MW/m2 on its +x face for three 0.5 s macro steps; with each step's book, the
     closure after it, its wall time and the area the face's heat acted on after it (the markers' areas by `one_face`'s
-    share; the final review's M11: step 1's heat in was compared with the areas after step 3)."""
+    share; the final review's M11 (cited finding F36): step 1's heat in was compared with the areas after step 3)."""
     body = cube_body()
     before = body.books()
     books, closures, seconds, faces = [], [], [], []
@@ -570,7 +570,8 @@ def test_a_split_past_PARTS_MAX_stops_naming_the_worst_column(monkeypatch):
     carry (planning ruling 4's volume change at a column's top) of three PARTS_MAX allowances on one face column, which
     no part's length shrinks: the step raises after its first part, naming that column's marker and the ratio 3 PARTS_MAX
     (a part run again would be the split, and stops the test instead of hanging it), its error marked `part_restored`,
-    so that `advance` asks whether rigid metal is left as for any failed part (the final review's M6)."""
+    so that `advance` asks whether rigid metal is left as for any failed part (the final review's M6, cited finding
+    F34)."""
     import re
     body = cube_body()
     sk, mk = body.skins, body.markers
@@ -905,11 +906,11 @@ def test_runoff_crosses_a_box_edge_through_the_body(monkeypatch):
     degrees of +x) made liquid at 1000 K through their depth, and one 0.01 s step with the metal pulled along +z
     (EDGE_PULL, a deceleration with no gas state), toward the +x face's edge with the +z face, its liquid's surface
     tension off (the capillary push of phi's recovered curvature at the sharp cube's edges, some 2.5e5 N/m3 on its face
-    markers, folds the liquid face within the step and stops it on THIN_METAL: plan 03b Task 6's diagnosis of the
-    spraying fixture, the controller's carry T5-h). Every flow sub-step runs on the body's division (each transport's
-    sheet depth-resolved, `runoff.Sheet.from_division`, its rows the shuffled ones); metal arrives in the +z face's
-    columns across the edge (their net gain over the real passes' transports is positive); and the step's books close
-    (mass 1e-12, enthalpy 1e-8)."""
+    markers, folds the liquid face within the step and stops it on THIN_METAL: plan 03b Task 6's diagnosis (cited
+    finding F21) of the spraying fixture, the controller's carry T5-h). Every flow sub-step runs on the body's division
+    (each transport's sheet depth-resolved, `runoff.Sheet.from_division`, its rows the shuffled ones); metal arrives in
+    the +z face's columns across the edge (their net gain over the real passes' transports is positive); and the step's
+    books close (mass 1e-12, enthalpy 1e-8)."""
     from dataclasses import replace
     from reentry_model.levelset import runoff
     body = cube_body(T0=EDGE_T[0])
@@ -1024,10 +1025,10 @@ CONTINUUM = dict(rho=1e-4, kn=1e-3)   # 7.5 km/s at a density of 1e-4 kg/m3 with
 def sprayed():
     """The cube with its edges rounded to ROUNDING (`rounded_cube`, the controller's ruling T6-d: the fixture tests the
     spraying and the books, not sharp-edge capillarity; on the sharp cube the capillary push of phi's recovered
-    curvature at the edges folded the liquid face and the step stopped on THIN_METAL, plan 03b Task 6's diagnosis) with
-    liquid formed on its +x face by 0.25 s of 6 MW/m2 (no flow, nothing removed), then one 0.05 s macro step at the
-    continuum gas state with the runoff and Girin's plan on: (body, the melting step's book, the spraying step's book or
-    None, its time [s], the RuntimeError that stopped it or None)."""
+    curvature at the edges folded the liquid face and the step stopped on THIN_METAL, plan 03b Task 6's diagnosis, cited
+    finding F21) with liquid formed on its +x face by 0.25 s of 6 MW/m2 (no flow, nothing removed), then one 0.05 s
+    macro step at the continuum gas state with the runoff and Girin's plan on: (body, the melting step's book, the
+    spraying step's book or None, its time [s], the RuntimeError that stopped it or None)."""
     # The bridge law, the law this fixture's numbers were tuned on, pinned by the controller's ruling T9-a. Under the
     # composite default the spraying step stops at its end on THIN_METAL (design 21.11) at one pair of columns (plan 03b
     # Task 11, measured once): the +x face's lower rounded lip stands 0.96 mm inside its starting surface at one marker
@@ -1161,10 +1162,10 @@ BEAM_Z = np.array([0.0, 0.0, 1.0])   # a beam arriving along -z
 
 
 def test_the_skins_take_a_beam_over_the_area_of_phi_they_own():
-    """Task 11's fix round 1, C1 (the controller's ruling): one partition of phi. Each marker's area is the area of phi
-    nearer it than any other marker, the area the gas loads average over, so that on the test cube under a beam along -z
-    (each patch's projection max(n . BEAM_Z, 0) as its flux) the heat the skins take, each its own flux times its own
-    area, is the beam times phi's projected area to round-off, and the skins' areas sum to phi's."""
+    """Task 11's fix round 1, C1 (the controller's ruling; cited finding F2): one partition of phi. Each marker's area
+    is the area of phi nearer it than any other marker, the area the gas loads average over, so that on the test cube
+    under a beam along -z (each patch's projection max(n . BEAM_Z, 0) as its flux) the heat the skins take, each its own
+    flux times its own area, is the beam times phi's projected area to round-off, and the skins' areas sum to phi's."""
     from reentry_model.levelset import loads
     from reentry_model.levelset.cutcell import patches
     body = cube_body()
@@ -1180,12 +1181,12 @@ def test_the_skins_take_a_beam_over_the_area_of_phi_they_own():
 
 
 def test_a_marker_whose_nearest_patches_are_few_gets_a_grown_group_and_the_law_stays_exact():
-    """Fix round 2 of Task 9 (the ruling on concern 1): a marker's base law is spread over a group of patches of beta
-    whose area is within GROUP_AREA_RANGE of its skin's base area. Flat patches of 0.1 x 0.1 mm on a plane carry five
-    base points of base area 1 mm2 each, one at the origin ringed by four 0.02 mm away, so that by nearest base it owns
-    almost nothing. Every group ends within range, the crowded marker's grown from its nearest patches, and the law each
-    patch receives sums back, over the patches, to every marker's a and b exactly (to round-off); a row marked insulated
-    (a column with no base, plan 03b Task 5) takes no group."""
+    """Fix round 2 of Task 9 (the ruling on concern 1, cited finding F1): a marker's base law is spread over a group of
+    patches of beta whose area is within GROUP_AREA_RANGE of its skin's base area. Flat patches of 0.1 x 0.1 mm on a
+    plane carry five base points of base area 1 mm2 each, one at the origin ringed by four 0.02 mm away, so that by
+    nearest base it owns almost nothing. Every group ends within range, the crowded marker's grown from its nearest
+    patches, and the law each patch receives sums back, over the patches, to every marker's a and b exactly (to
+    round-off); a row marked insulated (a column with no base, plan 03b Task 5) takes no group."""
     h = 0.1e-3
     ix, iy = np.meshgrid(np.arange(-15, 26), np.arange(-15, 16), indexing="ij")
     centroid = np.column_stack([(ix.ravel() + 0.5) * h, (iy.ravel() + 0.5) * h, np.zeros(ix.size)])
@@ -1640,10 +1641,10 @@ def test_heat_passes_a_box_edge_between_the_faces_columns():
     from the heated face's edge (EDGE_PROBE), the body's temperature rise -- its column's cell at the probe's depth
     (`_layer_temperature`), a mean over the column's part of the layer there -- is within EDGE_RTOL of the reference's
     mean over that same part (`_column_region`), CutThermal alone on the same box with 0.1 mm cells near that edge
-    (`_edge_reference`); the books close. The reference's rise at the probe itself is printed too (Task 6 measured
-    30.71 K there against 28.37 K over the column: the column's resolution, which this test does not judge). The strict
-    mark expects only the rise's miss (EDGE_FAILS, the final review's I1): a crash, something melting, the books or the
-    heat in failing raise NotTheRecordedFailure, which fails the test."""
+    (`_edge_reference`); the books close. The reference's rise at the probe itself is printed too (Task 6 measured 30.71
+    K there against 28.37 K over the column: the column's resolution, which this test does not judge). The strict mark
+    expects only the rise's miss (EDGE_FAILS, the final review's I1, cited finding F32): a crash, something melting, the
+    books or the heat in failing raise NotTheRecordedFailure, which fails the test."""
     from cases import box_corners, not_the_recorded_failure
     from reentry_model.levelset.cutcell import patches
     lo, hi = box_corners()
@@ -1751,10 +1752,10 @@ def test_a_body_pickled_with_the_retired_mode_settings_loads_without_them():
 
 
 def test_a_step_book_pickled_with_the_old_name_of_its_repartitioned_share_loads_under_the_new_one():
-    """Plan 03b Task 7 (Task 6's minor item): since Task 6 the step end's re-partitioned share is a share of the layer's
-    volume, so the book's field and the history's column are `volume_repartitioned_share`; a book pickled with the old
-    name `area_repartitioned_share` (a body's `last_step`, kept by the cases' states) loads with its value under the new
-    one, and a book pickled now loads unchanged."""
+    """Plan 03b Task 7 (Task 6's minor item, cited finding F22): since Task 6 the step end's re-partitioned share is a
+    share of the layer's volume, so the book's field and the history's column are `volume_repartitioned_share`; a book
+    pickled with the old name `area_repartitioned_share` (a body's `last_step`, kept by the cases' states) loads with
+    its value under the new one, and a book pickled now loads unchanged."""
     import pickle
     from dataclasses import MISSING, fields
     book = skinbody.StepBook(**{f.name: 0 for f in fields(skinbody.StepBook)

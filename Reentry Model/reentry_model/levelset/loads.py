@@ -12,16 +12,17 @@ centre lies on the flow side of the points' mean is concave (as `SkinBody._fit_n
 Leeward: `shadow` (default), the stage 1 ray cast on each marker's patch of phi, or `centroid`, the skyscrapers'
 compatibility rule (behind the centroid's plane).
 
-By the area of phi each marker owns (stage 3 Task 11's fix, item 2, and its round 1, C1; `by_patches`): the loads are
-evaluated at the pieces of phi's patches each marker owns (`owned`, the one partition of phi: each point belongs to its
-nearest marker, and a marker's area is what it owns) -- each piece at its patch's angle to the flow and leeward test,
-with the top temperature of its owner -- and each marker takes the area-weighted mean over its pieces, on its own area,
-so that the heat the markers take is the flux over phi's patches exactly. A marker's own normal stands poorly for a cell
-that wraps an edge sharper than the marker spacing: on the q6p box the markers' own normals caught 74 per cent of the
-heat its projected area receives. The surface flow's fields along the meridian (MERIDIAN_FIELDS) are averaged as
-vectors, each piece's along its patch's meridian, and the marker takes the mean vector's part along its own meridian
-(in its tangent plane); categorical fields take the value covering the most of the marker's area; the body-scale scalars
-are the evaluation's own. A marker that owns no piece takes the patch nearest it."""
+By the area of phi each marker owns (stage 3 Task 11's fix, item 2, and its round 1, C1: cited findings F10 and F2;
+`by_patches`): the loads are evaluated at the pieces of phi's patches each marker owns (`owned`, the one partition of
+phi: each point belongs to its nearest marker, and a marker's area is what it owns) -- each piece at its patch's angle
+to the flow and leeward test, with the top temperature of its owner -- and each marker takes the area-weighted mean over
+its pieces, on its own area, so that the heat the markers take is the flux over phi's patches exactly. A marker's own
+normal stands poorly for a cell that wraps an edge sharper than the marker spacing: on the q6p box the markers' own
+normals caught 74 per cent of the heat its projected area receives. The surface flow's fields along the meridian
+(MERIDIAN_FIELDS) are averaged as vectors, each piece's along its patch's meridian, and the marker takes the mean
+vector's part along its own meridian (in its tangent plane); categorical fields take the value covering the most of the
+marker's area; the body-scale scalars are the evaluation's own. A marker that owns no piece takes the patch nearest
+it."""
 import dataclasses
 from collections import namedtuple
 from types import SimpleNamespace
@@ -43,10 +44,12 @@ NoseFit = namedtuple("NoseFit", "fitted bound used n_points concave")
 
 
 def owned(markers, P):
-    """The area of each of phi's patches `P` each marker owns, W (n, P) csr [m2] (`markers.ownership`, the one partition of
-    phi: each point of phi belongs to its nearest marker; stage 3 Task 11's fix round 1, C1). The markers' areas are its
-    row sums (`Markers.tessellate`) and the volume's groups beneath them read it (`skinbody.LevelSetSkinBody._beta_owners`),
-    so that the skin above a piece of phi and the group below it are one marker by construction."""
+    """The area of each of phi's patches `P` each marker owns, W (n, P) csr [m2] (`markers.ownership`, the one partition
+    of phi: each point of phi belongs to its nearest marker; stage 3 Task 11's fix round 1, C1, cited finding F2),
+    without the same-side and same-piece rules: the gas loads' default when no ownership is passed (`by_patches`,
+    `leeward`). The markers' areas are the row sums of `Markers.owned_patches` (with those rules; `Markers.tessellate`),
+    and the volume's groups beneath them read the division's own ownership of beta's patches, `Division.base_owner`
+    (`skinbody.LevelSetSkinBody._beta_owners`), not this."""
     return markers_mod.owned(markers.x, P, markers_mod.OWN_SHARE * markers.spacing)
 
 

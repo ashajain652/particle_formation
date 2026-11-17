@@ -234,7 +234,8 @@ class CutThermal:
         """The linear solve: direct, or conjugate gradients preconditioned by smoothed-aggregation AMG. The hierarchy's
         build draws a random start vector from numpy's global generator (pyamg's spectral-radius estimate for the
         prolongation smoother), so that unseeded the same system gave a different solution, within the CG tolerance, run
-        to run (stage 3 Task 11's review, M1): it is drawn under AMG_SEED and the generator's state put back."""
+        to run (stage 3 Task 11's review, M1, cited finding F4): it is drawn under AMG_SEED and the generator's state
+        put back."""
         if self.linear_solver == "direct":
             return spla.spsolve(A.tocsc(), b)
         import pyamg
@@ -289,12 +290,13 @@ class CutThermal:
         the enthalpy the refill changes is in what this returns. Active nodes that stay outside keep their values.
 
         `seed`, a function of the refilled nodes the old metal's extension cannot reach giving their temperatures [K]
-        (nan where it gives none), or those temperatures on every node: the temperatures of the metal a caller hands
-        the volume (`stepend.StepEnd._move_beta`, the handing columns' profiles, evaluated only at those nodes: stage 3
-        Task 11's review, M7). Refilled nodes the old metal's extension cannot reach -- an island of new metal apart from the old, which a base move can make (stage 3 Task 11, the q6p box at
-        1.5 s: 24 nodes 1.1 mm from the old metal) -- take their seed, and the extension goes on from them; `seeded`
-        then counts them. A node still without a value raises RuntimeError. If the move raises, the solver is left
-        exactly as it was before the call."""
+        (nan where it gives none), or those temperatures on every node: the temperatures of the metal a caller hands the
+        volume (`stepend.StepEnd._move_phi`: the skins' cells at those nodes' depths, `_temperature_field`, evaluated
+        only at those nodes: stage 3 Task 11's review, M7, cited finding F8). Refilled nodes the old metal's extension
+        cannot reach -- an island of new metal apart from the old, which a base move can make (stage 3 Task 11, the q6p
+        box at 1.5 s: 24 nodes 1.1 mm from the old metal) -- take their seed, and the extension goes on from them;
+        `seeded` then counts them. A node still without a value raises RuntimeError. If the move raises, the solver is
+        left exactly as it was before the call."""
         E0 = self.energy()
         was_active, was_inside = self.active.copy(), self.phi < 0
         donors = was_active & was_inside                # only the metal's own nodes hold metal temperatures

@@ -151,7 +151,8 @@ def test_rigid_motion_leaves_skins_unchanged():
     assert np.abs(mk.area / A0 - 1.0).max() < 1e-10
     assert (mk.splits, mk.merges, mk.trapped) == (0, 0, 0)
     # a rotation about the centre (phi unchanged): a Kuhn mesh is not rotation-symmetric, so 1 % on the areas (the areas
-    # of phi each marker owns, Task 11's fix round 1, C1: 0.50 % at most measured once, 0.31 % for the tangent-plane cells)
+    # of phi each marker owns, Task 11's fix round 1, C1 (cited finding F2): 0.50 % at most measured once, 0.31 % for
+    # the tangent-plane cells)
     c = shift
     from scipy.spatial.transform import Rotation
     rot = Rotation.from_rotvec([0.1, 0.2, 0.25]).as_matrix()
@@ -168,10 +169,10 @@ OWNED_ROTATION = 5e-3      # the largest change of a marker's area under a rigid
 
 
 def test_each_marker_s_area_is_the_area_of_phi_nearest_it():
-    """Task 11's fix round 1, C1 (the controller's ruling): one partition of phi, each marker's area the area of phi
-    nearer it than any other marker. On a plane tilted across a 0.25 mm mesh, 150 markers scattered on it: the area of
-    every marker whose Voronoi cell in the plane (scipy's) lies 1 mm or more inside the mesh is that cell's area to
-    OWNED_EXACT, and the areas sum to phi's to round-off."""
+    """Task 11's fix round 1, C1 (the controller's ruling; cited finding F2): one partition of phi, each marker's area
+    the area of phi nearer it than any other marker. On a plane tilted across a 0.25 mm mesh, 150 markers scattered on
+    it: the area of every marker whose Voronoi cell in the plane (scipy's) lies 1 mm or more inside the mesh is that
+    cell's area to OWNED_EXACT, and the areas sum to phi's to round-off."""
     from scipy.spatial import Voronoi
     nrm = np.array([0.3, -0.2, 1.0])
     nrm /= np.linalg.norm(nrm)
@@ -319,13 +320,13 @@ def test_a_boundary_along_a_mesh_edge_is_counted_once():
 
 
 def test_a_turned_sphere_s_markers_keep_their_areas_at_the_body_s_spacing():
-    """Task 11's fix round 1, C1: a 10 mm sphere on the body's design cells (0.7 mm near the surface), markers seeded as
-    the body seeds them, 2 mm apart, turned rigidly about its centre (phi unchanged, the markers carried and snapped): no
-    marker's area, the area of phi it owns, changes by more than OWNED_ROTATION. The change is the faceted surface's own,
-    the cut-cell patches meeting the turned markers differently. (Measured once: median 0.023 per cent, 95th percentile
-    0.071, largest 0.21; Task 6 measured 0.31 per cent at most for the tangent-plane cells on a 25 mm sphere with one
-    marker per patch, where the owned areas now change by 0.50 per cent at most, `test_rigid_motion_leaves_skins_
-    unchanged`.)"""
+    """Task 11's fix round 1, C1 (cited finding F2): a 10 mm sphere on the body's design cells (0.7 mm near the
+    surface), markers seeded as the body seeds them, 2 mm apart, turned rigidly about its centre (phi unchanged, the
+    markers carried and snapped): no marker's area, the area of phi it owns, changes by more than OWNED_ROTATION. The
+    change is the faceted surface's own, the cut-cell patches meeting the turned markers differently. (Measured once:
+    median 0.023 per cent, 95th percentile 0.071, largest 0.21; Task 6 measured 0.31 per cent at most for the
+    tangent-plane cells on a 25 mm sphere with one marker per patch, where the owned areas now change by 0.50 per cent
+    at most, `test_rigid_motion_leaves_skins_ unchanged`.)"""
     from scipy.spatial.transform import Rotation
     Rs = 10e-3
     base = BoxBase.around((-Rs - 5.6e-3,) * 3, (Rs + 5.6e-3,) * 3, 2.8e-3)
@@ -624,11 +625,11 @@ def test_markers_pickled_before_task_9b_load_with_their_positions_as_the_last_te
 
 
 def test_a_released_marker_gives_its_skin_to_the_nearest_marker_on_its_own_side():
-    """Plan 03b Task 6 (optional, the review's note on `Markers.release`): a released marker's keeper is the nearest
-    marker that may own its part of phi by the same-side rule (normals not opposed, `markers.OPPOSED_NORMALS`), as
-    ownership elsewhere chooses. Two rows of markers 1 mm apart facing each other across 0.4 mm of gas (a slot's walls,
-    normals +z and -z): a marker of the lower row released gives its skin to its own row's nearest marker, 1 mm away,
-    not to the upper row's, 0.4 mm away; the books are exact."""
+    """Plan 03b Task 6 (optional, the review's note on `Markers.release`, cited finding F22): a released marker's keeper
+    is the nearest marker that may own its part of phi by the same-side rule (normals not opposed,
+    `markers.OPPOSED_NORMALS`), as ownership elsewhere chooses. Two rows of markers 1 mm apart facing each other across
+    0.4 mm of gas (a slot's walls, normals +z and -z): a marker of the lower row released gives its skin to its own
+    row's nearest marker, 1 mm away, not to the upper row's, 0.4 mm away; the books are exact."""
     mat = LinearMeltMaterial()
     n = 5
     row = np.arange(n) * 1e-3

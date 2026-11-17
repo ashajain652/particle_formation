@@ -21,7 +21,7 @@ routes follow the design's isolation rule (§4.1):
 - **decision needed**: the route is not obvious and is Asha's to choose.
 
 Statuses: *open* (route not yet settled), *decided* (route settled, not built), *built* (in the level-set code), *pinned*
-(part of the parity target fixed for stage 3).
+(part of the parity target fixed for stage 3), *not applicable* (the route of that name, closed).
 
 Seeded 2026-11-11 from §20.10 and from the skyscrapers' build history and designs up to commit ef5e826 (2026-11-10). On
 2026-11-11 the skyscrapers' planning copy (`prototype/work-2026-10-28-skin-spraying-plan/`, in the `subplan20` worktree)
@@ -207,12 +207,41 @@ metal; Girin's thick and thin branches with the conjugate depth; the slurry spra
   the records' layout are shared (`melt_profile`, `dispersion`, `spray`). Reading each skin's cells as the shared
   `LayerColumns` and releasing the chosen run are the level set's own (`levelset/spraying.py`), mirroring the
   skyscrapers' code by amendment, never by import; the slurry rows' blanking of release depth and growth rate is written
-  again there with a comment naming the skyscrapers' lines (ruling T10-a), and the parity tests compare within 1e-9,
-  since each architecture keeps its own property table (ruling T10-c). Design §21.7 amends the spraying line: a skin
-  whose flowing layer reaches its base and has no kink of its own uses its base as the wall until the volume flow exists
-  (for Asha to check). The table path is unchanged byte for byte (`test_the_table_path_is_unchanged`, ruling P5).
+  again there with a comment naming the skyscrapers' lines (ruling T10-a), and the parity tests compare within 1e-9, the
+  solid fraction within 1e-8, since each architecture keeps its own property table (ruling T10-c). Design §21.7 amends
+  the spraying line: a skin whose flowing layer reaches its base and has no kink of its own uses its base as the wall
+  until the volume flow exists (for Asha to check). The table path is unchanged byte for byte
+  (`test_the_table_path_is_unchanged`, ruling P5).
 - **Stage.** 3.
 - **Status.** Built. Measured on a body only in scratch, once (ruling T11-d): the profile path resolves no column on a
   body's first flowing step (the shared rule: the top cell must already move), and on the rounded cube's second spraying
   step it resolved 43 columns and sprayed 69.9 mg by the gas-driven mode. The first whole body on the profile path (the
   cost sphere, two steps) is unmeasured.
+
+### 13. The skins' cells at their base (main 07d45c3, 2335176, 36227a2; merged into stage 3 as 4b38a7d)
+
+- **Skyscrapers change.** Since 2026-11-14 (`--skin-base-cell`, 0.2 mm by default) a skin cell's target size is also at
+  most the base cell at the skin's base, growing by 10 per cent per cell above it, so that a thick skin is fine at both
+  ends; a skin thinner than about 2.3 mm is unchanged, its targets from the top being the smaller throughout.
+- **Recorded in.** `docs/model_assumptions.md` section 16; branch `skin-base-cells`, on main at 9993a77, which was
+  merged into `levelset-stage3` as 4b38a7d (ruling T12-d).
+- **Route: not applicable.** It answers the skyscrapers' skins many millimetres deep, whose bottom cell graded from the
+  top alone was 2 to 4 mm thick; every level-set skin is one skin depth, 1.2 mm, deep (design §21.3), under the 2.3 mm
+  below which the rule changes nothing, and the metal beneath it is the cut-cell solve's. To revisit if the skin depth,
+  which design §21.3 marks for Asha to check, grows past about 2.3 mm.
+- **Stage.** None.
+- **Status.** Not applicable (added 2026-11-16 by the final review's M3).
+
+### 14. A mesh move refused even on a fresh mesh is made in pieces (main be67361, 9993a77; merged as 4b38a7d)
+
+- **Skyscrapers change.** Since 2026-11-15 (Asha, option 1) a move of the skyscrapers' 3D mesh that is refused even on a
+  freshly rebuilt mesh is made in pieces (halves, down to a sixteenth, `movemesh.SPLIT_LEVELS`) before it stops the
+  flight.
+- **Recorded in.** `docs/model_assumptions.md` section 17; merged into `levelset-stage3` with row 13's change as
+  4b38a7d.
+- **Route: not applicable.** It mends the skyscrapers' moving mesh, whose surface corners follow the rigid front. The
+  level set has no moving mesh: φ moves by exact volumes on a box mesh rebuilt from the level sets
+  (`levelset.move_by_volumes`, the step end's remesh), and a move that does not fit stops on the level set's own checks
+  (`MOVE_SUM_RTOL`, `PARTS_MAX`).
+- **Stage.** None.
+- **Status.** Not applicable (added 2026-11-16 by the final review's M3).

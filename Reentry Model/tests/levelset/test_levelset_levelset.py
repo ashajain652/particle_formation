@@ -130,8 +130,9 @@ def test_two_pieces_whose_dilations_meet_hold_the_total_volume_exactly():
 
 
 def test_a_volume_correction_that_does_not_converge_says_where_it_stood():
-    """Stage 3 Task 11's review, M6: a piece whose correction does not converge raises with what is needed to diagnose
-    it -- its target, the volume it held, its last shift and bracket, the iterations, its claimed nodes and cells."""
+    """Stage 3 Task 11's review, M6 (cited finding F7): a piece whose correction does not converge raises with what is
+    needed to diagnose it -- its target, the volume it held, its last shift and bracket, the iterations, its claimed
+    nodes and cells."""
     m = _sphere_mesh(0.25e-3)
     phi = redistance(m, np.linalg.norm(m.points - C, axis=1) - 1.1e-3)
     label, n = pieces(m, phi)
@@ -141,14 +142,15 @@ def test_a_volume_correction_that_does_not_converge_says_where_it_stood():
 
 
 def test_a_speck_grown_to_its_target_converges_after_a_first_step_into_saturation():
-    """Stage 3 Task 11's fix round 1, the review's concern (b): a speck of metal a base move makes beside the body, with a
-    point's hand-down in it, must grow some 1e5 times. From its tiny patch area the first Newton step overshoots far
-    beyond the nodes it may shift, where the volume stops responding (every cell it claimed full) while the cut cells at
-    the claim's edge keep a patch area, so each Newton step from there moved the shift by only that area's share and the
-    correction crawled for 60 iterations without reaching the root (the q6p box at 1.0 to 1.5 s: a 2e-17 m3 speck asked
-    to hold 1.7e-12 m3; the shoulder at 1.5 to 2.0 s likewise). Where a Newton step stays in the bracket but fails to
-    halve the step before the last (rtsafe's test), the shift is now found by Brent's method on the bracket, so the
-    speck reaches its target to round-off and the body keeps its own (a step leaving the bracket is bisected, as before)."""
+    """Stage 3 Task 11's fix round 1, the review's concern (b) (cited finding F13): a speck of metal a base move makes
+    beside the body, with a point's hand-down in it, must grow some 1e5 times. From its tiny patch area the first Newton
+    step overshoots far beyond the nodes it may shift, where the volume stops responding (every cell it claimed full)
+    while the cut cells at the claim's edge keep a patch area, so each Newton step from there moved the shift by only
+    that area's share and the correction crawled for 60 iterations without reaching the root (the q6p box at 1.0 to 1.5
+    s: a 2e-17 m3 speck asked to hold 1.7e-12 m3; the shoulder at 1.5 to 2.0 s likewise). Where a Newton step stays in
+    the bracket but fails to halve the step before the last (rtsafe's test), the shift is now found by Brent's method on
+    the bracket, so the speck reaches its target to round-off and the body keeps its own (a step leaving the bracket is
+    bisected, as before)."""
     m = _sphere_mesh(0.125e-3)
     phi = redistance(m, np.linalg.norm(m.points - C, axis=1) - 0.8e-3)
     speck = np.argmin(np.linalg.norm(m.points - (C + [1.25e-3, 0.0, 0.0]), axis=1))

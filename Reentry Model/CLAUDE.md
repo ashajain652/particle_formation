@@ -195,9 +195,10 @@ rows file (`analysis/flights/`), and no JSON.
 
 The model is built in two architectures that share one command and one package. The **skyscrapers** architecture, the
 default, is the mesh model described in this file; the **level set** architecture is designed in
-`docs/superpowers/specs/levelset/` and is not yet built. `reentry_model run --architecture skyscrapers|levelset`
-chooses between them, and `levelset` exits with code 2 until its run driver exists; `resume` and `compare` do not take
-the flag.
+`docs/superpowers/specs/levelset/` and built through stage 3 (the geometry, the cut-cell heat solve, and the skins on
+one skin depth of design section 21) as library code with no run driver yet.
+`reentry_model run --architecture skyscrapers|levelset` chooses between them, and `levelset` exits with code 2 until its
+run driver exists; `resume` and `compare` do not take the flag.
 
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
@@ -232,8 +233,8 @@ The level set has no run driver yet (the flag above exits 2); its stages are bui
 tests and scripts. Stage 1 is the geometry (`boxmesh`, `criteria`, `cutcell`, `levelset`, `shadow`, `surfaces`, `thin`,
 `transfer`; `docs/model_assumptions.md` section 10), stage 2 the cut-cell heat solve (`cutthermal`, section 11), and
 stage 3 the skins (section 18), first with two skin modes (plan `docs/superpowers/plans/levelset/03-stage3-skins.md`)
-and then rebuilt on the design's section 21 by plan `03b-stage3-one-skin-depth.md` on the branch `levelset-stage3`
-(2026-11-14 to 2026-11-15, not yet on `main`). Read section 18 before changing stage 3 or quoting a result from it, and
+and then rebuilt on the design's section 21 by plan `03b-stage3-one-skin-depth.md` (2026-11-14 to 2026-11-15). Read
+section 18 before changing stage 3 or quoting a result from it, and
 the design's §21 (it governs where it and §20 disagree). What to know before touching it:
 
 - **One skin depth, φ evolved, β derived.** Every skin is H = `SkinSettings.depth` = 1.2 mm deep, with no modes (the old
@@ -259,23 +260,29 @@ the design's §21 (it governs where it and §20 disagree). What to know before t
   `SprayModel` (`dispersion` "table" or "profile"), and the skins' viscosity follows `SkinSettings.rheology`
   ("composite" by default).
 - **Tests.** `PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests/levelset -m "not reference" -q -p no:cacheprovider -n 4`
-  is the level set's unit tier (258 tests; 12.2 and 14.5 minutes on four processes in the two runs of 2026-11-15 and 16,
-  each on a shared laptop). The 7 reference tests are the four plates, the box, the shoulder and the box-edge heat test;
+  is the level set's unit tier (264 tests since the final review's fixes added six: 7.8 minutes on four processes on
+  2026-11-17, one-minute load averages about 5 to 6; the 258 before them took 12.2 and 14.5 minutes in the two runs of
+  2026-11-15 and 16; each run once on a shared laptop). The 7 reference tests are the four plates, the box, the shoulder and the box-edge heat test;
   on the laptop run them with `-k "not q6p_box"`, because the box's full length is not run there. Three are strict
-  expected failures (`xfail(strict=True)`, with their measured reasons in `BOX_FAILS`, `SHOULDER_FAILS` and
-  `EDGE_FAILS`): a pass there fails the test run and means the reason has changed, so re-measure and re-word the reason
-  rather than drop the mark. The rounded spraying cube (`sprayed` in `test_levelset_skinbody.py`) runs on the bridge law
-  and has 2 mm rounded edges on purpose (section 18.6 and 18.8).
+  expected failures (`xfail(strict=True, raises=AssertionError)`, with their measured reasons in `BOX_FAILS`,
+  `SHOULDER_FAILS` and `EDGE_FAILS`), each asserting only its recorded failure (`judge_box`, `judge_shoulder`): a crash,
+  another stop or a check that holds in the recorded run raises `NotTheRecordedFailure` (`tests/levelset/cases.py`) and
+  fails the test, and a pass fails the test run too. Either means the reason has changed, so re-measure and re-word the
+  reason rather than drop the mark. The rounded spraying cube (`sprayed` in `test_levelset_skinbody.py`) runs on the
+  bridge law and has 2 mm rounded edges on purpose (section 18.6 and 18.8).
 - **The cases and their record.** `analysis/levelset/stage3_cases.py` runs the plates, the box, the shoulder and the
   costs (its docstring lists the commands); each writes `output/levelset/stage3_<case>[_<preset>].json` with a `code`
-  stamp. `analysis/levelset/stage3_cases.py record` rebuilds the committed record,
-  `analysis/levelset/stage3_recorded.json`, from those output files alone, so it would drop the comparison blocks
-  (`against_task7`, `against_offset_0`) and the box's `record_note`, which were added after gathering, and re-stamp
-  entries from later runs; to update one entry, replace that key only and keep the rest.
+  stamp. `analysis/levelset/stage3_cases.py record` merges those output files into the committed record,
+  `analysis/levelset/stage3_recorded.json`: each entry an output file holds is replaced by it, carrying over the blocks
+  added to that entry by hand after gathering (`RECORD_KEPT`: `against_task7`, `against_offset_0`, the box's
+  `record_note`), which it names to be read again, and every entry no output holds is kept. Every case run writes its
+  output, the reference tier's included, so check what `output/levelset/` holds before running `record`, or replace one
+  entry by hand. `--offset-mm` is taken by the plates alone.
 - **Rulings.** The decisions taken during stage 3's build are cited by id (P1 to P5, T1-a onward) in section 18, the
   design's §21.8 and the package's docstrings and tests; each is stated in full, with why and what it costs if wrong, in
-  `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md`, which also describes diagnoses D1 to D3 and the
-  scratch measurements the documents cite (S1 to S20). Questions still open for Asha are listed in section 18.11 and at
+  `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md`, which also describes diagnoses D1 to D3, the
+  scratch measurements the documents cite (S1 to S20) and the review findings and task reports the code cites by name
+  (F1 onward, "cited finding F<n>"). Questions still open for Asha are listed in section 18.11 and at
   the end of that document; do not settle them in code.
 
 ## Architecture of `reentry_model`

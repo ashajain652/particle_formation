@@ -17,7 +17,8 @@ def skin_base(mesh, phi, depth, band=None):
     Why the contour is kept (plan 03b Task 5, against the controller's ruling T2-b's plain reset). The layer the division
     measures is the metal of phi less that of phi + depth (`division.divide`), and the volume's metal is beta's; the
     books close only if the two agree, cell by cell. The plain reset moves the contour wherever it bends within a cell,
-    inward at beta's convex edges: on the stage 3 box it held 0.67 mm3 less than phi + depth (Task 2's report), which
+    inward at beta's convex edges: on the stage 3 box it held 0.67 mm3 less than phi + depth (Task 2's report, cited
+    finding F18), which
     would leave the skins' columns and the volume overlapping or apart by that much at every acceptance."""
     if band is not None and band <= depth:
         raise ValueError("the skin base needs phi a distance beyond the depth {:.3e} m into the metal, but the band is "

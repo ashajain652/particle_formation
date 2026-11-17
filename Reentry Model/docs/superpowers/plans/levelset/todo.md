@@ -12,7 +12,9 @@ Build the one-skin-depth geometry with plan `03b-stage3-one-skin-depth.md`. In i
 surface φ is the evolved level set, and the skin base β is derived 1.2 mm inside it. The columns come from one division
 of the layer, and the plan ends with the merge of main, the composite rheology and the kinked-profile spraying.
 
-Status: started 2026-11-14 on branch `levelset-stage3`, run subagent-driven.
+Status: built by plan `03b-stage3-one-skin-depth.md`, 2026-11-14 to 2026-11-16, run subagent-driven; the branch's head
+was f1c32bd when its final review's fixes began, and they follow it on the branch. Done when it lands on `main`: the
+merge commit is to be added here when it lands.
 
 ## 2. Settle the calls in design section 21 that are marked for Asha to check
 

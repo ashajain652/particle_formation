@@ -170,13 +170,13 @@ def test_columns_beside_a_convex_edge_narrow_and_meet_on_the_halfway_plane():
     the edge (away from the box's corners) narrows with depth, and shares a boundary of positive length at depth with a
     column of the other face, a pair whose normals do not oppose.
 
-    The narrowing is judged on the column's mean cross-section over bands one cell deep, each band's below the last:
-    the depth the P1 mesh resolves. Level by level, the volume per unit depth (the coarea measure, ruling T1-a) of a
-    column beside the edge jumps where the level surfaces pass the mesh's planes of nodes, since the nearly flat P1
-    cells along the edge hold their volume within a narrow depth there: measured once (96 levels, before Task 1's fix
-    round 1 placed such cells' volumes whole at their depths), rises of 12 to 44 % of the top at single levels, one
-    cell apart. (The level surfaces' own areas fall smoothly but for rises of 4e-4 of the top near the base in two
-    columns; Task 1's report.)"""
+    The narrowing is judged on the column's mean cross-section over bands one cell deep, each band's below the last: the
+    depth the P1 mesh resolves. Level by level, the volume per unit depth (the coarea measure, ruling T1-a) of a column
+    beside the edge jumps where the level surfaces pass the mesh's planes of nodes, since the nearly flat P1 cells along
+    the edge hold their volume within a narrow depth there: measured once (96 levels, before Task 1's fix round 1 placed
+    such cells' volumes whole at their depths), rises of 12 to 44 % of the top at single levels, one cell apart. (The
+    level surfaces' own areas fall smoothly but for rises of 4e-4 of the top near the base in two columns; Task 1's
+    report, cited finding F15.)"""
     lo = np.array([OFF, OFF - BOX_HALF, OFF - BOX_HALF])
     hi = lo + np.array([BOX_LENGTH, 2.0 * BOX_HALF, 2.0 * BOX_HALF])
     base = BoxBase.around((-BOX_H0, -BOX_HALF - BOX_H0, -BOX_HALF - BOX_H0),
@@ -374,14 +374,14 @@ THIN_STEP = 0.1e-3         # m: the thin test's samples along the normals in the
 
 
 def test_the_thin_test_rejects_metal_that_is_thick_along_the_normals():
-    """The final review's M12 (plan 03b Task 7c's deferred minor): the rejecting half of the thin test
-    (`division._thin_between` with `_metal_along`), which no other test reaches. Pairs of markers of opposed normals +y
-    and -y stand either side of points on a slab's mid-plane. 0.5 mm off each point, the depths of the point below their
-    tangent planes sum to 1.0 mm, under twice the skin depth: in a slab 1.0 mm thick the metal along their normals from
-    the point is 0.5 mm each way and the pair is thin; in a slab 6 mm thick the metal along each normal outlasts twice
-    the skin depth (`_metal_along` gives inf) and the pair is not thin, whatever its tangent planes say. 2 mm off each
-    point, in the thin slab, the tangent planes alone reject the pair. From a point in the gas 0.3 mm above a slab the
-    metal along -y is 0."""
+    """The final review's M12 (plan 03b Task 7c's deferred minor; cited finding F36): the rejecting half of the thin
+    test (`division._thin_between` with `_metal_along`), which no other test reaches. Pairs of markers of opposed
+    normals +y and -y stand either side of points on a slab's mid-plane. 0.5 mm off each point, the depths of the point
+    below their tangent planes sum to 1.0 mm, under twice the skin depth: in a slab 1.0 mm thick the metal along their
+    normals from the point is 0.5 mm each way and the pair is thin; in a slab 6 mm thick the metal along each normal
+    outlasts twice the skin depth (`_metal_along` gives inf) and the pair is not thin, whatever its tangent planes say.
+    2 mm off each point, in the thin slab, the tangent planes alone reject the pair. From a point in the gas 0.3 mm
+    above a slab the metal along -y is 0."""
     from reentry_model.levelset.division import _metal_along, _thin_between
     at = OFF + np.array([[0.0, 0.0, 0.0], [0.5e-3, 0.0, -0.7e-3], [-1.3e-3, 0.0, 0.9e-3]])
     k = len(at)
@@ -411,9 +411,9 @@ def test_the_thin_test_rejects_metal_that_is_thick_along_the_normals():
 
 
 def test_the_same_side_rule_needs_both_normals():
-    """The final review's M12 (plan 03b Task 1's deferred minor): `ownership` given the markers' normals without the
-    triangles' (or the triangles' without the markers') raises ValueError, not an opaque reshape error; given both, a
-    marker allowed the triangle owns the whole of it."""
+    """The final review's M12 (plan 03b Task 1's deferred minor; cited finding F36): `ownership` given the markers'
+    normals without the triangles' (or the triangles' without the markers') raises ValueError, not an opaque reshape
+    error; given both, a marker allowed the triangle owns the whole of it."""
     import pytest
     x = np.array([[0.2e-3, 0.2e-3, 0.0]])
     tris = np.array([[[0.0, 0.0, 0.0], [1e-3, 0.0, 0.0], [0.0, 1e-3, 0.0]]])
@@ -467,9 +467,10 @@ def test_two_pieces_close_their_layers_separately():
 
 @functools.lru_cache(maxsize=1)
 def _close_pair():
-    """Two 6 mm cubes 0.7 mm apart across gas, off the grid (the review's case for Task 1's fix round 1): the pair's
-    signed distance on a base mesh refined through both layers at FINE, markers seeded on both as the body seeds them.
-    Returns (mesh, the pair's phi, cube B's own phi, the markers, which of them stand on B, B's lower corner)."""
+    """Two 6 mm cubes 0.7 mm apart across gas, off the grid (the review's case for Task 1's fix round 1, cited finding
+    F17): the pair's signed distance on a base mesh refined through both layers at FINE, markers seeded on both as the
+    body seeds them. Returns (mesh, the pair's phi, cube B's own phi, the markers, which of them stand on B, B's lower
+    corner)."""
     gap, side = 0.7e-3, np.full(3, 6e-3)
     a_lo = np.array([OFF - 6e-3 - 0.5 * gap, OFF - 3e-3, OFF - 3e-3])
     b_lo = np.array([OFF + 0.5 * gap, OFF - 3e-3, OFF - 3e-3])
@@ -484,11 +485,12 @@ def _close_pair():
 
 
 def test_cells_too_thin_for_the_levels_keep_their_volume():
-    """Task 1's fix round 1 (the review's Important 1): a 6 mm cube from x = 0.48 to 6.48 mm, y and z from -2.87 to 3.13
-    mm (both of its faces at an edge equally off their planes of nodes), divided alone with its own markers. Beside each
-    edge, at the depths where the two faces' planes of nodes lie equally deep, the P1 distance is constant over whole
-    cells, which no level surface cuts: here they hold more than 1 % of the layer, and the levels alone left the columns
-    2.1 % short. Placed whole (`division.THIN_SHARE`), the columns close the layer to within DIVISION_TOL."""
+    """Task 1's fix round 1 (the review's Important 1, cited finding F16): a 6 mm cube from x = 0.48 to 6.48 mm, y and z
+    from -2.87 to 3.13 mm (both of its faces at an edge equally off their planes of nodes), divided alone with its own
+    markers. Beside each edge, at the depths where the two faces' planes of nodes lie equally deep, the P1 distance is
+    constant over whole cells, which no level surface cuts: here they hold more than 1 % of the layer, and the levels
+    alone left the columns 2.1 % short. Placed whole (`division.THIN_SHARE`), the columns close the layer to within
+    DIVISION_TOL."""
     mesh, _, phi, mk, on_b, _ = _close_pair()
     f = phi[mesh.tets]
     layer_volume = inside_volumes(mesh, phi) - inside_volumes(mesh, phi + H)
@@ -501,11 +503,11 @@ def test_cells_too_thin_for_the_levels_keep_their_volume():
 
 
 def test_no_column_crosses_from_one_piece_to_another():
-    """Task 1's fix round 1 (the review's Important 2; the controller's ruling T1-i): the same two cubes 0.7 mm apart,
-    divided together. Faces of the two cubes that lie side by side across the gap are parallel, so the same-side rule
-    alone lets markers of one cube own the other's surface; the same-piece rule does not. Each marker's piece is the
-    cube it stands on, no shared boundary joins the two cubes' markers, and each piece's factor is within
-    DIVISION_TOL."""
+    """Task 1's fix round 1 (the review's Important 2, cited finding F17; the controller's ruling T1-i): the same two
+    cubes 0.7 mm apart, divided together. Faces of the two cubes that lie side by side across the gap are parallel, so
+    the same-side rule alone lets markers of one cube own the other's surface; the same-piece rule does not. Each
+    marker's piece is the cube it stands on, no shared boundary joins the two cubes' markers, and each piece's factor is
+    within DIVISION_TOL."""
     mesh, phi, _, mk, on_b, b_lo = _close_pair()
     label, _ = pieces(mesh, phi)
     cube_b = label[np.argmin(np.linalg.norm(mesh.centroids - (b_lo + 3e-3), axis=1))]

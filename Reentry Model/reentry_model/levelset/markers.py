@@ -16,7 +16,8 @@ millimetre off moves a marker along a gradient up to 73 degrees off n, and on th
 as its P1 interpolant; the recovered gradient is the nodal (volume-weighted) average of the cells' gradients,
 interpolated, so the normal varies continuously along the surface.
 
-The areas (stage 3 Task 11's fix round 1, C1, the controller's ruling; plan 03b Task 6): each marker's area is the area
+The areas (stage 3 Task 11's fix round 1, C1, cited finding F2, the controller's ruling; plan 03b Task 6): each
+marker's area is the area
 of phi it owns (`Markers.owned_patches`, `tessellate`), the part of phi nearer it than any other marker that may own it
 (`ownership`, exact by planes between the markers): a marker owns no part of phi whose normal opposes its own (the
 same-side rule, design section 21.5), nor any part of another piece of metal (the same-piece rule, the controller's
@@ -262,11 +263,11 @@ def _nearest(tree, points, k, normals=None, point_normal=None):
 
 
 def ownership(x, tris, tri_patch, n_patch, size, normals=None, tri_normal=None, boundaries=False, measure=None):
-    """The one partition of phi by the markers at `x` (n, 3) (stage 3 Task 11's fix round 1, C1): every point of phi
-    belongs to its nearest marker, so that a marker owns the part of phi inside its Voronoi cell in space. Each marker's
-    area is the area it owns (`Markers.owned_patches`, with the same-side rule below and piece by piece), the gas loads
-    give it the mean over what it owns (`loads.by_patches`), and the division of the layer beneath divides each level
-    surface by it (`division.divide`, whose base level is the skins' base groups).
+    """The one partition of phi by the markers at `x` (n, 3) (stage 3 Task 11's fix round 1, C1, cited finding F2):
+    every point of phi belongs to its nearest marker, so that a marker owns the part of phi inside its Voronoi cell in
+    space. Each marker's area is the area it owns (`Markers.owned_patches`, with the same-side rule below and piece by
+    piece), the gas loads give it the mean over what it owns (`loads.by_patches`), and the division of the layer beneath
+    divides each level surface by it (`division.divide`, whose base level is the skins' base groups).
 
     Evaluated on the patches' triangles `tris` (Q, 3, 3) [m] (of patch `tri_patch` (Q,) of `n_patch`), exactly: a
     triangle whose three corners have one nearest marker lies wholly in that marker's (convex) cell and is its whole. For
@@ -294,7 +295,7 @@ def ownership(x, tris, tri_patch, n_patch, size, normals=None, tri_normal=None, 
     missing closure by 13 % of its perimeter, and before `_dividing` took each pair in its markers' order another
     boundary counted twice). Without normals and boundaries the result is the one before these options, bit for bit,
     and asking for the boundaries leaves the areas as they are. The rule needs both `normals` and `tri_normal`: one
-    without the other raises ValueError (the final review's M12)."""
+    without the other raises ValueError (the final review's M12, cited finding F36)."""
     if (normals is None) != (tri_normal is None):
         raise ValueError("the same-side rule needs both the markers' normals and the triangles' tri_normal, or neither")
     x = np.asarray(x, dtype=float).reshape(-1, 3)

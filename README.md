@@ -192,9 +192,10 @@ holds the shared chart palette (dataviz skill's validated sequential blue ramp).
 
 The model is built in two architectures that share one command and one package. The **skyscrapers** architecture, the
 default, is the mesh model described in this file; the **level set** architecture is designed in
-`Reentry Model/docs/superpowers/specs/levelset/` and is not yet built. `reentry_model run --architecture skyscrapers|levelset`
-chooses between them, and `levelset` exits with code 2 until its run driver exists; `resume` and `compare` do not take
-the flag.
+`Reentry Model/docs/superpowers/specs/levelset/` and built through stage 3 (the geometry, the cut-cell heat solve, and
+the skins on one skin depth of design section 21) as library code with no run driver yet.
+`reentry_model run --architecture skyscrapers|levelset` chooses between them, and `levelset` exits with code 2 until its
+run driver exists; `resume` and `compare` do not take the flag.
 
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
@@ -714,11 +715,14 @@ Stage 1's nine files are (stage 2 adds a tenth, `cutthermal.py`, below):
 - `thin.py` measures molten depth and curvature per patch and applies the thin test with hysteresis.
 - `transfer.py` interpolates and conservatively transfers fields between two meshes built from the same base grid.
 
-Run the tests (43 from stage 1; 60 since stage 2; 258 unit tests and 7 reference tests since stage 3, both below) with
+Run the tests (43 from stage 1; 60 since stage 2; 264 unit tests and 7 reference tests since stage 3, both below) with
 
 ```bash
-"$PY" -m pytest tests/levelset -q                            # every level-set test, the reference ones too (stage 3 below);
-                                                             # 60 tests and 93 to 148 s at stage 2, 43 and about 40 s at stage 1
+"$PY" -m pytest tests/levelset -q -k "not q6p_box"           # every level-set test, the reference ones too (stage 3
+                                                             # below), but test_q6p_box, the box's full length, runs
+                                                             # for hours (its third step had not ended after 115
+                                                             # minutes) and is kept off the laptop; 60 tests and 93 to
+                                                             # 148 s at stage 2, 43 and about 40 s at stage 1
 "$PY" analysis/levelset/measure_geometry.py 100              # sphere diameter in mm; optional base and fine sizes in mm
 ```
 
@@ -797,21 +801,21 @@ measured.
 Stage 3 gives the level-set body its skins. It was first built with two skin modes (plan
 `docs/superpowers/plans/levelset/03-stage3-skins.md`, Tasks 1 to 9 and 9b) and then rebuilt on the design's amendment of
 2026-11-13, section 21, "one skin depth everywhere, and the gas surface evolved", by plan
-`docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md` (2026-11-14 to 2026-11-15, on the branch
-`levelset-stage3`, not yet on `main`). Every marker on the gas surface φ carries a skin 1.2 mm deep (H,
-`SkinSettings.depth`), with no modes; φ is the evolved level set and the skin base β is derived one skin depth inside
-it, so the volume solve of stage 2 owns the metal inside β and the skins own the layer between. The layer is divided
-among the markers by nearest points of φ (`division.py`), and that one division gives each skin its cross-section
-through the depth, its neighbours for runoff and for sideways heat, and its group of β's patches for the base coupling.
-φ moves by each column's exact volume change (`levelset.move_by_volumes`), so an edge rounds only where metal is added
-or removed, and every column is filled exactly from the volume at its base after every part. The skins spray through the
-shared spray model, on Girin's table or on main's kinked profile of their own cell speeds (the spray model's
-`dispersion`, `table` or `profile`), and their slurry viscosity follows `SkinSettings.rheology`, the law main's
-`--rheology` chooses (composite by default). There is still no run driver: `--architecture levelset` exits with code 2,
-and the cases are bodies advanced by a script. `docs/model_assumptions.md` section 18 records every rule with its test
-or marks it assumed, with the decisions taken during the build; the design's §21.8 marks each verification item with its
-test and result; and `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md` states each decision taken on
-Asha's behalf in full, with what it costs if wrong, where the scratch measurements came from, and the open questions.
+`docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md` (2026-11-14 to 2026-11-15). Every marker on the gas
+surface φ carries a skin 1.2 mm deep (H, `SkinSettings.depth`), with no modes; φ is the evolved level set and the skin
+base β is derived one skin depth inside it, so the volume solve of stage 2 owns the metal inside β and the skins own the
+layer between. The layer is divided among the markers by nearest points of φ (`division.py`), and that one division
+gives each skin its cross-section through the depth, its neighbours for runoff and for sideways heat, and its group of
+β's patches for the base coupling. φ moves by each column's exact volume change (`levelset.move_by_volumes`), so an edge
+rounds only where metal is added or removed, and every column is filled exactly from the volume at its base after every
+part. The skins spray through the shared spray model, on Girin's table or on main's kinked profile of their own cell
+speeds (the spray model's `dispersion`, `table` or `profile`), and their slurry viscosity follows
+`SkinSettings.rheology`, the law main's `--rheology` chooses (composite by default). There is still no run driver:
+`--architecture levelset` exits with code 2, and the cases are bodies advanced by a script. `docs/model_assumptions.md`
+section 18 records every rule with its test or marks it assumed, with the decisions taken during the build; the design's
+§21.8 marks each verification item with its test and result; and
+`docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md` states each decision taken on Asha's behalf in full,
+with what it costs if wrong, where the scratch measurements came from, and the open questions.
 
 The files stage 3 adds to `reentry_model/levelset/` are `division.py` (the division of the layer), `skin.py` (the cell
 columns: grading, the measured cross-sections, depth and sideways conduction, the layered flow, the base exchange),
@@ -826,21 +830,24 @@ first task the package takes every physical law, property and constant from `ree
 (`tests/levelset/test_levelset_imports.py`).
 
 ```bash
-"$PY" -m pytest tests/levelset -m "not reference" -q -n 4   # the level set's unit tier: 258 tests, 12 to 15 min
-"$PY" -m pytest tests/levelset -m reference -q -n 4 -k "not q6p_box"   # plates, shoulder, box edge: 4 to 7 min
+"$PY" -m pytest tests/levelset -m "not reference" -q -n 4   # the level set's unit tier: 264 tests, 8 to 15 min
+"$PY" -m pytest tests/levelset -m reference -q -n 4 -k "not q6p_box"   # plates, shoulder, box edge: 3 to 7 min
 "$PY" analysis/levelset/stage3_cases.py plate-cold --preset dev     # also plate-hot, --preset production, --offset-mm 0.27
 "$PY" analysis/levelset/stage3_cases.py box --steps 2               # the q6p box to 1.0 s; shoulder likewise
 "$PY" analysis/levelset/stage3_cases.py cost --what rim             # also --what skip, --what sphere --steps 2
 ```
 
 Each case writes its summary to `output/levelset/stage3_<case>[_<preset>].json`, stamped with the commit it ran on, and
-the committed record of the judged runs is `analysis/levelset/stage3_recorded.json`. The box's full-length reference
-test (`test_q6p_box`) is kept off the laptop: on the earlier code its third step had not ended after 115 minutes.
+the committed record of the judged runs is `analysis/levelset/stage3_recorded.json`; `stage3_cases.py record` merges
+the output files into it, replacing only the entries they hold and keeping the rest and the blocks added to an entry by
+hand. The box's full-length reference test (`test_q6p_box`) is kept off the laptop: on the earlier code its third step
+had not ended after 115 minutes.
 
 **Verification (design §21.8).** The table lists each item of the design's verification with the test that pins it and
 its measured result; the geometry, the books, the plates, the spraying and the rheology pass, while the box, the
 shoulder and heat across the box's sharp edge are strict expected failures (each test is kept with its tolerance and
-marked `xfail(strict=True)` with the measured reason), all three caused by the 2 mm marker spacing not resolving a sharp
+marked `xfail(strict=True, raises=AssertionError)` with the measured reason, and asserting only that recorded failure,
+so that a crash or another stop fails the test), all three caused by the 2 mm marker spacing not resolving a sharp
 heated edge or, for the shoulder, by metal thinner than twice the skin depth, which design 21.11 leaves to a later
 piece. Each value was measured once on the laptop unless said otherwise.
 

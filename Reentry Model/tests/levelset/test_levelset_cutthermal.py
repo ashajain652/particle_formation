@@ -277,10 +277,10 @@ def test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell():
 
 
 def test_the_volume_solve_is_reproducible_run_to_run():
-    """Stage 3 Task 11's review, M1: the AMG preconditioner's hierarchy draws a random start vector from numpy's global
-    generator, so that unseeded the same system gave a different solution run to run (within the CG tolerance). The
-    same 3D Poisson system solved twice, the generator in different states, gives the same solution to the last bit, and
-    the solve leaves the generator's state as it found it."""
+    """Stage 3 Task 11's review, M1 (cited finding F4): the AMG preconditioner's hierarchy draws a random start vector
+    from numpy's global generator, so that unseeded the same system gave a different solution run to run (within the CG
+    tolerance). The same 3D Poisson system solved twice, the generator in different states, gives the same solution to
+    the last bit, and the solve leaves the generator's state as it found it."""
     from types import SimpleNamespace
     import scipy.sparse as sps
     n = 24

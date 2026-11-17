@@ -1287,11 +1287,13 @@ and sets out the two pieces that follow it (§21.9, §21.10).
 
 *Built on branch `levelset-stage3` by plan `docs/superpowers/plans/levelset/03b-stage3-one-skin-depth.md` (2026-11-14 to
 2026-11-15).* Under each item, **Built** names the test that pins it and its measured result; a test marked
-`xfail(strict=True)` (a *strict expected failure*: the tolerance kept, the failure recorded with its measured reason) is
-built and judged but does not pass, and is said so. Rulings are cited by their ids; each is stated in full, with why it
+`xfail(strict=True, raises=AssertionError)` (a *strict expected failure*: the tolerance kept, the failure recorded with
+its measured reason, and only that failure expected, so that a crash or another stop fails the test) is built and
+judged but does not pass, and is said so. Rulings are cited by their ids; each is stated in full, with why it
 was made and what it costs if wrong, in `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md` (the stage 3
-rulings), which also describes diagnoses D1 to D3 and the scratch measurements cited below ("Task 12's scratch probe",
-"Task 7d's regrid probe" and the like: what was run, on which commit and how often), and each decision is stated in
+rulings), which also describes diagnoses D1 to D3, the scratch measurements cited below ("Task 12's scratch probe",
+"Task 7d's regrid probe" and the like: what was run, on which commit and how often) and the review findings and task
+reports the code cites by name (F1 onward), and each decision is stated in
 `docs/model_assumptions.md` section 18, which this list follows. Numbers measured once are said to be once. The cases'
 values are in `analysis/levelset/stage3_recorded.json` (the record), gathered on e57945f under the composite law (plan
 03b Task 11).
@@ -1345,7 +1347,8 @@ values are in `analysis/levelset/stage3_recorded.json` (the record), gathered on
    (`MASS_TOL` 1e-12). `test_the_columns_sum_to_the_layer_to_round_off`,
    `test_every_step_closes_the_layer_and_the_books`, `test_a_macro_step_closes_mass_and_enthalpy`.
 6. **A spherical shell:** the columns' volumes against the analytic shell volume, as §20.11 item 3.
-   **Built, passing.** `test_a_spherical_shell_divides_by_the_shell_volume` (factor 1 − 2.84e-5, once) and
+   **Built, passing.** `test_a_spherical_shell_divides_by_the_shell_volume` (the columns close the grid's layer to a
+   factor of 1 − 2.84e-5, and each column is a cone, its base (R − H)²/R² of its top within 2 per cent; once) and
    `test_a_measured_profile_holds_a_spherical_shell`.
 7. **Sideways heat:** a temperature step along a plate's skins relaxes at the analytic rate; across the box's edge,
    heat passes between the two faces' columns, against a reference that resolves the corner in the volume alone (the
@@ -1395,9 +1398,10 @@ values are in `analysis/levelset/stage3_recorded.json` (the record), gathered on
     **Built, passing.** `test_girin_cases_through_the_level_set_path[table|profile]` (the three published cases on
     both paths), `test_a_skin_flowing_to_its_base_takes_its_base_as_the_wall`, `test_the_table_path_is_unchanged` (byte
     for byte against a fixture recorded before the profile path, ruling P5), and the profile path's parity tests with
-    the skyscrapers within 1e-9 (ruling T10-c). A body's first flowing step resolves no column on the profile path,
-    because the cells' speeds at a step's start are those left by the step before; on the rounded cube's second spraying
-    step it resolved 43 columns and sprayed 69.9 mg by the gas-driven mode (ruling T11-d, scratch, once).
+    the skyscrapers within 1e-9, the solid fraction within 1e-8 (ruling T10-c). A body's first flowing step resolves no
+    column on the profile path, because the cells' speeds at a step's start are those left by the step before; on the
+    rounded cube's second spraying step it resolved 43 columns and sprayed 69.9 mg by the gas-driven mode (ruling
+    T11-d, scratch, once).
 12. **Rheology:** under `composite` a level-set skin's cell viscosities equal the shared law's at the cells' solid
     fractions, whatever their shear rates, and the same column gives the same viscosities in both architectures; under
     `bridge` they are unchanged from today.

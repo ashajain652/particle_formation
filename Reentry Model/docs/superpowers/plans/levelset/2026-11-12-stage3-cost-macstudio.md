@@ -1,5 +1,14 @@
 # Level-set stage 3 Task 11, Step 4: the 50 mm sphere's cost on the Mac Studio — runbook
 
+> **Superseded (2026-11-16): do not run this runbook.** It was written for plan 03's two-mode code
+> (`03-stage3-skins.md`, Task 11): it requires commit 4eef4a2, expects that code's unit tier, and measures the base
+> moves and the mode changes that plan 03b (`03b-stage3-one-skin-depth.md`, design section 21) retired. It must not be
+> run on plan 03b's code. The 50 mm sphere's cost on plan 03b's code needs a new runbook, which runs the sphere through
+> at least two flowing steps, because the profile spraying path resolves no column on a body's first spraying step
+> (ruling T11-d, and the open question "The sphere's cost and a whole body on the profile path", both in
+> `2026-11-16-03b-stage3-rulings.md`). That runbook is not yet written. This file is kept as the record and is not
+> edited further.
+
 > **For the agent running this.** You are on Asha's Mac Studio. Your job is to run two already-written cost
 > measurements of the level-set model's skinned body on the 50 mm sphere, each expected to take one to three hours, gather
 > their results, push them on a results branch, and report. **You write no model code.** If anything in this runbook

@@ -2080,19 +2080,20 @@ This section describes stage 3 of the level-set architecture as it was built on 
 section 21, the amendment of 2026-11-13 ("one skin depth everywhere, and the gas surface evolved"; design file
 `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md`). It replaces the two skin modes of the
 first stage 3 plan (`03-stage3-skins.md`, whose Tasks 1 to 9 and 9b stand as built and whose Tasks 10 to 12 this plan
-supersedes). Stage 3 is not on `main`, and it is not coupled to a flight: `reentry_model run --architecture levelset`
-still exits with code 2, and every case below is a body advanced by a script with prescribed or analytical loads. Where
-a statement says **(verified)** it names the test that pins it; **(assumed)** marks a setting or rule with no test of
-its own; **(strict expected failure)** marks a case whose test is kept with its tolerance and marked
-`xfail(strict=True)`, so it is built and judged but does not pass. The decisions taken during the build on Asha's behalf
-are cited by their ruling ids (planning rulings 1 to 11, written in the plan; the pre-flight rulings P1 to P5 and the
-task rulings T1-a onward). Each of the latter is stated in full, with why it was made and what it costs if wrong, in the
-stage 3 rulings, `docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md`, which also describes diagnoses D1
-to D3 and every measurement made in scratch that this section cites (labelled S1 to S20 there: what was run, on which
-commit and how often); each decision that changed behaviour or a tolerance is also stated here in its own words. The
-measured values of the cases are in `analysis/levelset/stage3_recorded.json` (the record), each entry stamped with the
-commit it ran on; the cases' script is `analysis/levelset/stage3_cases.py` and their tests
-`tests/levelset/test_levelset_stage3_cases.py`.
+supersedes). Stage 3 is not coupled to a flight: `reentry_model run --architecture levelset` still exits with code 2,
+and every case below is a body advanced by a script with prescribed or analytical loads. Where a statement says
+**(verified)** it names the test that pins it; **(assumed)** marks a setting or rule with no test of its own; **(strict
+expected failure)** marks a case whose test is kept with its tolerance and marked `xfail(strict=True,
+raises=AssertionError)`, so it is built and judged but does not pass; each such test asserts only its recorded failure,
+so that a crash or another stop fails it (the final review's I1, cited finding F32 of the rulings document). The
+decisions taken during the build on Asha's behalf are cited by their ruling ids (planning rulings 1 to 11, written in
+the plan; the pre-flight rulings P1 to P5 and the task rulings T1-a onward). Each of the latter is stated in full, with
+why it was made and what it costs if wrong, in the stage 3 rulings,
+`docs/superpowers/plans/levelset/2026-11-16-03b-stage3-rulings.md`, which also describes diagnoses D1 to D3 and every
+measurement made in scratch that this section cites (labelled S1 to S20 there: what was run, on which commit and how
+often); each decision that changed behaviour or a tolerance is also stated here in its own words. The measured values of
+the cases are in `analysis/levelset/stage3_recorded.json` (the record), each entry stamped with the commit it ran on;
+the cases' script is `analysis/levelset/stage3_cases.py` and their tests `tests/levelset/test_levelset_stage3_cases.py`.
 
 ### 18.1 One skin depth, and the three surfaces
 
@@ -2291,11 +2292,17 @@ their conductivities, over the distance between the two columns' centroids over 
 amended by ruling T6-b, because across the box's edge the centroids are 0.56 of the markers' distance at 0.5 mm depth,
 so the markers' distance made the conductance about 1.8 times too weak there). With sideways heat the Newton iteration
 is one over every cell, its Jacobian solved by GMRES preconditioned by each column's tridiagonal solve to `SIDE_RTOL` =
-1e-12 (ruling T4-b; a sparse direct solve was 75 times slower); a solve that does not converge raises. The trial pass's
-derivative of the base heat is the one for every base temperature moving together (ruling T4-c), so the coupling between
-neighbours' bases is left to the interface's mismatch, which the damped repetition reduces to `INTERFACE_TOLERANCE` =
-1e-3 per part (the box's largest accepted part 9.80e-4 and the shoulder's 1.46e-4 in their first steps; the record's
-solver watch).
+1e-12 (ruling T4-b; a sparse direct solve was 75 times slower). A solve that stalls short of it is accepted as an
+inexact Newton step when its residual is at most `SIDE_ACCEPT_RTOL` = 1e-9 of its right-hand side, and counted (the
+step's `side_solves_at_floor`), and raises above that (the final review's I3, cited finding F33): the solve's residual
+does not enter the books, because the sideways exchange is antisymmetric, the base heat is the books' residual and
+Newton's `NEWTON_TOL` (1e-6 K) decides the sub-step's convergence. **(verified)**
+`test_a_sideways_solve_stalled_near_round_off_is_accepted_and_the_books_close` (every solve stalled at 1e-11: each
+column's books close to 1e-12 and the temperatures are the converged solves' within 2.3e-13 K, measured once) and
+`test_a_sideways_solve_stalled_above_the_floor_raises` (1e-8). The trial pass's derivative of the base heat is the one
+for every base temperature moving together (ruling T4-c), so the coupling between neighbours' bases is left to the
+interface's mismatch, which the damped repetition reduces to `INTERFACE_TOLERANCE` = 1e-3 per part (the box's largest
+accepted part 9.80e-4 and the shoulder's 1.46e-4 in their first steps; the record's solver watch).
 
 - **(verified)** `test_a_lateral_temperature_step_relaxes_at_the_analytic_rate` (design 21.8 item 7, first half): a
   temperature step along a row of columns relaxes as the error-function solution summed over the images of the row's
@@ -2375,7 +2382,8 @@ skin's own cell speeds through the shared `melt_profile`, the records are 36 col
 nine `DISPERSION_COLUMNS`. The slurry rows' release depth and growth rate are blanked by the skyscrapers' rule, written
 again in `spraying.py` with a comment naming their lines (ruling T10-a; moving it into the shared package needs a
 skyscrapers edit this plan forbade). Each architecture keeps its own property table, so the parity tests compare within
-1e-9 relative (ruling T10-c: the solid fraction differs by 3.4e-9 at 907.8 K and the droplet count by 5.3e-10).
+1e-9 relative, the solid fraction within 1e-8 (`PROFILE_SOLID_TOL`; ruling T10-c: the solid fraction differs by 3.4e-9
+at 907.8 K and the droplet count by 5.3e-10).
 **(verified)** design 21.8 item 11: `test_girin_cases_through_the_level_set_path[table|profile]` (Girin and Kopyt's
 three published cases pass on both paths; the pool is at rest, so the profile path resolves no column there and its rate
 and growth time equal the table path's exactly), `test_a_skin_flowing_to_its_base_takes_its_base_as_the_wall` (with no
@@ -2457,12 +2465,13 @@ bridge law). The cause (diagnosis D1, ruling T7-j): at 2 mm spacing markers on t
 outer strip (32.7 of its 100 mm²), their tops stay under T_feed (906.4 against 910 K), so the strip does not recede, and
 the heat they do not spend warms the volume under the face, whose centre then runs ahead. With markers 1 mm apart (499
 against 132) the rim and the trough went and the centre came within about 4 per cent of the plate, but the step stopped
-at 0.979 s on a sideways GMRES solve that did not converge (2.1e-11 against 1e-12), its parts split to 5.2 ms (D1,
-once). Under the composite law the face is also much less even than under the bridge law: its markers' recessions spread
-over 0.405 mm against 0.110 mm, its inner grid points receded 0.485 to 0.911 mm against 0.811 to 0.929 mm, and 0.146 g
-was removed in the second step against 0.165 g (record `box_dev`, `against_task7`). The third step was not run on this
-code; on Task 7d's code it had not ended after 115 minutes, and its stop points moved under a change of about 1e-12 of a
-column (ruling T7d-c), so they are not reproducible features of the method.
+at 0.979 s on a sideways GMRES solve that did not converge (2.1e-11 against 1e-12), its parts split to 5.2 ms (D1, once;
+a residual under `SIDE_ACCEPT_RTOL`, 1e-9, which the final review's I3 added after that run, so that solve would now be
+accepted; the run was not repeated). Under the composite law the face is also much less even than under the bridge law:
+its markers' recessions spread over 0.405 mm against 0.110 mm, its inner grid points receded 0.485 to 0.911 mm against
+0.811 to 0.929 mm, and 0.146 g was removed in the second step against 0.165 g (record `box_dev`, `against_task7`). The
+third step was not run on this code; on Task 7d's code it had not ended after 115 minutes, and its stop points moved
+under a change of about 1e-12 of a column (ruling T7d-c), so they are not reproducible features of the method.
 
 **(strict expected failure) The shoulder** (`test_shoulder_runoff_freezes_a_deposit`, `SHOULDER_FAILS`, design 21.8 item
 10): a segment of the 50 mm sphere about its 45 degree station at the skyscrapers' pushed plate's loads, 700 K, 6 MW/m²
@@ -2538,7 +2547,9 @@ These are not decided; each is stated with what was measured.
   round-off-sensitive stops arise at the same edges and are attributed to the same cause by inference, not by a
   measurement of their own. At 1 mm the box's face came within about 4 per cent of the plate but its step stopped on a
   sideways GMRES solve (2.1e-11 against 1e-12), and the shoulder's 1012-part third step on Task 7b's code stopped the
-  same way (6.05e-12), both where parts became very small at a sharp edge (inferred, ruling T7b-d); on the old design,
+  same way (6.05e-12), both where parts became very small at a sharp edge (inferred, ruling T7b-d); both residuals are
+  under `SIDE_ACCEPT_RTOL` (1e-9, added by the final review's I3), so neither solve would stop the run now, and neither
+  run has been repeated to see where it goes instead; on the old design,
   markers 0.4 mm apart took 1528 s for the box's first step against 31.4 s (runoff 85 per cent of it) and 25 parts
   against 1 (design 21.1), so 21.10's two prerequisites (runoff's cost growing no faster than the number of markers, the
   part limit untied from the spacing) come first.

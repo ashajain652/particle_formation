@@ -157,50 +157,49 @@ class StepBook:
     (rho_s (V(beta < 0) + the density carry) and its enthalpy) and the skins'; `pending_J` the heat still owed to the
     volume (deferred to the next part). The residuals: (mass now - mass then + out) / mass then, and (stored + pending
     now - stored + pending then - in + out) / (|stored then| + |in|). `parts` the parts the step took, `parts_next` the
-    next step's hint, and `parts_skyscrapers` the hint the skyscrapers' rule would have given (every accepted part's move
-    ratio, unlimited), `split_depth_max` the deepest split level a part reached, `parts_over` the parts accepted at the
-    deepest split while still over their move allowance. `snap_fallback` the markers the snap's last round
+    next step's hint, and `parts_skyscrapers` the hint the skyscrapers' rule would have given (every accepted part's
+    move ratio, unlimited), `split_depth_max` the deepest split level a part reached, `parts_over` the parts accepted at
+    the deepest split while still over their move allowance. `snap_fallback` the markers the snap's last round
     (`stepend.StepEnd._snap`) brought onto phi by Newton steps from farther than `markers.NEWTON_REACH`, and
-    `snap_slide_max` [m] the largest sideways slide (along the surface) of that round's Newton steps.
-    `pieces_used_up` the pieces of phi the step's moves and its remesh parted from the body holding no metal (no
-    marker on them and none of the volume's metal), lifted out (`stepend.StepEnd._lift_specks`).
-    `volume_repartitioned_share` the layer's volume passed between columns at the step end, summed over its
-    re-partitions, over the layer's volume after it (an area's share, `area_repartitioned_share`, until plan 03b Task 6
-    moved the re-partition to the division's volumes; renamed in Task 7, and a book pickled under the old name loads
-    under the new one, `__setstate__`), and
-    `stretch_min`, `stretch_max` the least and largest stretch of an old column in them (`repartition`, Task 9b;
-    `LevelSetSkinBody.last_settle` keeps each re-partition).
-    `group_area_ratio_min`, `group_area_ratio_max` the least and largest area of a marker's group of patches of beta over
-    its skin's base area, over the step's parts and the columns with a base (`patch_groups`), and
-    `group_area_ratio_trimmed_max` the largest with the group's largest patch left out (a group formed again stops at
-    the first patch that takes it past the base area, so only that one patch may carry it past the range; fix round
-    5); `groups_guarded_max` the most groups that guard (GROUP_AREA_RANGE) replaced in any part (Task 11's fix, item 1).
-    `pending_flux_max` the largest flux [W/m2] the pending heat put on a patch of beta in any part, `surface_flux_max`
-    the largest convective flux on a top. `mass_drawn`, `mass_handed` [kg] the fills' exchange at the bases, each way;
-    `momentum_to_volume` the momentum the held volume took over the step (the cells the fills returned;
-    `LevelSetSkinBody.momentum_to_volume` keeps the total since the start), `momentum_to_wall` what the skins' flow gave
-    the wall over the step (every skin's floor is no-slip) and `momentum_removed` what the feed removal took.
-    `island_nodes` the volume's nodes the moves made apart from the old metal, which took the skins' temperatures there
-    (stage 3 Task 11, item 3). The layer (plan 03b Task 5): `layer_factor_max` the largest departure from one of a
-    piece's closure factor over the step's divisions (`division.Division.factor`; design 21.8 item 5, DIVISION_TOL the
-    tests' bound), `fill_miss_max` the largest share of its volume by which a column's cells missed it after a fill,
-    `move_miss_max` the largest miss of a group's swept volume against what it was asked (`levelset.Moved.miss`; what a
-    group cannot sweep the per-piece correction makes up, the controller's ruling T2-e), `n_baseless` the columns with no
-    base at the step's end, `density_carry_m3` [m3] the carry left for the next step's first move (planning ruling 4:
-    the step end's own settle's and fill's, in the volume's mass, by which phi misses its metal's true volume until that
-    move; the controller's ruling T5-i) and `density_carry_share_max` the largest share of its column's volume a row's
-    carry is then. `move_corrections` every volume correction's miss before it, in the order made: one entry per move
-    of phi and for the remesh, {"kind": "part", "carry" (the step end's move by the
-    last part's carry) or "remesh"; "worst": the largest miss over its pieces as a share of the piece's target; "body":
-    the body's, the largest piece's}; their largest is `volume_correction_max`. The heat deferred to the volume over the
-    step, by source, each the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own
-    residual (the heat its law applied less its stored enthalpy's change), `residual_move_J` the moves' and fills' (the
-    volume's move against what the skins took and gave), `residual_remesh_J` the remesh's; the interface mismatch is
-    `interface_mismatch_J`. `side_solves_at_floor` the skins' sideways heat solves the step accepted at
-    `skin.SIDE_ACCEPT_RTOL` short of `skin.SIDE_RTOL`, its trial passes' included (`Skins.side_at_floor`; the final
-    review's I3), so that a run shows it happened. History columns: the markers and their counters (cumulative),
-    `interface_mismatch_J` (the last part's sum of |mismatch|), `volume_correction_max`, `n_pieces`, `frontal_area_m2`
-    (phi's area projected on the flight direction) and `summary` (SKIN_SUMMARY_COLUMNS' keys and the release angle's)."""
+    `snap_slide_max` [m] the largest sideways slide (along the surface) of that round's Newton steps. `pieces_used_up`
+    the pieces of phi the step's moves and its remesh parted from the body holding no metal (no marker on them and none
+    of the volume's metal), lifted out (`stepend.StepEnd._lift_specks`). `volume_repartitioned_share` the layer's volume
+    passed between columns at the step end, summed over its re-partitions, over the layer's volume after it (an area's
+    share, `area_repartitioned_share`, until plan 03b Task 6 moved the re-partition to the division's volumes; renamed
+    in Task 7, and a book pickled under the old name loads under the new one, `__setstate__`), and `stretch_min`,
+    `stretch_max` the least and largest stretch of an old column in them (`repartition`, Task 9b;
+    `LevelSetSkinBody.last_settle` keeps each re-partition). `group_area_ratio_min`, `group_area_ratio_max` the least
+    and largest area of a marker's group of patches of beta over its skin's base area, over the step's parts and the
+    columns with a base (`patch_groups`), and `group_area_ratio_trimmed_max` the largest with the group's largest patch
+    left out (a group formed again stops at the first patch that takes it past the base area, so only that one patch may
+    carry it past the range; fix round 5); `groups_guarded_max` the most groups that guard (GROUP_AREA_RANGE) replaced
+    in any part (Task 11's fix, item 1, cited finding F9). `pending_flux_max` the largest flux [W/m2] the pending heat
+    put on a patch of beta in any part, `surface_flux_max` the largest convective flux on a top. `mass_drawn`,
+    `mass_handed` [kg] the fills' exchange at the bases, each way; `momentum_to_volume` the momentum the held volume
+    took over the step (the cells the fills returned; `LevelSetSkinBody.momentum_to_volume` keeps the total since the
+    start), `momentum_to_wall` what the skins' flow gave the wall over the step (every skin's floor is no-slip) and
+    `momentum_removed` what the feed removal took. `island_nodes` the volume's nodes the moves made apart from the old
+    metal, which took the skins' temperatures there (stage 3 Task 11's fix, item 3, cited finding F11). The layer (plan
+    03b Task 5): `layer_factor_max` the largest departure from one of a piece's closure factor over the step's divisions
+    (`division.Division.factor`; design 21.8 item 5, DIVISION_TOL the tests' bound), `fill_miss_max` the largest share
+    of its volume by which a column's cells missed it after a fill, `move_miss_max` the largest miss of a group's swept
+    volume against what it was asked (`levelset.Moved.miss`; what a group cannot sweep the per-piece correction makes
+    up, the controller's ruling T2-e), `n_baseless` the columns with no base at the step's end, `density_carry_m3` [m3]
+    the carry left for the next step's first move (planning ruling 4: the step end's own settle's and fill's, in the
+    volume's mass, by which phi misses its metal's true volume until that move; the controller's ruling T5-i) and
+    `density_carry_share_max` the largest share of its column's volume a row's carry is then. `move_corrections` every
+    volume correction's miss before it, in the order made: one entry per move of phi and for the remesh, {"kind":
+    "part", "carry" (the step end's move by the last part's carry) or "remesh"; "worst": the largest miss over its
+    pieces as a share of the piece's target; "body": the body's, the largest piece's}; their largest is
+    `volume_correction_max`. The heat deferred to the volume over the step, by source, each the sum of the absolute
+    values of its bookings [J]: `residual_newton_J` the volume solve's own residual (the heat its law applied less its
+    stored enthalpy's change), `residual_move_J` the moves' and fills' (the volume's move against what the skins took
+    and gave), `residual_remesh_J` the remesh's; the interface mismatch is `interface_mismatch_J`.
+    `side_solves_at_floor` the skins' sideways heat solves the step accepted at `skin.SIDE_ACCEPT_RTOL` short of
+    `skin.SIDE_RTOL`, its trial passes' included (`Skins.side_at_floor`; the final review's I3, cited finding F33), so
+    that a run shows it happened. History columns: the markers and their counters (cumulative), `interface_mismatch_J`
+    (the last part's sum of |mismatch|), `volume_correction_max`, `n_pieces`, `frontal_area_m2` (phi's area projected on
+    the flight direction) and `summary` (SKIN_SUMMARY_COLUMNS' keys and the release angle's)."""
     time: float
     dt: float
     parts: int
@@ -351,7 +350,7 @@ def split_part(run, dt, dt_macro, depth, worst=None):
     nanoseconds -- must not set the next step's count). A split that would ask for more than PARTS_MAX parts undoes the
     part and raises RuntimeError instead, naming the column that sets its ratio, `worst()` (a description, called before
     the undo; the controller's ruling T7-g), the error marked `part_restored` as a failed part's is, so that `advance`
-    asks whether rigid metal is left (the final review's M6)."""
+    asks whether rigid metal is left (the final review's M6, cited finding F34)."""
     ratio, accept, undo = run(dt)
     if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:
         k = int(math.ceil(ratio))

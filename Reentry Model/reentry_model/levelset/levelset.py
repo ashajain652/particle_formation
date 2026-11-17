@@ -171,7 +171,7 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60,
     twice and the total fell short by up to 3e-5; on the full-size cube's second step, with a 2e-9 m3 piece beside the
     body, a short 1e-14 m3 a move made the step's mass residual -9.4e-9.) One piece is corrected as before. A piece
     that does not converge raises with its target, the volume it held, its last shift and bracket, the iterations, its
-    claimed nodes and cells, and the miss before the correction (stage 3 Task 11's review, M6).
+    claimed nodes and cells, and the miss before the correction (stage 3 Task 11's review, M6, cited finding F7).
 
     Each piece's shift is found by Newton steps on the contour's area, kept within the bracket of shifts that held too
     little and too much: bisection of the bracket where a Newton step leaves it, and Brent's method on it where a Newton
@@ -274,8 +274,8 @@ def patches_area(mesh, phi, cells):
 MOVE_ROUNDS = 8            # Newton iterations at most in each round of a move (`move_by_volumes`; planning ruling 2)
 MOVE_RTOL = 1e-6           # each group's swept volume within this share of its change (ruling 2)
 MOVE_BAND_SHARE = 0.5      # a move whose first estimate is longer than this share of the reset's band is taken in
-                           # rounds no longer (ruling 2, as stepend._move_beta takes its moves; this module may not
-                           # import stepend, so it keeps its own number)
+                           # rounds no longer (ruling 2; the base moves of plan 03's stepend took theirs so, and plan
+                           # 03b's `stepend.StepEnd._move_phi` moves phi through this function)
 MOVE_FLOOR = 1e-3          # of the largest change of a move: the least denominator of a group's miss, so that a group
                            # asked for nothing is judged against the move's scale
 MOVE_REACH = 4.0           # times the longest first estimate (and within the band): the furthest a group's offset goes

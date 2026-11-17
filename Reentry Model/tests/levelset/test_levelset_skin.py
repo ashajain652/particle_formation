@@ -356,9 +356,9 @@ def test_linear_couette():
 
 def test_a_narrowing_column_carries_the_shear_force_through_every_interface():
     """On a column whose measured cross-section narrows with depth (beside a convex edge; plan 03b Task 5 retired the
-    curved law this test once used, and Task 3's review asked for momentum under a profile) at steady state the force
-    tau A0 passes through each interface, A(z_i) D_i (u_i - u_(i+1)), and the stress rises as A0 / A(z_i): 0.5 mm of
-    liquid over 0.1 mm of rigid metal, the cross-section falling by 60 % to H."""
+    curved law this test once used, and Task 3's review asked for momentum under a profile (cited finding F19)) at
+    steady state the force tau A0 passes through each interface, A(z_i) D_i (u_i - u_(i+1)), and the stress rises as A0
+    / A(z_i): 0.5 mm of liquid over 0.1 mm of rigid metal, the cross-section falling by 60 % to H."""
     mat = liquid_mat()
     area = AREA * (1.0 - 0.6 * LEVELS / DEPTH)
     sk = profiled(mat, area[None, :])
@@ -1232,11 +1232,11 @@ def _stalling_row(mat):
 
 
 def test_a_sideways_solve_stalled_near_round_off_is_accepted_and_the_books_close(monkeypatch):
-    """The final review's I3: a sideways heat solve that stalls short of SIDE_RTOL is accepted as an inexact Newton step
-    when its residual is at most SIDE_ACCEPT_RTOL of its right-hand side. Eight columns in a row (`_stalling_row`, the
-    conductivity rising with temperature), heated at the top, radiating and held 5 K under their temperatures at the
-    base, over a trial pass of two sub-steps and a real sub-step, with every sideways solve stalled at
-    SIDE_STALLED_ACCEPTED (`StalledGMRES`): every sub-step runs, the skins count every stalled solve
+    """The final review's I3 (cited finding F33): a sideways heat solve that stalls short of SIDE_RTOL is accepted as an
+    inexact Newton step when its residual is at most SIDE_ACCEPT_RTOL of its right-hand side. Eight columns in a row
+    (`_stalling_row`, the conductivity rising with temperature), heated at the top, radiating and held 5 K under their
+    temperatures at the base, over a trial pass of two sub-steps and a real sub-step, with every sideways solve stalled
+    at SIDE_STALLED_ACCEPTED (`StalledGMRES`): every sub-step runs, the skins count every stalled solve
     (`Skins.side_at_floor`), the heat gained sideways sums to zero to 1e-12 of its magnitude and each column's books
     close to 1e-12 (the solve's residual never enters them), and the cells' temperatures are the converged solves'
     within Newton's own tolerance (NEWTON_TOL)."""
@@ -1273,9 +1273,9 @@ def test_a_sideways_solve_stalled_near_round_off_is_accepted_and_the_books_close
 
 
 def test_a_sideways_solve_stalled_above_the_floor_raises(monkeypatch):
-    """The final review's I3: a sideways heat solve that stalls at SIDE_STALLED_REFUSED of its right-hand side, above
-    SIDE_ACCEPT_RTOL, still raises RuntimeError, naming the residual it was left at, and nothing is counted as
-    accepted."""
+    """The final review's I3 (cited finding F33): a sideways heat solve that stalls at SIDE_STALLED_REFUSED of its
+    right-hand side, above SIDE_ACCEPT_RTOL, still raises RuntimeError, naming the residual it was left at, and nothing
+    is counted as accepted."""
     import re
     from reentry_model.levelset import skin as skin_mod
     sk, side = _stalling_row(VariableKMaterial())

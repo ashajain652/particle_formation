@@ -3,11 +3,11 @@ Task 1, planning ruling 1).
 
 phi, the gas surface, is a signed distance (negative in the metal) reaching at least the skin depth H into the metal;
 the skin base beta is its level surface phi = -H. A point of the layer between them belongs to the marker that owns the
-point of phi nearest it (C1's `markers.ownership`, with the same-side rule: never a marker whose normal opposes the
-surface's there), and its depth is its distance from phi. Column i is the part marker i owns; its cross-section A_i(z)
-is that part's volume per unit depth at depth z (its area, where phi is a distance in every cell): A_i(0) at phi and
-A_i(H) its base. One division serves everything that follows it: the skins' cross-sections and bases, and the boundaries
-across which runoff and sideways heat pass.
+point of phi nearest it (C1's `markers.ownership`, cited finding F2, with the same-side rule: never a marker whose
+normal opposes the surface's there), and its depth is its distance from phi. Column i is the part marker i owns; its
+cross-section A_i(z) is that part's volume per unit depth at depth z (its area, where phi is a distance in every cell):
+A_i(0) at phi and A_i(H) its base. One division serves everything that follows it: the skins' cross-sections and bases,
+and the boundaries across which runoff and sideways heat pass.
 
 How it is integrated (ruling 1). The layer is cut by `levels` + 1 uniform level surfaces phi = -z_k from 0 to H
 (`cutcell.patches` of phi + z_k). Each level surface's triangles are carried to their feet on phi, each corner p to
@@ -32,31 +32,33 @@ alone (`ownership` is called piece by piece). A marker's piece is the piece of t
 centroid is nearest it. Every column then lies in one piece, and each piece's factor measures that piece's closure
 alone. (With the same-side rule alone, faces of two cubes 0.7 mm apart that lie side by side across the gap are
 parallel, and markers of each owned 0.39 % of the other's surface, the factors moving about 2e-3 apart; the review's
-measurement.)
+measurement, cited finding F17.)
 
 Cells too thin for the levels (Task 1's fix round 1). Where both faces at an edge stand equally off their planes of
 nodes, the P1 distance is constant over whole cells beside the edge, at the depths where the two faces' planes of nodes
 lie equally deep: no level cuts such a cell, and nearly flat ones are cut by one or two levels with a weight of
 1 / |grad phi| far above one. On a 6 mm cube so placed, 474 cells constant to 0.1 um held 2.0 % of the layer and the
-levels alone left the columns 2.1 % short (the review's measurement, 96 levels). So a cell whose nodes' depths spread
+levels alone left the columns 2.1 % short (the review's measurement, 96 levels; cited finding F16). So a cell whose
+nodes' depths spread
 less than THIN_SHARE level spacings, and whose |grad phi| is not one (to UNIT_SLOPE: a cell of a flat face never is),
 leaves the levels' sums: its exact volume in the layer goes whole to the column owning its centroid's foot (centroid -
 phi g, by the nodes' means, under the same-side rule judged with g itself), shared between the two levels about its
 mean depth with weights whose trapezoid integral is that volume.
 
-Why each triangle's area is divided by |grad phi| (plan 03b Task 1, the controller's ruling T1-a; ruling 1 took the
-area itself). The volume of {phi < -z} on the P1 mesh falls with z at the rate sum(area / |grad phi|) over the level
+Why each triangle's area is divided by |grad phi| (plan 03b Task 1, the controller's ruling T1-a; ruling 1 took the area
+itself). The volume of {phi < -z} on the P1 mesh falls with z at the rate sum(area / |grad phi|) over the level
 surface's triangles (the coarea formula), so that is the cross-section whose integral over z is the layer's volume. phi
 is a distance, |grad phi| = 1, in every cell where it is linear, which is every cell of a flat face and nearly every
 cell of a smooth one. But the P1 |grad phi| is not 1 in the cells along a sharp edge: there the interpolant of the
-distance (the larger of the two faces' distances) has gradients from 0 to sqrt(2) long, and those cells hold more
-volume than their level surfaces' area shows. With the level areas themselves, the columns of edged bodies fell short
-of their layers by 0.7 to 5.2 % (two 6 mm cubes and the stage 3 box, on cells of 0.175 to 0.7 mm); with the areas over
-|grad phi|, the shortfall is gone, and what remains is the levels' sampling of those edge cells (Task 1's report),
-which the thin cells' exact volumes (below) take most of. That sets DIVISION_LEVELS (ruling T1-b; measured once each,
-on the stage 3 box with markers seeded 2 mm apart, after the fix round): with 24, 48 and 96 levels the factor's
-departure from one was -3.7e-4, +3.3e-3 and +5.6e-4 at 0.7 mm cells (divide 1.6, 3.1 and 6.1 s) and -3.6e-4, -5.0e-4
-and +2.6e-4 at 0.175 mm (18, 29 and 53 s). It is not monotone in the levels, and it is not a bound for other bodies.
+distance (the larger of the two faces' distances) has gradients from 0 to sqrt(2) long, and those cells hold more volume
+than their level surfaces' area shows. With the level areas themselves, the columns of edged bodies fell short of their
+layers by 0.7 to 5.2 % (two 6 mm cubes and the stage 3 box, on cells of 0.175 to 0.7 mm); with the areas over |grad
+phi|, the shortfall is gone, and what remains is the levels' sampling of those edge cells (Task 1's report, cited
+finding F15), which the thin cells' exact volumes (below) take most of. That sets DIVISION_LEVELS (ruling T1-b; measured
+once each, on the stage 3 box with markers seeded 2 mm apart, after the fix round): with 24, 48 and 96 levels the
+factor's departure from one was -3.7e-4, +3.3e-3 and +5.6e-4 at 0.7 mm cells (divide 1.6, 3.1 and 6.1 s) and -3.6e-4,
+-5.0e-4 and +2.6e-4 at 0.175 mm (18, 29 and 53 s). It is not monotone in the levels, and it is not a bound for other
+bodies.
 
 Why the recovered gradient, not each cell's own. Carried by its own cell's gradient, each level triangle would move
 rigidly, and the feet of neighbouring triangles would part where the gradient turns. Across a convex edge the level
@@ -79,7 +81,8 @@ both are the metal's thickness through p; at an edge sharper than 60 degrees, on
 both are twice p's depth, at most 2H in the layer. It reports metal thinner than 2H as the P1 mesh resolves it, to
 within about one cell where the cells are coarser than beta's interior.
 
-Why two measures, at the node pass's edges alone (Task 7c's diagnosis, each case measured once on its stopped body).
+Why two measures, at the node pass's edges alone (Task 7c's diagnosis, cited finding F27, each case measured once on
+its stopped body).
 Before Task 7c every shared boundary whose markers' normals oppose was marked, the levels' too, and the stop fired where
 no metal is thin. On the stage 3 box's second step all four pairs came from the levels: slivers of metal 0.15 to 0.3 mm
 thick stood off the receded heated face's rim with no marker of their own, their undersides facing back into the body;
@@ -146,8 +149,8 @@ class Division:
 
     `area` is each column's volume per unit depth at each level (the coarea measure, module docstring), the
     cross-section whose integral is the column's volume: what the skins fill. On a flat face it is the column's area;
-    beside an edge it differs from the area of phi the marker owns (C1's `markers.ownership`), which the gas loads and
-    the heat keep (plan 03b Task 6; ruling T1-e)."""
+    beside an edge it differs from the area of phi the marker owns (C1's `markers.ownership`, cited finding F2), which
+    the gas loads and the heat keep (plan 03b Task 6; ruling T1-e)."""
     levels: np.ndarray     # (B + 1,) the levels' depths below phi [m], 0 to H
     area: np.ndarray       # (n, B + 1) each column's volume per unit depth at each level [m2], its piece's factor applied
     volume: np.ndarray     # (n,) each column's volume [m3], the trapezoid integral of its areas

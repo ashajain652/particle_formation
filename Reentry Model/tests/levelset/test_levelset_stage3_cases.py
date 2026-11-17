@@ -57,7 +57,7 @@ def test_the_cases_use_only_the_shared_physics_and_the_level_set():
 
 
 class _Stalled:
-    """A stand-in body for the case script's step loop whose step raises (Task 11's review, M6)."""
+    """A stand-in body for the case script's step loop whose step raises (Task 11's review, M6, cited finding F7)."""
 
     def __init__(self):
         self.time = 1.5
@@ -72,9 +72,9 @@ def _stall(body):
 
 
 def test_a_failing_step_keeps_the_body_it_started_from(monkeypatch, tmp_path):
-    """Task 11's review, M6: with STAGE3_STATE_DIR set, the case script's step loop pickles the body before each step and,
-    when the step raises, keeps that state and names it in the failure, so that the failure can be diagnosed from the
-    body it started from (the q6p box's volume correction failure could not be)."""
+    """Task 11's review, M6 (cited finding F7): with STAGE3_STATE_DIR set, the case script's step loop pickles the body
+    before each step and, when the step raises, keeps that state and names it in the failure, so that the failure can be
+    diagnosed from the body it started from (the q6p box's volume correction failure could not be)."""
     c = _cases()
     monkeypatch.setenv("STAGE3_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(c, "OUT", str(tmp_path))
@@ -86,10 +86,10 @@ def test_a_failing_step_keeps_the_body_it_started_from(monkeypatch, tmp_path):
 
 
 def test_a_stopped_step_s_failure_record_carries_the_case_s_measures(monkeypatch, tmp_path):
-    """Plan 03b Task 7b (Task 7's carried minor M2): a step that stops leaves in its failure record the case's own
-    measures of the body as the stop left it (the box's face grid and edge radii), where the state allows, so that a
-    strict expected failure's reason cites recorded numbers only; a measure the state does not allow is recorded as the
-    error it raised."""
+    """Plan 03b Task 7b (Task 7's carried minor M2, cited finding F24): a step that stops leaves in its failure record
+    the case's own measures of the body as the stop left it (the box's face grid and edge radii), where the state
+    allows, so that a strict expected failure's reason cites recorded numbers only; a measure the state does not allow
+    is recorded as the error it raised."""
     c = _cases()
     monkeypatch.setattr(c, "OUT", str(tmp_path))
     monkeypatch.delenv("STAGE3_STATE_DIR", raising=False)
@@ -164,10 +164,10 @@ def test_the_shoulder_s_flat_faces_lie_off_its_meshes_planes_of_nodes():
 
 
 def test_a_case_s_summary_is_stamped_with_the_code_it_ran_on(monkeypatch, tmp_path):
-    """Task 11's review, M5: each case's summary carries the commit it ran on and whether the level-set package or the
-    case script differed from it, so that the record cannot mix runs from different code unseen; the stamp is taken when
-    the script starts, not when the summary is written (a box run outlives commits made meanwhile); `record` leaves out
-    a summary without a stamp."""
+    """Task 11's review, M5 (cited finding F6): each case's summary carries the commit it ran on and whether the
+    level-set package or the case script differed from it, so that the record cannot mix runs from different code
+    unseen; the stamp is taken when the script starts, not when the summary is written (a box run outlives commits made
+    meanwhile); `record` leaves out a summary without a stamp."""
     import json
     import re
     import subprocess
@@ -187,11 +187,12 @@ def test_a_case_s_summary_is_stamped_with_the_code_it_ran_on(monkeypatch, tmp_pa
 
 
 def test_record_merges_the_outputs_into_the_record_it_finds(monkeypatch, tmp_path, capsys):
-    """The final review's M5 (Task 11's review M1): `record` merges the output files into the record instead of rebuilding
-    it from them. On a temporary record and temporary outputs: an entry an output file holds is replaced by it, keeping
-    the blocks added to it by hand (`RECORD_KEPT`: `against_task7` and `record_note` here) that the output does not hold,
-    which `record` names as carried over; an entry no output holds (a cost, an older case) is kept as it was, every key;
-    a new output is added; an output without a code stamp is left out and the record's entry of that name kept."""
+    """The final review's M5 (plan 03b Task 11's review M1; cited findings F35 and F30): `record` merges the output
+    files into the record instead of rebuilding it from them. On a temporary record and temporary outputs: an entry an
+    output file holds is replaced by it, keeping the blocks added to it by hand (`RECORD_KEPT`: `against_task7` and
+    `record_note` here) that the output does not hold, which `record` names as carried over; an entry no output holds (a
+    cost, an older case) is kept as it was, every key; a new output is added; an output without a code stamp is left out
+    and the record's entry of that name kept."""
     import json
     c = _cases()
     monkeypatch.setattr(c, "OUT", str(tmp_path))
@@ -224,8 +225,9 @@ def test_record_merges_the_outputs_into_the_record_it_finds(monkeypatch, tmp_pat
 
 
 def test_the_offset_is_refused_for_a_case_that_does_not_take_it(monkeypatch):
-    """The final review's M5 (Task 11's review M5): `--offset-mm` raises a plate's face; given with the box, the shoulder,
-    a cost or `record` it is refused (an argparse error, exit 2) before anything runs, where it was silently ignored."""
+    """The final review's M5 (plan 03b Task 11's review M5; cited findings F35 and F31): `--offset-mm` raises a plate's
+    face; given with the box, the shoulder, a cost or `record` it is refused (an argparse error, exit 2) before anything
+    runs, where it was silently ignored."""
     c = _cases()
     for name in ("box", "shoulder", "cost_sphere", "record"):
         monkeypatch.setattr(c, name, lambda *a, **k: pytest.fail("the case ran"))
@@ -236,11 +238,11 @@ def test_the_offset_is_refused_for_a_case_that_does_not_take_it(monkeypatch):
 
 
 def test_the_code_stamp_s_difference_check_covers_the_data_the_cases_read(monkeypatch):
-    """Task 11's re-review, minor item 4: a case's stamp says whether the code it ran on differed from its commit; the
-    check covered only `reentry_model` and `analysis/levelset`, so a changed material table or reference value (the cases
-    read `data/materials`, `data/reference_values`, and through the shared package the US76 table and the drag tables in
-    `data/`) would not have marked the run. The stamp's `git status` now covers `data` too, and a change there alone
-    marks the run as differing."""
+    """Task 11's re-review, minor item 4 (cited finding F14): a case's stamp says whether the code it ran on differed
+    from its commit; the check covered only `reentry_model` and `analysis/levelset`, so a changed material table or
+    reference value (the cases read `data/materials`, `data/reference_values`, and through the shared package the US76
+    table and the drag tables in `data/`) would not have marked the run. The stamp's `git status` now covers `data` too,
+    and a change there alone marks the run as differing."""
     import subprocess
     c = _cases()
     calls = []
@@ -259,12 +261,13 @@ def test_the_code_stamp_s_difference_check_covers_the_data_the_cases_read(monkey
 
 
 def test_the_shoulder_s_deposit_is_judged_by_its_rigid_share_and_its_far_share():
-    """The controller's ruling on the review's I2: the shoulder is judged on the metal deposited past the heat's end at
-    2.0 s, at least DEPOSIT_RIGID_SHARE of it rigid and at most the skyscrapers' 3.0 % of it past DEPOSIT_FAR (5 mm);
-    the instantaneous reach of non-rigid metal is reported, not judged. Three markers past the heat's end on the
-    sphere, 1, 3 and 6 mm along the meridian, each with 0.1 mm of deposit on 4 mm2; the first holds 2 mg above T_rigid
-    (more than its deposit's 0.97 mg, so its whole deposit counts as non-rigid), the second 0.5 mg: the rigid share is
-    1 - (0.97 + 0.5) / 2.9 of the deposit, a third of it lies past 5 mm, and the reach of non-rigid metal is 3 mm."""
+    """The controller's ruling on the review's I2 (cited finding F3): the shoulder is judged on the metal deposited past
+    the heat's end at 2.0 s, at least DEPOSIT_RIGID_SHARE of it rigid and at most the skyscrapers' 3.0 % of it past
+    DEPOSIT_FAR (5 mm); the instantaneous reach of non-rigid metal is reported, not judged. Three markers past the
+    heat's end on the sphere, 1, 3 and 6 mm along the meridian, each with 0.1 mm of deposit on 4 mm2; the first holds 2
+    mg above T_rigid (more than its deposit's 0.97 mg, so its whole deposit counts as non-rigid), the second 0.5 mg: the
+    rigid share is 1 - (0.97 + 0.5) / 2.9 of the deposit, a third of it lies past 5 mm, and the reach of non-rigid metal
+    is 3 mm."""
     c = _cases()
     rho, R = 2420.0, c.SHOULDER_R
     s = np.array([1e-3, 3e-3, 6e-3])
@@ -289,7 +292,7 @@ def test_the_shoulder_s_deposit_is_judged_by_its_rigid_share_and_its_far_share()
 
 def test_the_solver_watch_keeps_each_step_s_largest_interface_mismatch_on_the_tolerance_s_measure(monkeypatch,
                                                                                                      tmp_path):
-    """Plan 03b Task 7's fix round 1 (its review's I1, the controller's carry 5): the solver watch's
+    """Plan 03b Task 7's fix round 1 (its review's I1, the controller's carry 5; cited finding F23): the solver watch's
     `interface_mismatch_max` is, over a step's accepted parts, the largest of the measure the interface's repetition
     ends on against INTERFACE_TOLERANCE, sum |mismatch| over sum (|E_top| + |E_base|) of the part's real pass
     (`skinbody.LevelSetSkinBody._part_once`), not the last part's mismatch over the step's heat in; and
@@ -320,8 +323,8 @@ def test_the_solver_watch_keeps_each_step_s_largest_interface_mismatch_on_the_to
 
 def _books(out):
     """Every step's books (mass to MASS_TOL, enthalpy to ENERGY_TOL) and its division's closure (planning ruling 1: a
-    piece's closure factor more than DIVISION_TOL from one fails the step's check, raised by the tests; plan 03b Task 7's
-    fix round 1, its review's M5)."""
+    piece's closure factor more than DIVISION_TOL from one fails the step's check, raised by the tests; plan 03b Task
+    7's fix round 1, its review's M5; cited finding F25)."""
     from reentry_model.levelset.division import DIVISION_TOL
     c = _cases()
     for row in out["steps"]:
@@ -337,15 +340,15 @@ def test_cold_plate_at_half_second_steps(preset):
     shared AA7075 Scheil alloy, no radiation, swell off, flow off, the liquid leaving at T_feed within the skins'
     sub-steps) at 0.5 s macro steps: the face's recession within 5 % of the one-dimensional references with the removal
     at T_feed (0.789, 2.712, 5.219 mm) and at the liquidus (0.837, 2.772, 5.298 mm) at 1.0, 1.5 and 2.0 s, and every
-    step's mass to 1e-12 and enthalpy to 1e-8. Measured 2026-11-15 on the one skin depth with phi evolved (plan 03b
-    Task 7, 721efce; the same to every digit on Task 7b's bfb6344): 0.800, 2.719 and 5.202 mm (dev; production 0.810,
-    2.724, 5.205), 1.4 and 0.25 % ahead of the first and 0.33 % behind it (production 2.7, 0.44 % ahead, 0.27 %
-    behind), and 4.4, 1.9 and 1.8 % behind the second
-    (production 3.2, 1.7, 1.8 %); books at most 5.4e-15 (mass) and 1.5e-14 (enthalpy). (2026-11-12, the old design:
-    0.820, 2.762, 5.258 mm.) Re-measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology
-    and main's merged physics: every number as on Task 7d's code (73b5a9a) to every digit, the books at most 1.7e-15
-    (mass) and 1.4e-14 (enthalpy). The plate's face 0.27 mm higher on the same mesh (8.27 mm of metal; the controller's
-    ruling T7-m) is recorded, not tested here: plan 03b Task 11's report."""
+    step's mass to 1e-12 and enthalpy to 1e-8. Measured 2026-11-15 on the one skin depth with phi evolved (plan 03b Task
+    7, 721efce; the same to every digit on Task 7b's bfb6344): 0.800, 2.719 and 5.202 mm (dev; production 0.810, 2.724,
+    5.205), 1.4 and 0.25 % ahead of the first and 0.33 % behind it (production 2.7, 0.44 % ahead, 0.27 % behind), and
+    4.4, 1.9 and 1.8 % behind the second (production 3.2, 1.7, 1.8 %); books at most 5.4e-15 (mass) and 1.5e-14
+    (enthalpy). (2026-11-12, the old design: 0.820, 2.762, 5.258 mm.) Re-measured 2026-11-15 on plan 03b Task 11's code
+    (e57945f), under the composite rheology and main's merged physics: every number as on Task 7d's code (73b5a9a) to
+    every digit, the books at most 1.7e-15 (mass) and 1.4e-14 (enthalpy). The plate's face 0.27 mm higher on the same
+    mesh (8.27 mm of metal; the controller's ruling T7-m) is recorded, not tested here: plan 03b Task 11's report (cited
+    finding F29)."""
     c = _cases()
     out = c.plate("cold", preset)
     assert out["failure"] is None and out["markers"] == 1
@@ -364,14 +367,14 @@ def test_hot_plate_at_half_second_steps(preset):
     of data/reference_values/plate_hot_1d.json at 1.5 and 2.0 s (1.0 s reported: the melting onset), the non-rigid depth
     (phi to psi on the axis) within 10 % at 1.0, 1.5 and 2.0 s, and the books (plan 03b Task 7's judgment). Its
     non-rigid depth passes the skin depth H = 1.2 mm from 1.0 s, so its melting front crosses the skin base (the risk of
-    design 21.12); the volume's top beneath the skin is then above T_rigid by construction, so the skyscrapers' criterion
-    on it (HOT_BASE_TOL_K, judged here from Task 11's fix, item 4, under design 20.6's full-depth skins, which design
-    21.13 retires) is reported, not judged. Measured 2026-11-15 on 721efce, the same to every digit on Task 7b's
-    bfb6344 (dev; production within 0.7 % of it): recession 0.760, 1.795, 2.894 mm against 0.789, 1.817, 2.917 (3.7 %
-    behind, reported; 1.2 and 0.8 % behind); non-rigid depth 1.489, 1.583, 1.683 mm against 1.487, 1.570, 1.674 (0.1,
-    0.8 and 0.5 % thicker); the base 1.75, 2.13 and 2.59 K above T_rigid (reported); books at most 1.6e-15 (mass) and
-    1.3e-14 (enthalpy). Re-measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology and
-    main's merged physics: every number as on Task 7d's code (73b5a9a) to every digit."""
+    design 21.12); the volume's top beneath the skin is then above T_rigid by construction, so the skyscrapers'
+    criterion on it (HOT_BASE_TOL_K, judged here from Task 11's fix, item 4 (cited finding F12), under design 20.6's
+    full-depth skins, which design 21.13 retires) is reported, not judged. Measured 2026-11-15 on 721efce, the same to
+    every digit on Task 7b's bfb6344 (dev; production within 0.7 % of it): recession 0.760, 1.795, 2.894 mm against
+    0.789, 1.817, 2.917 (3.7 % behind, reported; 1.2 and 0.8 % behind); non-rigid depth 1.489, 1.583, 1.683 mm against
+    1.487, 1.570, 1.674 (0.1, 0.8 and 0.5 % thicker); the base 1.75, 2.13 and 2.59 K above T_rigid (reported); books at
+    most 1.6e-15 (mass) and 1.3e-14 (enthalpy). Re-measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the
+    composite rheology and main's merged physics: every number as on Task 7d's code (73b5a9a) to every digit."""
     c = _cases()
     out = c.plate("hot", preset)
     assert out["failure"] is None and out["markers"] == 1
@@ -400,13 +403,13 @@ BOX_FAILS_AT = 1.0     # s: where the box fails as BOX_FAILS records (its face c
 
 def judge_box(c, out):
     """The q6p box's judgment (`test_q6p_box`) on the case's summary `out`, pinned to the failure BOX_FAILS records (the
-    final review's I1): only the face centre's recession at BOX_FAILS_AT outside RECESSION_TOL, with the run there, its
-    books closed and no marker trapped by then, raises the AssertionError that the strict mark expects. The case runs
-    every step before it is judged, so a run that goes on past BOX_FAILS_AT and stops later is still decided there.
-    Anything else that falls short raises NotTheRecordedFailure and fails the test: a run that did not reach
-    BOX_FAILS_AT (a crash or a stop in its first two steps), books failing or a marker trapped by then, and, once the
-    recession at BOX_FAILS_AT is within the tolerance (the recorded failure gone), any later stop or miss. A run that
-    passes everything passes this judgment, and the strict mark then fails the test as an unexpected pass."""
+    final review's I1, cited finding F32): only the face centre's recession at BOX_FAILS_AT outside RECESSION_TOL, with
+    the run there, its books closed and no marker trapped by then, raises the AssertionError that the strict mark
+    expects. The case runs every step before it is judged, so a run that goes on past BOX_FAILS_AT and stops later is
+    still decided there. Anything else that falls short raises NotTheRecordedFailure and fails the test: a run that did
+    not reach BOX_FAILS_AT (a crash or a stop in its first two steps), books failing or a marker trapped by then, and,
+    once the recession at BOX_FAILS_AT is within the tolerance (the recorded failure gone), any later stop or miss. A
+    run that passes everything passes this judgment, and the strict mark then fails the test as an unexpected pass."""
     at = {round(r["t"], 6): r for r in out["steps"]}
     if BOX_FAILS_AT not in at:
         raise NotTheRecordedFailure("the box did not reach {} s, where it fails as recorded: {}".format(
@@ -458,12 +461,12 @@ SHOULDER_STOPS_IN = 2  # the macro step at whose end the shoulder stops as SHOUL
 
 def judge_shoulder(c, out):
     """The shoulder's judgment (`test_shoulder_runoff_freezes_a_deposit`) on the case's summary `out`, pinned to the
-    failure SHOULDER_FAILS records (the final review's I1): only a stop on the thin-metal check (`stepend.THIN_METAL`) in
-    step SHOULDER_STOPS_IN, the steps before it closing their books, raises the AssertionError that the strict mark
-    expects. Anything else that falls short raises NotTheRecordedFailure and fails the test: a crash or another stop, a
-    thin-metal stop in another step, books failing before the stop, and, for a run that reaches 2.0 s (the recorded
-    stop gone), any miss of the judged deposit. A run that passes everything passes this judgment, and the strict mark
-    then fails the test as an unexpected pass."""
+    failure SHOULDER_FAILS records (the final review's I1, cited finding F32): only a stop on the thin-metal check
+    (`stepend.THIN_METAL`) in step SHOULDER_STOPS_IN, the steps before it closing their books, raises the AssertionError
+    that the strict mark expects. Anything else that falls short raises NotTheRecordedFailure and fails the test: a
+    crash or another stop, a thin-metal stop in another step, books failing before the stop, and, for a run that reaches
+    2.0 s (the recorded stop gone), any miss of the judged deposit. A run that passes everything passes this judgment,
+    and the strict mark then fails the test as an unexpected pass."""
     from reentry_model.levelset.stepend import THIN_METAL
     f = out["failure"]
     if f is not None:
@@ -477,7 +480,7 @@ def judge_shoulder(c, out):
         _books(out)
         last = out["steps"][-1]["deposit"]
         assert out["deposit_formed"] and last["mass_kg"] > 0.0
-        assert last["rigid_share"] >= c.DEPOSIT_RIGID_SHARE            # the controller's ruling on the review's I2
+        assert last["rigid_share"] >= c.DEPOSIT_RIGID_SHARE            # the controller's ruling on the review's I2 (F3)
         assert last["share_past_5mm"] <= c.SKYSCRAPERS_DEPOSIT_FAR_SHARE
         assert out["passes"]
 
@@ -490,11 +493,11 @@ def test_shoulder_runoff_freezes_a_deposit():
     flight direction), 700 K, 6 MW/m2 by projection on the windward cap upstream of the station and nothing behind, the
     liquid kept, dev cells: the books close every step, a deposit forms past the heat's end, at least
     DEPOSIT_RIGID_SHARE of it is rigid at 2.0 s and at most the pushed plate's 3.0 % of it lies past DEPOSIT_FAR (the
-    controller's ruling on the review's I2; the farthest reach of non-rigid metal is reported, not judged). The
-    deposit's centroid past the heat's end is recorded against the skyscrapers' pushed plate's 1.05 mm. It fails
-    (SHOULDER_FAILS): measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology, it stops at
-    the end of its second step, on metal thinner than twice the skin depth at the heated cap's edge (on Task 7d's code,
-    73b5a9a, under the bridge law, it stopped in its third). The strict mark is pinned to that stop
+    controller's ruling on the review's I2, cited finding F3; the farthest reach of non-rigid metal is reported, not
+    judged). The deposit's centroid past the heat's end is recorded against the skyscrapers' pushed plate's 1.05 mm. It
+    fails (SHOULDER_FAILS): measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology, it
+    stops at the end of its second step, on metal thinner than twice the skin depth at the heated cap's edge (on Task
+    7d's code, 73b5a9a, under the bridge law, it stopped in its third). The strict mark is pinned to that stop
     (`judge_shoulder`)."""
     c = _cases()
     judge_shoulder(c, c.shoulder("dev"))

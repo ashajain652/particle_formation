@@ -473,19 +473,18 @@ class StepEnd:
 
     def _fill(self, tally):
         """Every column filled to its volume (module docstring; planning ruling 3, step 7): the columns with no base
-        from their neighbours, then those with one at their bases, in at most FILL_ROUNDS rounds; each row's carry
-        takes its cells' volume change less the mass the volume gave it over rho_s. A column with a base draws at its
-        base temperature, its group's area mean of beta's patch temperatures (`_interface`, once; the controller's ruling
+        from their neighbours, then those with one at their bases, in at most FILL_ROUNDS rounds; each row's carry takes
+        its cells' volume change less the mass the volume gave it over rho_s. A column with a base draws at its base
+        temperature, its group's area mean of beta's patch temperatures (`_interface`, once; the controller's ruling
         T5-k); RuntimeError if a short one has no group, and RuntimeError naming the worst (its marker, position and
         piece, its cells' volume and its column's) where a column is still beyond FILL_RTOL of its volume after the
         rounds (the controller's ruling T7-g: a column with no base and no neighbour was skipped silently) and its miss
         is also beyond FILL_RTOL of the whole layer's volume (the columns' summed; the controller's ruling T7b-c: the
-        off-grid shoulder stopped after 127 parts on a column of 3.4e-13 m3 missed by 5.2e-25 m3, 1.5e-12 of it and some
-        1e6 times below that floor, negligible to the books). Counts in
-        `tally`: `drawn`, `handed` [kg] the base exchange each way, `to_volume` [kg m/s] the returned cells' momentum (the
-        held volume takes it), `fill_miss` the largest miss left as a share of its column's volume, `baseless` the
-        columns with no base. Returns the enthalpy [J] the skins took from the volume (negative where they returned
-        more), for the caller to book as heat owed."""
+        off-grid shoulder stopped after 127 parts on a column of 3.4e-13 m3 missed by 5.2e-25 m3, 1.5e-12 of it and
+        about 6e5 times below that floor, negligible to the books). Counts in `tally`: `drawn`, `handed` [kg] the base
+        exchange each way, `to_volume` [kg m/s] the returned cells' momentum (the held volume takes it), `fill_miss` the
+        largest miss left as a share of its column's volume, `baseless` the columns with no base. Returns the enthalpy
+        [J] the skins took from the volume (negative where they returned more), for the caller to book as heat owed."""
         sk = self.skins
         V_col = sk.column_volume()
         base = ~self._baseless()
