@@ -127,32 +127,37 @@ def one_face(q):
 
 @pytest.fixture(scope="module")
 def heated():
-    """The 10 mm cube at 850 K heated 2 MW/m2 on its +x face for three 0.5 s macro steps."""
+    """The 10 mm cube at 850 K heated 2 MW/m2 on its +x face for three 0.5 s macro steps; with each step's book, the
+    closure after it, its wall time and the area the face's heat acted on after it (the markers' areas by `one_face`'s
+    share; the final review's M11: step 1's heat in was compared with the areas after step 3)."""
     body = cube_body()
     before = body.books()
-    books, closures, seconds = [], [], []
+    books, closures, seconds, faces = [], [], [], []
     for _ in range(3):
         started = time.perf_counter()
         books.append(body.advance(0.5, q_prescribed=one_face(2e6)))
         seconds.append(time.perf_counter() - started)
         closures.append(closure(body))
-    return body, before, books, closures, seconds
+        faces.append(float(one_face(1.0)(body.markers) @ body.markers.area))
+    return body, before, books, closures, seconds, faces
 
 
 def test_a_macro_step_closes_mass_and_enthalpy(heated):
     """The 10 mm cube at 850 K heated 2 MW/m2 on its +x face for one 0.5 s macro step: the mass closes to 1e-12 and the
     enthalpy to 1e-8 of the stored enthalpy plus the heat in, the volume and the skins both gained heat, the deferred
-    interface load is a small part of the heat in, and the heat in is what the face took."""
-    body, before, books, _, seconds = heated
+    interface load is a small part of the heat in, and the heat in is what the face took (against the face's area after
+    that step, `heated`)."""
+    body, before, books, _, seconds, faces = heated
     book = books[0]
-    print("heated cube: {:.1f} s for the step, {} parts, at most {} passes; heat in {:.4f} J; stored volume {:.4f} J + "
-          "skins {:.4f} J; pending {:.3e} J; residuals mass {:.2e}, enthalpy {:.2e}; markers {}".format(
-              seconds[0], book.parts, book.passes, book.enthalpy_in, book.enthalpy_volume, book.enthalpy_skins,
-              book.pending_J, book.mass_residual, book.enthalpy_residual, book.n_markers))
+    print("heated cube: {:.1f} s for the step, {} parts, at most {} passes; heat in {:.4f} J ({:+.2%} of 2 MW/m2 on the "
+          "face's area after it for 0.5 s); stored volume {:.4f} J + skins {:.4f} J; pending {:.3e} J; residuals mass "
+          "{:.2e}, enthalpy {:.2e}; markers {}".format(
+              seconds[0], book.parts, book.passes, book.enthalpy_in, book.enthalpy_in / (2e6 * faces[0] * 0.5) - 1.0,
+              book.enthalpy_volume, book.enthalpy_skins, book.pending_J, book.mass_residual, book.enthalpy_residual,
+              book.n_markers))
     assert abs(book.mass_residual) <= 1e-12
     assert abs(book.enthalpy_residual) <= 1e-8
-    area = (body.markers.area * np.clip((body.markers.normal[:, 0] - 0.5) / 0.5, 0.0, 1.0)).sum()
-    assert book.enthalpy_in == pytest.approx(2e6 * area * 0.5, rel=0.05)
+    assert book.enthalpy_in == pytest.approx(2e6 * faces[0] * 0.5, rel=0.05)
     assert book.enthalpy_volume > before["enthalpy_volume"] and book.enthalpy_skins > before["enthalpy_skins"]
     assert max(owed(body, book)) <= OWED_SHARE_HEATED
     for key in ("n_markers", "marker_splits", "marker_merges", "markers_trapped", "interface_mismatch_J",
@@ -179,7 +184,7 @@ def test_every_step_closes_the_layer_and_the_books(heated):
     the carry the step end leaves for the next step's first move is within CARRY_LEFT in all and CARRY_SHARE of any
     column (the controller's ruling T5-i), and the books close within the Global Constraints (mass 1e-12, enthalpy
     1e-8)."""
-    body, _, books, closures, seconds = heated
+    body, _, books, closures, seconds, _ = heated
     V = float(inside_volumes(body.mesh, body.phi).sum())
     for k, (book, c) in enumerate(zip(books, closures)):
         print("step {}: {:.1f} s, {} parts; factor {:.2e}, fill {:.1e}, closure {:.1e}, move miss {:.2e}, baseless {}, "
@@ -494,8 +499,8 @@ def test_a_fill_miss_below_the_layer_s_floor_does_not_stop_the_run(monkeypatch):
     """The controller's ruling T7b-c: the fill's stop fires only where a column's miss is beyond FILL_RTOL of its own
     volume and beyond FILL_RTOL of the whole layer's (the columns' volumes summed), a miss below that floor being
     negligible to the books. In the off-grid shoulder's third step (plan 03b Task 7b, measured once) the stop fired after
-    127 parts on a column with no base of 3.408e-13 m3 whose cells missed it by 5.244e-25 m3 (1.539e-12 of it), some
-    1e6 times below FILL_RTOL of the layer. The test cube's baseless edge column with no neighbour (as in
+    127 parts on a column with no base of 3.408e-13 m3 whose cells missed it by 5.244e-25 m3 (1.539e-12 of it), about
+    6e5 times below FILL_RTOL of the layer. The test cube's baseless edge column with no neighbour (as in
     `test_a_column_the_fill_cannot_fill_stops_the_run_naming_it`, which still raises for 0.05 mm taken) short by the
     geometric mean of the two bounds: the fill leaves it so, records its miss, and does not stop."""
     from reentry_model.levelset import stepend
@@ -564,7 +569,8 @@ def test_a_split_past_PARTS_MAX_stops_naming_the_worst_column(monkeypatch):
     it once asked for ceil(4.3e9) parts at every level to SPLIT_DEPTH_MAX and never ended. The test cube at rest with a
     carry (planning ruling 4's volume change at a column's top) of three PARTS_MAX allowances on one face column, which
     no part's length shrinks: the step raises after its first part, naming that column's marker and the ratio 3 PARTS_MAX
-    (a part run again would be the split, and stops the test instead of hanging it)."""
+    (a part run again would be the split, and stops the test instead of hanging it), its error marked `part_restored`,
+    so that `advance` asks whether rigid metal is left as for any failed part (the final review's M6)."""
     import re
     body = cube_body()
     sk, mk = body.skins, body.markers
@@ -585,6 +591,7 @@ def test_a_split_past_PARTS_MAX_stops_naming_the_worst_column(monkeypatch):
         body.advance(0.05)
     print("split past PARTS_MAX: {}".format(stop.value))
     assert "marker {} ".format(m) in str(stop.value)
+    assert getattr(stop.value, "part_restored", False) is True
     ratio = float(re.search(r"ratio ([0-9.e+-]+)", str(stop.value)).group(1))
     assert ratio == pytest.approx(3.0 * skinbody.PARTS_MAX, rel=1e-6)
 
@@ -1624,7 +1631,7 @@ def _edge_reference(phi0):
 
 
 @pytest.mark.reference
-@pytest.mark.xfail(strict=True, reason=EDGE_FAILS)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=EDGE_FAILS)
 def test_heat_passes_a_box_edge_between_the_faces_columns():
     """Plan 03b Task 6 (design 21.5 and planning ruling 5 as the controller's ruling T6-b amends it: the skins conduct
     sideways across the division's shared boundaries, over the columns' centroids' distance): the stage 3 box (8 x 10 x
@@ -1634,8 +1641,10 @@ def test_heat_passes_a_box_edge_between_the_faces_columns():
     (`_layer_temperature`), a mean over the column's part of the layer there -- is within EDGE_RTOL of the reference's
     mean over that same part (`_column_region`), CutThermal alone on the same box with 0.1 mm cells near that edge
     (`_edge_reference`); the books close. The reference's rise at the probe itself is printed too (Task 6 measured
-    30.71 K there against 28.37 K over the column: the column's resolution, which this test does not judge)."""
-    from cases import box_corners
+    30.71 K there against 28.37 K over the column: the column's resolution, which this test does not judge). The strict
+    mark expects only the rise's miss (EDGE_FAILS, the final review's I1): a crash, something melting, the books or the
+    heat in failing raise NotTheRecordedFailure, which fails the test."""
+    from cases import box_corners, not_the_recorded_failure
     from reentry_model.levelset.cutcell import patches
     lo, hi = box_corners()
     phi0 = _box_phi0()
@@ -1668,11 +1677,12 @@ def test_heat_passes_a_box_edge_between_the_faces_columns():
               np.round(body.markers.normal[m], 2), depth * 1e3, rise, want, len(region),
               (region[:, 0].min() - lo[0]) * 1e3, (region[:, 0].max() - lo[0]) * 1e3, rise / want - 1.0, at_probe,
               len(mesh.tets), referenced))
-    assert np.nanmax(body.skins.T()) < body.material.T_solidus                     # nothing melting
-    assert abs(book.mass_residual) <= 1e-12
-    assert abs(book.enthalpy_residual) <= 1e-8
-    assert book.enthalpy_in == pytest.approx(heat, rel=1e-9)
-    assert abs(rise / want - 1.0) <= EDGE_RTOL
+    with not_the_recorded_failure("the box edge's step, which holds where it fails as recorded"):
+        assert np.nanmax(body.skins.T()) < body.material.T_solidus                 # nothing melting
+        assert abs(book.mass_residual) <= 1e-12
+        assert abs(book.enthalpy_residual) <= 1e-8
+        assert book.enthalpy_in == pytest.approx(heat, rel=1e-9)
+    assert abs(rise / want - 1.0) <= EDGE_RTOL                                   # the recorded failure (EDGE_FAILS)
 
 
 def _melt_all(body, T=1000.0):

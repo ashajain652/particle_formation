@@ -4,7 +4,10 @@ level set, and each column's top cross-section in the division of the layer agai
 (plan 03b Task 6: the tangent-plane cells it compared before are retired), with the acceptance number of the ruling on
 the neighbour test; and (plan 03b Task 2, moved here from test_levelset_division.py) the exact signed distances of a box
 and of a polygonal prism, and the stage 3 box refined by the body's refinement rule around its exact distance, with (plan
-03b Task 4) its division at the skin depth. Test-only; no physics of the level set lives here."""
+03b Task 4) its division at the skin depth; and the error a strict expected failure's test raises when its run falls short
+otherwise than its reason records (`NotTheRecordedFailure`, the final review's I1). Test-only; no physics of the level
+set lives here."""
+import contextlib
 import functools
 from collections import namedtuple
 
@@ -176,3 +179,20 @@ def volume_between(mesh, a, b):
     inside_volumes of their nodal minimum less that of their nodal maximum (the union less the intersection, to within
     the cells both contours cut). Planning ruling 11 judges sharpness by it."""
     return float(inside_volumes(mesh, np.minimum(a, b)).sum() - inside_volumes(mesh, np.maximum(a, b)).sum())
+
+
+class NotTheRecordedFailure(RuntimeError):
+    """A strict expected failure's test fell short otherwise than its reason records (the final review's I1): a crash,
+    a stop other than the recorded one, or a check that holds in the recorded run failing. Its tests are marked
+    `xfail(strict=True, raises=AssertionError)` and assert only the recorded failure, so this error, not an
+    AssertionError, fails the test outright instead of passing it as the expected failure."""
+
+
+@contextlib.contextmanager
+def not_the_recorded_failure(what):
+    """Within it, an AssertionError (a check that holds where the run fails as recorded) is raised again as
+    NotTheRecordedFailure, naming `what`."""
+    try:
+        yield
+    except AssertionError as err:
+        raise NotTheRecordedFailure("{}: {}".format(what, err)) from err

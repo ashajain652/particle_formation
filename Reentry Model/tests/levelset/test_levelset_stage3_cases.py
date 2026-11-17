@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from cases import NotTheRecordedFailure, not_the_recorded_failure
 from helpers import PROJECT_ROOT
 
 SCRIPT = os.path.join(PROJECT_ROOT, "analysis", "levelset", "stage3_cases.py")
@@ -185,6 +186,55 @@ def test_a_case_s_summary_is_stamped_with_the_code_it_ran_on(monkeypatch, tmp_pa
     assert sorted(c.record()) == ["stamped"]
 
 
+def test_record_merges_the_outputs_into_the_record_it_finds(monkeypatch, tmp_path, capsys):
+    """The final review's M5 (Task 11's review M1): `record` merges the output files into the record instead of rebuilding
+    it from them. On a temporary record and temporary outputs: an entry an output file holds is replaced by it, keeping
+    the blocks added to it by hand (`RECORD_KEPT`: `against_task7` and `record_note` here) that the output does not hold,
+    which `record` names as carried over; an entry no output holds (a cost, an older case) is kept as it was, every key;
+    a new output is added; an output without a code stamp is left out and the record's entry of that name kept."""
+    import json
+    c = _cases()
+    monkeypatch.setattr(c, "OUT", str(tmp_path))
+    monkeypatch.setattr(c, "RECORD", str(tmp_path / "recorded.json"))
+    stamp = {"commit": "1" * 40, "dirty": False}
+    old = {"box_dev": {"code": {"commit": "0" * 40, "dirty": False}, "case": "box", "compare": {"1.0": {"rel_1d": 0.12}},
+                       "steps": [{"t": 0.5}], "against_task7": {"recession_mm": 0.88}, "record_note": "a run to 1.0 s",
+                       "markers_at_start": 140},
+           "cost_rim": {"code": stamp, "case": "cost-rim", "extra": {"cells": 7}},
+           "plate_hot_dev": {"code": stamp, "case": "plate-hot", "against_task7": {"rel": 0.01}}}
+    with open(c.RECORD, "w") as fh:
+        json.dump(old, fh)
+    outputs = {"box_dev": {"code": stamp, "case": "box", "compare": {"1.0": {"rel_1d": 0.05}}, "steps": [{"t": 0.5},
+                                                                                                        {"t": 1.0}]},
+               "shoulder_dev": {"code": stamp, "case": "shoulder"},
+               "plate_hot_dev": {"case": "plate-hot"}}                                  # no stamp: left out
+    for name, doc in outputs.items():
+        with open(tmp_path / "stage3_{}.json".format(name), "w") as fh:
+            json.dump(doc, fh)
+    out = c.record()
+    with open(c.RECORD) as fh:
+        assert json.load(fh) == out
+    assert sorted(out) == ["box_dev", "cost_rim", "plate_hot_dev", "shoulder_dev"]
+    assert out["box_dev"] == {**outputs["box_dev"], "against_task7": {"recession_mm": 0.88},
+                              "record_note": "a run to 1.0 s"}                          # markers_at_start not kept
+    assert out["cost_rim"] == old["cost_rim"] and out["plate_hot_dev"] == old["plate_hot_dev"]
+    assert out["shoulder_dev"] == outputs["shoulder_dev"]
+    printed = capsys.readouterr().out
+    assert "['against_task7', 'record_note']" in printed and "left out, with no code stamp: ['plate_hot_dev']" in printed
+
+
+def test_the_offset_is_refused_for_a_case_that_does_not_take_it(monkeypatch):
+    """The final review's M5 (Task 11's review M5): `--offset-mm` raises a plate's face; given with the box, the shoulder,
+    a cost or `record` it is refused (an argparse error, exit 2) before anything runs, where it was silently ignored."""
+    c = _cases()
+    for name in ("box", "shoulder", "cost_sphere", "record"):
+        monkeypatch.setattr(c, name, lambda *a, **k: pytest.fail("the case ran"))
+    for case in ("box", "shoulder", "cost", "record"):
+        with pytest.raises(SystemExit) as stop:
+            c.main([case, "--offset-mm", "0.27"])
+        assert stop.value.code == 2
+
+
 def test_the_code_stamp_s_difference_check_covers_the_data_the_cases_read(monkeypatch):
     """Task 11's re-review, minor item 4: a case's stamp says whether the code it ran on differed from its commit; the
     check covered only `reentry_model` and `analysis/levelset`, so a changed material table or reference value (the cases
@@ -345,31 +395,56 @@ BOX_FAILS = ("the 2 mm markers do not resolve the sharp heated edge (diagnosis D
              "115 minutes, when its one run was stopped at the two-hour limit, so 1.5 and 2.0 s are not reached")
 
 
+BOX_FAILS_AT = 1.0     # s: where the box fails as BOX_FAILS records (its face centre's recession outside RECESSION_TOL)
+
+
+def judge_box(c, out):
+    """The q6p box's judgment (`test_q6p_box`) on the case's summary `out`, pinned to the failure BOX_FAILS records (the
+    final review's I1): only the face centre's recession at BOX_FAILS_AT outside RECESSION_TOL, with the run there, its
+    books closed and no marker trapped by then, raises the AssertionError that the strict mark expects. The case runs
+    every step before it is judged, so a run that goes on past BOX_FAILS_AT and stops later is still decided there.
+    Anything else that falls short raises NotTheRecordedFailure and fails the test: a run that did not reach
+    BOX_FAILS_AT (a crash or a stop in its first two steps), books failing or a marker trapped by then, and, once the
+    recession at BOX_FAILS_AT is within the tolerance (the recorded failure gone), any later stop or miss. A run that
+    passes everything passes this judgment, and the strict mark then fails the test as an unexpected pass."""
+    at = {round(r["t"], 6): r for r in out["steps"]}
+    if BOX_FAILS_AT not in at:
+        raise NotTheRecordedFailure("the box did not reach {} s, where it fails as recorded: {}".format(
+            BOX_FAILS_AT, out["failure"]))
+    with not_the_recorded_failure("the box's books or markers by {} s".format(BOX_FAILS_AT)):
+        _books({"steps": [r for r in out["steps"] if r["t"] <= BOX_FAILS_AT + 1e-9]})
+        assert at[BOX_FAILS_AT]["markers_trapped"] == 0
+    r = out["compare"][str(BOX_FAILS_AT)]
+    assert abs(r["rel_1d"]) <= c.RECESSION_TOL, (BOX_FAILS_AT, r)          # the recorded failure (BOX_FAILS)
+    with not_the_recorded_failure("the box passed {} s, where it failed as recorded".format(BOX_FAILS_AT)):
+        assert out["failure"] is None
+        _books(out)
+        assert out["markers_trapped"] == 0
+        for t in c.JUDGED_TIMES:
+            r = out["compare"][str(t)]
+            assert abs(r["rel_1d"]) <= c.RECESSION_TOL, (t, r)
+        assert out["passes"]
+
+
 @pytest.mark.reference
-@pytest.mark.xfail(strict=True, reason=BOX_FAILS)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=BOX_FAILS)
 def test_q6p_box():
     """The q6p box (8 x 10 x 10 mm, 700 K, 6 MW/m2 by projection on its 10 x 10 face, 2 s at 0.5 s steps, dev cells, the
     design's meshes, the volume flow held and the skins' runoff on under the flight's deceleration, the liquid leaving at
     T_feed): the face centre's recession within 5 % of the cold plate's one-dimensional reference (T_feed) at 1.0, 1.5
     and 2.0 s, the books every step, and no marker trapped; the edges are recorded (each edge's rounding radius from
     phi's zero contour at its midpoint, and the recession along the heated face's +y edge's bisector). It fails
-    (BOX_FAILS): the brief's tolerance is kept and the failure marked strict."""
+    (BOX_FAILS): the brief's tolerance is kept and the failure marked strict, pinned to the recorded failure at 1.0 s
+    (`judge_box`)."""
     c = _cases()
-    out = c.box("dev")
-    assert out["failure"] is None
-    _books(out)
-    assert out["markers_trapped"] == 0
-    for t in c.JUDGED_TIMES:
-        r = out["compare"][str(t)]
-        assert abs(r["rel_1d"]) <= c.RECESSION_TOL, (t, r)
-    assert out["passes"]
+    judge_box(c, c.box("dev"))
 
 
 SHOULDER_FAILS = ("measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology, the "
                   "segment built 0.13 mm off the mesh's planes of nodes (ruling T7-h): the first step (to 0.5 s) is "
                   "Task 7d's to every digit; the second accepts its 8 parts and then stops at its end on the "
                   "thin-metal check (stepend.THIN_METAL, design 21.11): two pairs of columns whose normals turn 146 "
-                  "and 142 degrees share a boundary in the layer at the heated cap's +y edge, between a marker on the "
+                  "and 142 degrees are marked by the division at the heated cap's +y edge, between a marker on the "
                   "cap, 0.37 mm inside the starting surface and facing back across the cap, and two on the +y cut "
                   "face; the metal through the cap's marker along its normal is 1.39 mm thick and the thin test's "
                   "measures at the pairs' edges are 0.84 to 2.06 mm, all under twice the skin depth (2.4 mm), so the "
@@ -378,8 +453,37 @@ SHOULDER_FAILS = ("measured 2026-11-15 on plan 03b Task 11's code (e57945f), und
                   "deposit is judged, is not reached")
 
 
+SHOULDER_STOPS_IN = 2  # the macro step at whose end the shoulder stops as SHOULDER_FAILS records (stepend.THIN_METAL)
+
+
+def judge_shoulder(c, out):
+    """The shoulder's judgment (`test_shoulder_runoff_freezes_a_deposit`) on the case's summary `out`, pinned to the
+    failure SHOULDER_FAILS records (the final review's I1): only a stop on the thin-metal check (`stepend.THIN_METAL`) in
+    step SHOULDER_STOPS_IN, the steps before it closing their books, raises the AssertionError that the strict mark
+    expects. Anything else that falls short raises NotTheRecordedFailure and fails the test: a crash or another stop, a
+    thin-metal stop in another step, books failing before the stop, and, for a run that reaches 2.0 s (the recorded
+    stop gone), any miss of the judged deposit. A run that passes everything passes this judgment, and the strict mark
+    then fails the test as an unexpected pass."""
+    from reentry_model.levelset.stepend import THIN_METAL
+    f = out["failure"]
+    if f is not None:
+        if f["step"] != SHOULDER_STOPS_IN or not f["error"].startswith("RuntimeError: " + THIN_METAL):
+            raise NotTheRecordedFailure("the shoulder stopped otherwise than recorded, in step {}: {}".format(
+                f["step"], f["error"]))
+        with not_the_recorded_failure("the shoulder's books before its recorded stop"):
+            _books(out)
+    assert f is None, f["error"]                                          # the recorded failure (SHOULDER_FAILS)
+    with not_the_recorded_failure("the shoulder ran to 2.0 s, past its recorded stop"):
+        _books(out)
+        last = out["steps"][-1]["deposit"]
+        assert out["deposit_formed"] and last["mass_kg"] > 0.0
+        assert last["rigid_share"] >= c.DEPOSIT_RIGID_SHARE            # the controller's ruling on the review's I2
+        assert last["share_past_5mm"] <= c.SKYSCRAPERS_DEPOSIT_FAR_SHARE
+        assert out["passes"]
+
+
 @pytest.mark.reference
-@pytest.mark.xfail(strict=True, reason=SHOULDER_FAILS)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=SHOULDER_FAILS)
 def test_shoulder_runoff_freezes_a_deposit():
     """Runoff over a shoulder: a segment of the 50 mm sphere about its 45 degree station at the skyscrapers' pushed
     plate's loads (dp/ds -3.424e5 Pa/m and 80.29 Pa of shear down the meridian, 29.77 m/s2 of deceleration along the
@@ -390,13 +494,7 @@ def test_shoulder_runoff_freezes_a_deposit():
     deposit's centroid past the heat's end is recorded against the skyscrapers' pushed plate's 1.05 mm. It fails
     (SHOULDER_FAILS): measured 2026-11-15 on plan 03b Task 11's code (e57945f), under the composite rheology, it stops at
     the end of its second step, on metal thinner than twice the skin depth at the heated cap's edge (on Task 7d's code,
-    73b5a9a, under the bridge law, it stopped in its third)."""
+    73b5a9a, under the bridge law, it stopped in its third). The strict mark is pinned to that stop
+    (`judge_shoulder`)."""
     c = _cases()
-    out = c.shoulder("dev")
-    assert out["failure"] is None
-    _books(out)
-    last = out["steps"][-1]["deposit"]
-    assert out["deposit_formed"] and last["mass_kg"] > 0.0
-    assert last["rigid_share"] >= c.DEPOSIT_RIGID_SHARE                # the controller's ruling on the review's I2
-    assert last["share_past_5mm"] <= c.SKYSCRAPERS_DEPOSIT_FAR_SHARE
-    assert out["passes"]
+    judge_shoulder(c, c.shoulder("dev"))

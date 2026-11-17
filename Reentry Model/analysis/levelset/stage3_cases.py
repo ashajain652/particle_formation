@@ -4,7 +4,7 @@ design section 21 by plan 03b Task 7 (docs/superpowers/plans/levelset/03b-stage3
 the gas surface phi evolved and the skin base beta derived one skin depth inside it. Run from `Reentry Model/`:
 
     "$PY" analysis/levelset/stage3_cases.py plate-cold [--preset dev|production] [--offset-mm 0.27]
-    "$PY" analysis/levelset/stage3_cases.py plate-hot  [--preset dev|production]
+    "$PY" analysis/levelset/stage3_cases.py plate-hot  [--preset dev|production] [--offset-mm MM]
     "$PY" analysis/levelset/stage3_cases.py box        [--preset dev]
     "$PY" analysis/levelset/stage3_cases.py shoulder   [--preset dev]
     "$PY" analysis/levelset/stage3_cases.py cost --what sphere [--preset dev|production] [--steps 2] [--dt 0.5]
@@ -12,9 +12,11 @@ the gas surface phi evolved and the skin base beta derived one skin depth inside
     "$PY" analysis/levelset/stage3_cases.py cost --what skip
     "$PY" analysis/levelset/stage3_cases.py record
 
-Each case prints one line per macro step (with STAGE3_STATE_DIR set in the environment it also pickles the body after
-every step there, for diagnosis) and writes its summary to output/levelset/stage3_<case>[_<preset>].json
-(`reentry_model.OUTPUT_DIR`); `record` gathers those into analysis/levelset/stage3_recorded.json, the committed record.
+`--offset-mm` is taken by the plates alone; given with any other case it is refused. Each case prints one line per
+macro step (with STAGE3_STATE_DIR set in the environment it also pickles the body after every step there, for
+diagnosis) and writes its summary to output/levelset/stage3_<case>[_<preset>].json (`reentry_model.OUTPUT_DIR`); `record`
+merges those into analysis/levelset/stage3_recorded.json, the committed record, replacing only the entries the output
+files hold and keeping every other entry and the blocks added to an entry by hand (`record`).
 The tests are tests/levelset/test_levelset_stage3_cases.py (marked `reference`). Every case uses the shared AA7075 Scheil
 material and the level set's own modules only (no skyscrapers module, no old alias module).
 
@@ -251,7 +253,8 @@ class Profile:
         part's sum |mismatch| over the step's heat in), the most Newton iterations a skin heat sub-step took (against
         `skin.NEWTON_MAX`, which raises), the most GMRES iterations a sideways solve took and the largest true residual
         it left as a share of its right-hand side (against `skin.SIDE_RTOL`), the sideways solves and those that did not
-        converge (which raise)."""
+        reach `skin.SIDE_RTOL` (accepted at `skin.SIDE_ACCEPT_RTOL` and counted in the step's `side_solves_at_floor`,
+        and raising above it; the final review's I3)."""
         return {"passes_max": 0, "passes_accepted_max": 0, "interface_mismatch_max": 0.0, "newton_iterations_max": 0,
                 "gmres_iterations_max": 0, "gmres_residual_max": 0.0, "side_solves": 0, "side_solves_unconverged": 0}
 
@@ -607,6 +610,8 @@ def step_row(body, book, wall, x_before, delta, watch=None):
            "n_pieces": book.n_pieces, "pieces_used_up": book.pieces_used_up,
            # Task 11's fix: the islands a move filled from the skins (item 3), the groups the area guard replaced (item 1)
            "island_nodes": getattr(book, "island_nodes", 0), "groups_guarded_max": getattr(book, "groups_guarded_max", 0),
+           # the final review's I3: the sideways solves accepted at skin.SIDE_ACCEPT_RTOL, short of skin.SIDE_RTOL
+           "side_solves_at_floor": getattr(book, "side_solves_at_floor", 0),
            "pending_flux_max_Wm2": book.pending_flux_max, "surface_flux_max_Wm2": book.surface_flux_max}
     if delta is not None:
         row["cost_split_s"] = split_step(delta, wall)
@@ -1356,10 +1361,25 @@ def cost_skip(preset="dev", save=True):
 
 
 # -- the record --------------------------------------------------------------------------------------------------------
+RECORD_KEPT = ("against_task7", "against_offset_0", "record_note")   # an entry's blocks added by hand after its run was
+                                                                     # gathered, which no output file holds (`record`)
+
+
 def record():
-    """Gather output/levelset/stage3_*.json into analysis/levelset/stage3_recorded.json (each case's summary and steps,
-    with the commit it ran on, `code`); the commits are printed, and a summary without a stamp is left out and named."""
-    out, left = {}, []
+    """Merge output/levelset/stage3_*.json into analysis/levelset/stage3_recorded.json, the committed record (the final
+    review's M5, Task 11's review M1: rebuilt from the output files alone, the record lost the blocks added to its
+    entries by hand and the entries no output file holds, such as Task 12's costs). Each output file with a code stamp
+    replaces the record's entry of its name (the case's summary and steps, with the commit it ran on, `code`), and the
+    entry it replaces passes on the blocks RECORD_KEPT it held that the output does not, unchanged; they were written
+    beside the run being replaced, so each carried block is named in what is printed, to be read again. Every other
+    entry and key of the record is kept as it is. The commits are printed, and a summary without a stamp is left out and
+    named. Returns the record written."""
+    try:
+        with open(RECORD) as fh:
+            old = json.load(fh)
+    except FileNotFoundError:
+        old = {}
+    new, left = {}, []
     for path in sorted(glob.glob(os.path.join(OUT, "stage3_*.json"))):
         with open(path) as fh:
             doc = json.load(fh)
@@ -1367,14 +1387,21 @@ def record():
         if not (doc.get("code") or {}).get("commit"):
             left.append(name)
             continue
-        out[name] = doc
-    for name, doc in out.items():
-        print(name, doc["code"]["commit"][:7], "(differed from it)" if doc["code"]["dirty"] else "")
+        new[name] = doc
+    out = dict(old)
+    for name, doc in new.items():
+        carried = {k: v for k, v in (old.get(name) or {}).items() if k in RECORD_KEPT and k not in doc}
+        out[name] = {**doc, **carried}
+        print(name, doc["code"]["commit"][:7], "(differed from it)" if doc["code"]["dirty"] else "",
+              "-- carried over from the entry it replaces, to be read again: {}".format(sorted(carried))
+              if carried else "")
     if left:
         print("left out, with no code stamp:", left)
+    if set(old) - set(new):
+        print("kept as they were, no output file holding them:", sorted(set(old) - set(new)))
     with open(RECORD, "w") as fh:
         json.dump(out, fh, indent=1)
-    print("recorded", sorted(out), "in", RECORD)
+    print("recorded", sorted(new), "in", RECORD)
     return out
 
 
@@ -1383,13 +1410,16 @@ def main(argv=None):
     p.add_argument("case", choices=("plate-cold", "plate-hot", "box", "shoulder", "cost", "record"))
     p.add_argument("--preset", choices=tuple(SKIN_PRESETS), default="dev")
     p.add_argument("--every-second", action="store_true", help="plates: psi and the remesh at every second step end")
-    p.add_argument("--offset-mm", type=float, default=0.0, help="plates: the face raised this far on the same mesh [mm]")
+    p.add_argument("--offset-mm", type=float, default=None,
+                   help="plates only: the face raised this far on the same mesh [mm] (refused with any other case)")
     p.add_argument("--what", choices=("sphere", "rim", "skip"), default="sphere", help="cost: which measurement")
     p.add_argument("--steps", type=int, default=None, help="macro steps (default: to 2 s; the sphere 2)")
     p.add_argument("--dt", type=float, default=DT, help="cost sphere: the macro step [s]")
     a = p.parse_args(argv)
+    if a.offset_mm is not None and a.case not in ("plate-cold", "plate-hot"):     # the final review's M5: it was ignored
+        p.error("--offset-mm raises the plates' face and is not taken by {}".format(a.case))
     if a.case in ("plate-cold", "plate-hot"):
-        out = plate(a.case.split("-")[1], a.preset, a.every_second, a.steps, offset=a.offset_mm * 1e-3)
+        out = plate(a.case.split("-")[1], a.preset, a.every_second, a.steps, offset=(a.offset_mm or 0.0) * 1e-3)
     elif a.case == "box":
         out = box(a.preset, a.steps)
     elif a.case == "shoulder":

@@ -677,7 +677,9 @@ def test_the_profile_plan_matches_the_skyscrapers_on_a_row():
     slurry with no liquid, and a moving slurry over liquid, with the exposed slurry's mode on. The slurry over liquid has
     no liquid at its top, so its wave fits only in the region of the layers above the walls (the liquid's region would
     give it none), and it sprays; the gas-driven skin's run takes all its flowing metal, so no slurry is left for the
-    slurry's own mode beneath it."""
+    slurry's own mode beneath it. The same markers with their skins in reversed rows (the final review's M12; the table
+    path's tests do so) give the same plan by marker (`assert_plans_agree`), and a release of a flow sub-step takes
+    each marker's metal from its own skin row, the same masses, enthalpies and momenta to 1e-12."""
     from reentry_model import skinbody as sky_body
     mat = aa7075()
     slurry_top = ([SLURRY] * 60 + [RIGID] * 10, np.concatenate([np.linspace(0.8, 0.0, 60, endpoint=False),
@@ -701,6 +703,17 @@ def test_the_profile_plan_matches_the_skyscrapers_on_a_row():
     assert plan.resolved.all() and np.array_equal(plan.liquid > 0.0, [True, False, True, False])
     assert plan.rate[3] > 0.0 and plan.rate_slurry[0] > 0.0 and plan.slurry["branch"][2] == -1
     assert_plans_agree(plan, ref)
+    mk_r = row_markers(n, h=h, order=np.arange(n)[::-1])                       # the skins in reversed rows
+    ours_r, _ = both_skins(mk_r, [c[0] for c in columns], [c[1] for c in columns], mat)
+    plan_r = spraying.spray_plan(ours_r, mk_r, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.04, slurry=True,
+                                 theta=theta, division=d)
+    assert_plans_agree(plan_r, plan)
+    r = mk_r.skin_index
+    got, want = plan_r.release(ours_r, 1e-4), plan.release(ours, 1e-4)
+    assert want.mass.sum() > 0.0
+    for key in ("mass", "enthalpy", "momentum"):
+        a, b = np.asarray(getattr(got, key))[r], np.asarray(getattr(want, key))
+        np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-12 * np.abs(b).max(), err_msg=key)
 
 
 def test_a_skin_flowing_to_its_base_takes_its_base_as_the_wall():
