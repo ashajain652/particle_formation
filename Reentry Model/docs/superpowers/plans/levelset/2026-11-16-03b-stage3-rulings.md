@@ -599,6 +599,50 @@ and reports that the code cites".
     again; the final review then covers merge-base(origin/main)..HEAD, the tree that would go to main. If wrong: one
     merge commit to drop if Asha keeps the branch apart. Done as merge 4b38a7d.
 
+## The final review (2026-11-16 to 17)
+
+These were taken after this document was first written (f1c32bd), on the final whole-branch review of
+merge-base(origin/main)..HEAD and its one fix wave (1447754, 01c2341, 5bcd629). The review found nothing critical and
+three important points (I1 the strict expected failures accepting any failure, I2 documents that turn false on merge,
+I3 the sideways solve's hard stop near round-off); its fix wave's scoped re-review found every finding addressed.
+
+94. **PF-a.** The level set's assumptions section is renumbered from 16 to 18 inside the merge commit 4b38a7d, not as a
+    commit of its own. Why: the merge's one conflict, in model_assumptions, could not be resolved without choosing the
+    section's number, and a tree with two sections 16 would have been wrong; the merge message says so. If wrong: a
+    reader of the merge sees the level set's documents renumbered beside main's changes; no code is involved.
+95. **FR-a.** The review's M1, making `law` a required argument of the shared `slurry_properties` and `slurry_modes`
+    (which default to the bridge law while `rheology.DEFAULT_LAW` is composite), is not done on this branch. Why: a
+    required argument breaks any caller on main or on another session's branch that omits it, and the plan fixed the
+    default; both architectures pass `law=` explicitly today. If wrong: a future caller that omits `law` flies the
+    bridge law silently until the change is made on main (an open question below).
+96. **FR-b.** The documents I2 named describe the tree they are in, in sentences true both on this branch and on main
+    after a merge (what the level set builds, not where it lives); none says "merged" or names a merge commit before
+    Asha decides; todo item 1 is marked built by plan 03b, its merge commit to be added when it lands; the old Mac
+    Studio cost runbook is marked superseded and no new one is written. If wrong: one line per document to adjust at
+    the merge.
+97. **FR-c.** The review's I3 is fixed in the same wave as an inexact Newton step: `SIDE_RTOL` (1e-12) stays the sideways
+    GMRES solve's target, a solve that stalls short of it is accepted when its relative residual is at most
+    `SIDE_ACCEPT_RTOL` (1e-9) and counted per step (`StepBook.side_solves_at_floor`), and it raises above that, as
+    before. The fix first checked in `conduct` that the books cannot depend on the solve's residual (the sideways
+    exchange is antisymmetric, the base flux is the residual, and the outer Newton tolerance decides convergence). Why:
+    the two recorded stops (D1's box at 1 mm markers, 2.1e-11, and the shoulder's 1012-part third step, 6.05e-12) were
+    numerical artefacts that the next planned work, 21.10's finer markers, would meet first. Neither run was repeated.
+    If wrong: an accepted solve shifts heat between neighbouring columns by up to 1e-9 of the solve's right-hand side
+    within one Newton iteration.
+98. **FR-d.** The review's M9, two imports of `skyscrapers/skinbody.py` left unused by Task 8's conflict resolution, is
+    fixed only where the branch made the import unused (checked against 9993a77) and nothing uses it by attribute; the
+    review's M13 (the step end's carry spread by volume, bounded at 8e-6 of the body) needs no change. If wrong: one
+    line more or less in the skyscrapers' diff against main.
+99. **FR-e.** The box's strict expected failure (`test_q6p_box`, kept off the laptop by T7d-d) is pinned to its recorded
+    failure, the face-centre recession at 1.0 s outside its tolerance, and its judging was checked on the record's
+    entry and on stubs, not by running it. The recorded failure at 1.0 s decides the outcome, so a crash or stop in the
+    third step or later still counts as the expected failure while the 1.0 s recession stays out of tolerance. If
+    wrong: such a later crash of the box, in its full-length run on the Mac Studio, is reported as the expected failure.
+100. **FR-f.** The fix wave's three minor leftovers, found by its re-review, are left: the "books close" assertion in the
+    test of an accepted solve holds by construction (the test's substantive checks are the count and the temperatures
+    within `NEWTON_TOL` of the converged run's); a sentence in `skin.py`'s module docstring wraps raggedly; and the box's
+    judging decides on the 1.0 s row first (FR-e). If wrong: a weaker test of the accepted solve than its name suggests.
+
 ## Where the scratch measurements came from
 
 Each paragraph says what was run, on which commit, how many times, and what it gave. "Once" means one run. The scratch
@@ -938,7 +982,9 @@ those the ledger names that section 18.11 does not.
   column, and the shoulder's third-step stop is a defect in φ's move at the sharp edge (its groups swept 4.27e-10 m³
   where φ changed by 2.67e-10 m³, a 60 per cent miss). At 1 mm the box's face came within about 4 per cent of the plate
   but its step stopped on a sideways GMRES solve (2.1e-11 against 1e-12), and the shoulder's 1012-part third step
-  stopped the same way (6.05e-12). On the old design, markers 0.4 mm apart took 1528 s for the box's first step against
+  stopped the same way (6.05e-12); since the final review (number 97) a stall at or below 1e-9 is accepted and counted,
+  so neither solve would stop its run now, and neither run was repeated. On the old design, markers 0.4 mm apart took
+  1528 s for the box's first step against
   31.4 s and 25 parts against 1 (design 21.1), so 21.10's two prerequisites come first: runoff's cost growing no faster
   than the number of markers, and the part limit untied from the marker spacing.
 - **The thin case of design 21.11** (T11-b). The shoulder stops at 1.0 s on a real thin site under the composite law
@@ -986,3 +1032,8 @@ Named in the ledger but not listed in section 18.11:
   known only as a lower bound (its first step unfinished after 39 minutes on a loaded laptop), and the profile spraying
   path has not run on a whole body over two or more flowing steps. The open item is the cost sphere through at least two
   steps on the Mac Studio, by runbook, when Asha chooses.
+- **The shared slurry functions' default law** (number 95, the final review's M1). `shared/spray.py`'s
+  `slurry_properties` and `slurry_modes` default to `law="bridge"` while `rheology.DEFAULT_LAW` is `"composite"`. Both
+  architectures pass `law=` explicitly, so no result is affected today, but a future caller that omits it flies the
+  bridge law silently. Making `law` required is a small change on main, for Asha to schedule with whoever owns the
+  shared spray model.
