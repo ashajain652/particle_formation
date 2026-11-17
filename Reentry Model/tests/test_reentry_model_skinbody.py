@@ -3076,13 +3076,11 @@ def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_
     model = spray.SprayModel(mat.liquid, dispersion="profile")
     with pytest.raises(ValueError, match="needs the flow on"):
         make(coarse_sphere_mesh, spray=model)
-    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model,
-             windward_loads="normals")
-    # the earlier rule, as the flow was set up. Under `sphere` the second step's 0.99 mm move of rear corners (117 to 128
-    # degrees from the flow, none exposed) is refused, and so is the retry on the rebuilt mesh: the coarse mesh's thin margin at
-    # the rear, not the fitted push. The refused move is the same size in every variant and was already refused at 345fa6a,
-    # before the push followed the fitted meridian, whose rebuilt mesh happened to take the retry (2026-11-13, Task 3 report,
-    # "Mesh failure investigation")
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model)
+    # the default rule, `windward_loads="sphere"` (Asha, 2026-11-17; pinned to "normals" from 2026-11-13 to then). Under
+    # it the mesh refuses a move even on a rebuilt mesh, as the Task 3 report found at the coarse mesh's thin margin at the
+    # rear in the second step (2026-11-13, "Mesh failure investigation"), and the move is made in pieces
+    # (`movemesh._move_in_pieces`, model_assumptions section 17): one split move and two rebuilds, measured once
     seen, profile_modes = {}, skinbody.melt_profile.profile_modes
 
     def keep(cols, windward, sigma):                     # the cells the plan read, which pass through unchanged

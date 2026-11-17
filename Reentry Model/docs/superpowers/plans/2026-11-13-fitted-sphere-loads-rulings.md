@@ -25,7 +25,8 @@ normal. "The provider" is `GasLoads`, the interim gas loads that landed on main 
    refused before Task 3 and passed only because the rebuilt mesh happened to be better, so the thin rear margin predates
    the rule; the test's subject is the spraying books, not the load rule. If this is wrong, a real spraying flight on the
    sphere default fails on a refused rear move. The resumed flights of 2026-11-14 (15.4) checked this on both saved
-   bodies and found no extra refusals under the sphere rule.
+   bodies and found no extra refusals under the sphere rule. *Lifted on 2026-11-17 (Asha):* since a move refused even on a
+   rebuilt mesh is made in pieces (`docs/model_assumptions.md` section 17), the test runs on the sphere rule again (15.7).
 5. **The unit-tier test count was left for Task 7**, after the merged run, so the count was stale on the branch until
    then (it is now 1110 in `Reentry Model/CLAUDE.md`).
 6. **The final review's declined-to-judge list was set aside as the reviewer proposed**: the rule's physics, the push

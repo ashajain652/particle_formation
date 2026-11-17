@@ -1960,10 +1960,14 @@ moving-mesh error under the sphere rule with the new push direction. The failing
 exposed, and their push direction was unchanged (0.00 degrees gap). The corner move that breaks the mesh, about 0.99 mm of
 base melt-back on 4 mm elements, is the same size in every variant, including the one already at the old push direction
 (commit 345fa6a), where the smallest radius ratio of the touched elements was 0.0439 against the 0.05 limit and the move was
-refused, and the retry on the rebuilt mesh passed at 0.1451. Under `normals` the same move has a ratio of 0.0667. The test is
-pinned to `normals` for that reason. This was one coarse mesh, one gas state, two steps and one run per variant. A real
-spraying flight on the sphere default should be watched for refused rear moves; the short resumed flights of 15.4 are the
-only deformed-body flights on it so far, and none of them sprayed.
+refused, and the retry on the rebuilt mesh passed at 0.1451. Under `normals` the same move has a ratio of 0.0667. The test was
+pinned to `normals` for that reason from 2026-11-13. This was one coarse mesh, one gas state, two steps and one run per
+variant. Since a move refused even on a rebuilt mesh is made in pieces (section 17), the test runs on the default `sphere`
+rule again (Asha, 2026-11-17): run once on 2026-11-15 with the split, one of its moves was refused on the rebuilt mesh and
+made in pieces (one split move, two rebuilds in all), and its mass, energy and momentum books closed within the test's
+limits. Which move was split was not traced. A real spraying flight on the sphere default should be watched for refused
+rear moves, which the split now hides from the exit code; the short resumed flights of 15.4 are the only deformed-body
+flights on it so far, and none of them sprayed.
 
 ## 16. The skins' cells at their base (`--skin-base-cell`, skyscrapers)
 
@@ -2069,7 +2073,8 @@ split can make (at most 16 pieces and their rebuilds; on the 50 mm flight with t
 of wall time, about 6.5 s each, from the flight's history, which counted only the last rebuild of a move that made two),
 not measured.
 The split was tried only on the 4 mm test sphere; no flight has used it, and whether real flights refuse moves this way
-is not known. A move that flattens an element across a sharp fold of the surface itself (the shoulder failure of
+is not known. Two unit tests split a move inside a spraying step: the slip-band test above and, since 2026-11-17, the
+profile test of 15.7, which runs on the sphere rule again because of it. A move that flattens an element across a sharp fold of the surface itself (the shoulder failure of
 sub-plan 19, recorded in the module's docstring) is not cured by any rebuild inside the same surface, and pieces do
 not change that.
 

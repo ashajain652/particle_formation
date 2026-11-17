@@ -109,3 +109,6 @@ subpackage landed on main (655d1a2). Built from the post-refactor open-items inv
     sphere rule refuse moves like this is not known, and `MovingMesh.split_moves` is not yet in the history, so a
     flight would not show that it split; the pieces of a move share one part of the macro step, with no conduction
     between them.
+    *Also done (Asha, 2026-11-17):* `test_a_profile_skin_body_sprays_and_keeps_its_books`, pinned to the normals rule
+    since 2026-11-13, runs on the sphere rule again; with the split it passed, run once (one split move, two
+    rebuilds; `docs/model_assumptions.md` 15.7).

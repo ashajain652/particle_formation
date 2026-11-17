@@ -3512,4 +3512,6 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
      1e-12; the inward booking is within 0.46 % of one move's, against 9.7 % booked from the surface
      (`tests/test_reentry_model_movemesh.py`, `docs/model_assumptions.md` section 17). The unit tier on be67361 passes,
      run once: 1127 of 1128 tests, the FEniCSx module skipped. *Not yet known:* whether a flight splits; `split_moves`
-     is not in the history.
+     is not in the history. *Then (Asha, 2026-11-17):* the profile test,
+     `test_a_profile_skin_body_sprays_and_keeps_its_books`, pinned to `normals` since 2026-11-13 (model_assumptions
+     15.7), runs on the default `sphere` rule again; with the split it passed, run once (one split move, two rebuilds).

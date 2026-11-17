@@ -100,14 +100,17 @@ skipped, in 70 minutes on four processes, run once with one-minute load averages
 machine (main had 1080 and the branch alone 1022; the merge adds two tests of its own). With the base cells and the
 split of a refused mesh move (branches `skin-base-cells` and `refused-move-split`, 2026-11-15) it has 1128 tests: 1127
 pass and 1 is skipped, in 150 minutes on four processes, run once with other runs on the machine. The spraying test
-sphere in the slip band now runs to its end and is the longest test, about 49 minutes when run alone under load. The
+sphere in the slip band now runs to its end and is the longest test, about 49 minutes when run alone under load. With
+level-set stage 3 on main and the profile test back on the sphere rule (branch `profile-test-sphere`, 2026-11-17) it
+has 1340 tests: 1339 pass and 1 is skipped, in 107 minutes on four processes, run once with one-minute load averages
+of about 4 to 7; in that run the longest test was the profile test, about 19 minutes. The
 droplet tests, `pytest reentry_model/droplet_reentry/tests`, are 35 and pass (40 s on 2026-11-15, 74 s before). The port's own tools have their tests in `analysis/skyscrapers_port/`, run
 explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 1128 tests, 1 skipped, ~35-150 min on four
+                                                          # the package's unit tier: 1340 tests, 1 skipped, ~35-150 min on four
                                                           # processes (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
