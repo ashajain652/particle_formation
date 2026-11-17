@@ -1786,11 +1786,12 @@ The analysis script `analysis/fitted_sphere_check.py` reads the two saved states
 0.26 GB), and reproduces the investigation. The saved bodies are the 100 mm sphere at 32.5 s and the 50 mm sphere at 178.5 s
 of the comparison flights of 2026-11-09 (the times are as the design records them). Each was measured once.
 
-Every number in this subsection -- the radii, the heating and pressure-gradient ratios and the resumed flights of
-2026-11-14 -- was measured on the classic loads (the loads of `--gas-loads classic`, section 14.5), before this branch
-was merged with the interim gas loads on 2026-11-15. The radii and the corner counts are geometry and do not depend on the
-loads; the ratios use the classic stagnation heating's scaling with the radius, and the resumed flights flew the classic
-heating and surface flow. The sphere rule's effect on the provider's loads, the default since the merge, is not measured.
+Every number in this subsection except its last paragraph -- the radii, the heating and pressure-gradient ratios and the
+resumed flights of 2026-11-14 -- was measured on the classic loads (the loads of `--gas-loads classic`, section 14.5),
+before this branch was merged with the interim gas loads on 2026-11-15. The radii and the corner counts are geometry and do
+not depend on the loads; the ratios use the classic stagnation heating's scaling with the radius, and the resumed flights
+flew the classic heating and surface flow. The last paragraph repeats the resumed flights on the provider's loads, the
+default since the merge (2026-11-17).
 
 | | 100 mm body | 50 mm body |
 |---|---|---|
@@ -1856,6 +1857,29 @@ averaged over the second) and the stagnation heating 25 % higher (2.62 against 2
 83.8 mm). **(assumed)** The heat concentrated at the smaller nose radius is taken to be why the melting rises far more than
 the total heating; this was not tested. No metal was released as droplets in any of these flights, so how the spray
 responds to the rule is not measured.
+
+**(verified, one run of each rule on each body)** On 2026-11-17 the same resumes were flown on the provider's loads (the
+similarity loads, section 14), on main at 3e786f2, over the same spans; the report is
+`output/shape_feedback/resume_check_similarity/report.md` of the main checkout (git-ignored), with a figure. `resume` keeps
+the loads a state was saved with, and both states resume on the classic loads, so a scratch launcher kept beside the
+report switched each loaded state to the objects `run --gas-loads similarity` builds (one `GasLoads(gamma_pm,
+hold_s=--dt)`, read by the surface flow and by a `SimilarityHeating`, and sheltered corners read at 180 degrees); no
+product code was changed. Every flight exited 0. The sphere rule drew 8.05 g against 4.20 g into the skins on the 100 mm
+body (92 % more) and 14.62 g against 8.35 g on the 50 mm body (75 % more), against 74 % and 45 % on the classic loads, so
+the rule's effect on melting is larger on the provider's loads. The whole-body convective heating was 6 % higher on the
+100 mm body (18.58 against 17.47 kW) and 18 % higher on the 50 mm body (5.50 against 4.67 kW), and the stagnation heating
+at the end 25 % and 11 % higher (2.58 against 2.07 and 2.01 against 1.80 MW/m^2), from nose radii of 51.3 against 83.8 mm
+and 36.6 against 47.7 mm. On the 100 mm body no move was refused under either rule, but the smallest radius ratio of each
+step's last move fell from 0.117 to 0.065 under `sphere` and to 0.080 under `normals`, a fall of 0.052 against 0.037 over
+the second (0.033 against 0.029 on the classic loads), so on the provider's loads both rules wear that mesh faster and
+the new rule more so; at its rate it would reach the 0.05 limit about 0.3 s after the flight's end. On the 50 mm body each rule had two refused moves, each cured by one rebuild, with the
+first at 178.75 s under both rules, as on the classic loads; the second came at 180.0 s under `sphere` and 180.375 s under
+`normals`, and the worst kept move's ratio was 0.052 and 0.053. No metal was released as droplets. **(assumed)** The
+classic-load flights of 2026-11-14 ran on the branch before its merge (e63556f); the changes since are taken not to act on
+these resumes (the states keep the bridge viscosity law and no base cells, and no move was refused after a rebuild, so
+section 17's split never acted), which was not checked by re-flying the classic loads on today's code. That assumption
+bears on the comparison of the loads, not on the comparison of the two rules on the provider's loads. Why the provider's
+loads widen the gap between the rules was not tested.
 
 ### 15.5 The interface, and what it was checked against
 
